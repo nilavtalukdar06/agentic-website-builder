@@ -15,3 +15,21 @@ After writing or editing any code in this repo:
 1. Format it with Prettier (`bunx prettier --write <files>`, or `bun run format` for the whole repo).
 2. Remove comments — do not leave explanatory comments in the diff unless they capture a genuinely non-obvious invariant.
 3. Fix any Tailwind CSS warnings (unknown/conflicting classes, etc.) surfaced by the editor or `bun run lint` before considering the change done.
+
+## Mandatory process — no exceptions
+
+These rules apply to every change, no matter how small. "It's a one-line fix" is not a reason to skip them.
+
+1. **Always and strictly follow `docs/plan.md`** before building anything. It is the source of truth for scope and direction. If a request conflicts with it or isn't covered by it, stop and reconcile the plan first — don't improvise around it.
+2. **UI must be strictly based on `~/Desktop/vibe-ui`.** Every component, layout, and style decision comes from that folder. Do not invent new UI patterns, components, or styling that isn't present or derivable from `vibe-ui`. If something needed isn't there, flag it before building a one-off.
+3. **Before writing any code — even a trivial change — load the relevant `agents` skill in project scope first.** This is required every time, not just for large tasks.
+4. **After writing or editing any code, go through a review + test phase before calling the change done:**
+   - Run `bun run lint` and the TypeScript check; fix anything surfaced.
+   - Run `bun run test:run` (Vitest) for the units touched; add/update a unit test for new logic or components.
+   - For a new or changed route, flow, or anything crossing a page boundary, add/update a Playwright spec under `e2e/` and run `bun run test:e2e`.
+   - Re-read the diff once against the plan and conventions above before considering the task finished. Do not report work as done on the strength of "it compiles."
+5. **Every dynamic route and every component that fetches data from a server must have all of the following, no exceptions:**
+   - A route-level `loading.tsx` (or in-component `Suspense` fallback) using **skeleton loaders** (shadcn `Skeleton`) shaped like the real content — never a bare spinner.
+   - A route-level `error.tsx` (client component) that shows a real error state with a retry (`reset()`), not a blank page or console-only failure.
+   - An explicit **empty state** component for the zero-results case, distinct from both the loading and error states — don't let an empty array silently render nothing.
+   - A `not-found.tsx` for dynamic segments (`[slug]`, `[id]`, …) that call `notFound()` when the resource doesn't exist.
