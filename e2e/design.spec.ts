@@ -78,10 +78,47 @@ test.describe("/design", () => {
 });
 
 test.describe("brand assets", () => {
-  for (const path of ["/icon.svg", "/apple-icon", "/opengraph-image"]) {
+  for (const path of [
+    "/icon.svg",
+    "/apple-icon",
+    "/opengraph-image",
+    "/manifest.webmanifest",
+    "/robots.txt",
+  ]) {
     test(`${path} is served`, async ({ request }) => {
       const response = await request.get(path);
       expect(response.status()).toBe(200);
     });
   }
+});
+
+test.describe("metadata", () => {
+  test("root layout publishes title, description and social cards", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(page).toHaveTitle("Vibe — AI website builder");
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute(
+      "content",
+      /live sandbox/,
+    );
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+      "content",
+      /\/opengraph-image/,
+    );
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
+      "content",
+      "summary_large_image",
+    );
+    await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
+  });
+
+  test("/design is not indexed", async ({ page }) => {
+    await page.goto("/design");
+    await expect(page).toHaveTitle("Design system · Vibe");
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      /noindex/,
+    );
+  });
 });

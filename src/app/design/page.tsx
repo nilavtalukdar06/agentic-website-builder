@@ -14,6 +14,8 @@ import { TypographySection } from "./_components/typography-section";
 
 export const metadata: Metadata = {
   title: "Design system",
+  description: "Vibe tokens, logo, components and patterns.",
+  robots: { index: false, follow: false },
 };
 
 export default function DesignPage() {

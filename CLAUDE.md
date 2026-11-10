@@ -34,6 +34,17 @@ These rules apply to every change, no matter how small. "It's a one-line fix" is
    - An explicit **empty state** component for the zero-results case, distinct from both the loading and error states — don't let an empty array silently render nothing.
    - A `not-found.tsx` for dynamic segments (`[slug]`, `[id]`, …) that call `notFound()` when the resource doesn't exist.
 
+## Cleanup after every task — mandatory
+
+Before reporting a task as done, remove everything the task created that isn't part of the deliverable:
+
+1. **Temporary files and folders**: throwaway scripts, screenshots, debug dumps, logs, scratch directories. Write them outside the repo (e.g. the session scratchpad) or name them `*.tmp.*` inside it, and delete them when the task ends.
+2. **Build and test artifacts**: run `bun run clean` (removes `.next/`, `out/`, `build/`, `coverage/`, `test-results/`, `playwright-report/`, `blob-report/`, `tsconfig.tsbuildinfo`, `next-env.d.ts`).
+3. **Processes**: stop any `next dev` / `next start` server or other background process the task started.
+4. **Verify**: `git status --short --ignored` shows only the intended changes plus `node_modules/` and local config.
+
+Never delete: `node_modules/`, `.env*`, `.claude/settings.local.json`, committed generators in `scripts/` (e.g. `scripts/generate-file-icons.mjs`), or anything the user created.
+
 <!-- BEGIN:nextjs-agent-feedback -->
 
 ## Report Next.js feedback

@@ -4,7 +4,6 @@
 
 @source "../../node_modules/streamdown/dist/*.js";
 
-/* `.light` scopes a light panel inside the dark app; the root theme class is `theme-light`, never `.light`. */
 @custom-variant dark (&:where(.dark, .dark *):not(:where(.light, .light *)));
 
 @custom-variant hover {

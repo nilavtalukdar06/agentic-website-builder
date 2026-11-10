@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { Providers } from "@/components/providers";
 import { themeScript } from "@/components/theme/theme-config";
+import { getSiteUrl, siteConfig } from "@/lib/site";
 import "@/styles/globals.css";
 
 const geistSans = Geist({
@@ -16,12 +17,47 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: getSiteUrl(),
+  applicationName: siteConfig.name,
   title: {
-    default: "Vibe",
-    template: "%s · Vibe",
+    default: siteConfig.title,
+    template: `%s · ${siteConfig.name}`,
   },
-  description:
-    "Describe a website. Vibe writes the Next.js code in a live sandbox while you watch.",
+  description: siteConfig.description,
+  keywords: [...siteConfig.keywords],
+  creator: siteConfig.name,
+  publisher: siteConfig.name,
+  alternates: { canonical: "/" },
+  formatDetection: { telephone: false, email: false, address: false },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    siteName: siteConfig.name,
+    title: siteConfig.title,
+    description: siteConfig.description,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteConfig.title,
+    description: siteConfig.description,
+  },
+  appleWebApp: {
+    capable: true,
+    title: siteConfig.name,
+    statusBarStyle: "black-translucent",
+  },
+  robots: { index: true, follow: true },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  colorScheme: "dark light",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: siteConfig.colors.light },
+    { media: "(prefers-color-scheme: dark)", color: siteConfig.colors.dark },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

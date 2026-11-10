@@ -6,7 +6,6 @@ export type ResolvedTheme = Exclude<Theme, "system">;
 export const defaultTheme: Theme = "dark";
 export const themeStorageKey = "vibe-theme";
 
-/* `.light` is reserved for scoped light panels, so the root uses `theme-light`. */
 export const themeClassNames: Record<ResolvedTheme, string> = {
   light: "theme-light",
   dark: "dark",

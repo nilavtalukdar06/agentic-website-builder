@@ -11,7 +11,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
-    "icons:generate": "node scripts/generate-file-icons.mjs"
+    "icons:generate": "node scripts/generate-file-icons.mjs",
+    "clean": "rm -rf .next out build coverage test-results playwright-report blob-report tsconfig.tsbuildinfo next-env.d.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
