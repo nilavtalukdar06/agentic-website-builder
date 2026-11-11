@@ -1,32 +1,15 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty";
+  RouteError,
+  type RouteErrorProps,
+} from "@/components/states/route-error";
 
-export default function Error({
-  error,
-  reset,
-}: {
-  error: Error;
-  reset: () => void;
-}) {
+export default function Error(props: RouteErrorProps) {
   return (
-    <Empty role="alert">
-      <EmptyHeader>
-        <EmptyTitle>Something went wrong</EmptyTitle>
-        <EmptyDescription>
-          {error.message || "We couldn't load your account. Try again."}
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button onClick={reset}>Try again</Button>
-      </EmptyContent>
-    </Empty>
+    <RouteError
+      {...props}
+      description="We couldn't load this page. Try again."
+    />
   );
 }

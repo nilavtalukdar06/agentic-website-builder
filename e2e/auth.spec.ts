@@ -100,7 +100,7 @@ test.describe("signed in", () => {
     "needs the database and auth env",
   );
 
-  test("home shows the user and sign out returns to sign-in", async ({
+  test("shell shows the user and sign out returns to sign-in", async ({
     page,
     context,
   }) => {
@@ -113,8 +113,9 @@ test.describe("signed in", () => {
       await page.goto("/sign-in");
       await expect(page).toHaveURL("/");
 
-      await page.getByRole("button", { name: "Sign out" }).click();
-      await expect(page).toHaveURL(/\/sign-in/);
+      await page.getByRole("button", { name: "Account menu" }).click();
+      await page.getByRole("menuitem", { name: "Sign out" }).click();
+      await expect(page).toHaveURL(/\/sign-in/, { timeout: 15_000 });
       await page.goto("/");
       await expect(page).toHaveURL(/\/sign-in\?callbackURL=%2F$/);
     } finally {

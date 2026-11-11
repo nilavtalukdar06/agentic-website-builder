@@ -25,6 +25,7 @@
     "@prisma/adapter-neon": "7.10.1",
     "@prisma/client": "7.10.1",
     "@radix-ui/react-use-controllable-state": "^1.3.0",
+    "@sindresorhus/slugify": "^4.0.1",
     "@streamdown/code": "^2.0.0",
     "@t3-oss/env-core": "^0.13.11",
     "@tanstack/react-query": "^5.107.1",

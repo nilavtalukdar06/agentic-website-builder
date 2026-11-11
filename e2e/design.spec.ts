@@ -96,8 +96,8 @@ test.describe("metadata", () => {
   test("root layout publishes title, description and social cards", async ({
     page,
   }) => {
-    await page.goto("/");
-    await expect(page).toHaveTitle("Vibe — AI website builder");
+    await page.goto("/sign-in");
+    await expect(page).toHaveTitle("Sign in · Vibe");
     await expect(page.locator('meta[name="description"]')).toHaveAttribute(
       "content",
       /live sandbox/,

@@ -3,18 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  ChevronsUpDownIcon,
-  CirclePlusIcon,
   CreditCardIcon,
-  EllipsisIcon,
   FolderIcon,
   HouseIcon,
   LayoutGridIcon,
 } from "lucide-react";
-import { AppIcon } from "@/components/brand/app-icon";
-import { CreditsCard } from "@/components/credits/credits-card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
@@ -24,31 +17,40 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { initials } from "@/lib/initials";
+import { NewProjectButton } from "./new-project-button";
+import { type ShellUser, UserMenu } from "./user-menu";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 export const platformNav = [
   { title: "Home", href: "/", icon: HouseIcon },
   { title: "Projects", href: "/projects", icon: FolderIcon },
-  { title: "Templates", href: "/templates", icon: LayoutGridIcon },
+  { title: "Templates", href: "/templates", icon: LayoutGridIcon, soon: true },
   { title: "Usage & credits", href: "/usage", icon: CreditCardIcon },
 ] as const;
 
+export function isNavActive(href: string, pathname: string) {
+  return href === "/"
+    ? pathname === "/"
+    : pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   workspaceName: string;
-  recentProjects: { name: string; href: string }[];
-  credits: { balance: number; allowance: number };
-  user: { name: string; plan: string; image?: string | null };
+  user: ShellUser;
+  recent: React.ReactNode;
+  credits: React.ReactNode;
   activeHref?: string;
 };
 
 export function AppSidebar({
   workspaceName,
-  recentProjects,
-  credits,
   user,
+  recent,
+  credits,
   activeHref,
   ...props
 }: AppSidebarProps) {
@@ -60,22 +62,10 @@ export function AppSidebar({
       <SidebarHeader className="gap-3">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg">
-              <AppIcon variant="light" size={32} />
-              <span className="flex min-w-0 flex-col leading-tight">
-                <span className="truncate font-medium">Vibe</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {workspaceName}
-                </span>
-              </span>
-              <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
-            </SidebarMenuButton>
+            <WorkspaceSwitcher workspaceName={workspaceName} />
           </SidebarMenuItem>
         </SidebarMenu>
-        <Button variant="outline" className="w-full">
-          <CirclePlusIcon data-icon="inline-start" />
-          New project
-        </Button>
+        <NewProjectButton />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -84,13 +74,23 @@ export function AppSidebar({
             <SidebarMenu>
               {platformNav.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    isActive={current === item.href}
-                    render={<Link href={item.href} />}
-                  >
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
+                  {"soon" in item ? (
+                    <>
+                      <SidebarMenuButton aria-disabled>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </SidebarMenuButton>
+                      <SidebarMenuBadge>Soon</SidebarMenuBadge>
+                    </>
+                  ) : (
+                    <SidebarMenuButton
+                      isActive={isNavActive(item.href, current)}
+                      render={<Link href={item.href} />}
+                    >
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </SidebarMenuButton>
+                  )}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
@@ -98,60 +98,14 @@ export function AppSidebar({
         </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel>Recent</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {recentProjects.length === 0 ? (
-                <SidebarMenuItem>
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                    No projects yet
-                  </p>
-                </SidebarMenuItem>
-              ) : (
-                recentProjects.map((project) => (
-                  <SidebarMenuItem key={project.href}>
-                    <SidebarMenuButton
-                      isActive={current === project.href}
-                      render={<Link href={project.href} />}
-                    >
-                      <span>{project.name}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))
-              )}
-              {recentProjects.length > 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="text-muted-foreground"
-                    render={<Link href="/projects" />}
-                  >
-                    <EllipsisIcon />
-                    <span>More</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
-            </SidebarMenu>
-          </SidebarGroupContent>
+          <SidebarGroupContent>{recent}</SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="gap-2">
-        <CreditsCard balance={credits.balance} allowance={credits.allowance} />
+        {credits}
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" className="border bg-card">
-              <Avatar className="size-8">
-                {user.image ? (
-                  <AvatarImage src={user.image} alt={user.name} />
-                ) : null}
-                <AvatarFallback>{initials(user.name)}</AvatarFallback>
-              </Avatar>
-              <span className="flex min-w-0 flex-col leading-tight">
-                <span className="truncate font-medium">{user.name}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {user.plan}
-                </span>
-              </span>
-              <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
-            </SidebarMenuButton>
+            <UserMenu user={user} />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

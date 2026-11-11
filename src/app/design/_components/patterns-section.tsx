@@ -5,6 +5,7 @@ import { FolderIcon } from "lucide-react";
 import { CreditsCard } from "@/components/credits/credits-card";
 import { ProjectCard } from "@/components/projects/project-card";
 import { AppSidebar } from "@/components/shell/app-sidebar";
+import { RecentProjectsMenu } from "@/components/shell/recent-projects-menu";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -71,8 +72,8 @@ export function PatternsSection() {
               collapsible="none"
               className="h-180 w-full"
               workspaceName="Personal workspace"
-              recentProjects={sampleRecentProjects}
-              credits={sampleCredits}
+              recent={<RecentProjectsMenu projects={sampleRecentProjects} />}
+              credits={<CreditsCard {...sampleCredits} />}
               user={sampleUser}
               activeHref="/"
             />

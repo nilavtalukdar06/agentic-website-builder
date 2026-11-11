@@ -1,27 +1,34 @@
-import { SignOutButton } from "@/components/auth/sign-out-button";
-import { Logo } from "@/components/brand";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { initials } from "@/lib/initials";
-import { requireSession } from "@/server/session";
+import type { Metadata } from "next";
+import { HOME_RECENT_LIMIT } from "@/lib/project-limits";
+import { getQueryClient, HydrateClient, trpc } from "@/trpc/server";
+import { NewProjectPrompt } from "./_components/new-project-prompt";
+import { RecentProjects } from "./_components/recent-projects";
+
+export const metadata: Metadata = {
+  title: "Home",
+  robots: { index: false, follow: false },
+};
 
 export default async function Home() {
-  const { user } = await requireSession();
+  await getQueryClient().prefetchQuery(
+    trpc.project.recent.queryOptions({ limit: HOME_RECENT_LIMIT }),
+  );
 
   return (
-    <main className="flex flex-1 flex-col gap-8 p-6">
-      <Logo />
-      <div className="flex items-center gap-3">
-        <Avatar>
-          {user.image ? <AvatarImage src={user.image} alt="" /> : null}
-          <AvatarFallback>{initials(user.name)}</AvatarFallback>
-        </Avatar>
-        <p className="text-sm">
-          Signed in as <span className="font-medium">{user.name}</span>
-        </p>
+    <HydrateClient>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-16 px-6 pt-16 pb-12 md:pt-24">
+        <section className="mx-auto flex w-full max-w-2xl flex-col items-center gap-8">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <h1 className="text-display">What should we build today?</h1>
+            <p className="text-muted-foreground">
+              Describe a website. Vibe writes the Next.js code in a live sandbox
+              while you watch.
+            </p>
+          </div>
+          <NewProjectPrompt />
+        </section>
+        <RecentProjects />
       </div>
-      <div>
-        <SignOutButton />
-      </div>
-    </main>
+    </HydrateClient>
   );
 }

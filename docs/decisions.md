@@ -46,9 +46,9 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Neon driver** → `@prisma/adapter-neon` + `@neondatabase/serverless` → plan default; no `ws` dependency because Node ≥ 22 has a global `WebSocket` (add `ws` only if a runtime lacks it) → `@prisma/adapter-pg` + `pg`.
 - **Migrations URL** → `prisma.config.ts` reads `DIRECT_URL` through Prisma's own `env()`, not `src/config/env.ts`, so `migrate deploy` never depends on unrelated app vars.
 - **tRPC** → v11 + `@trpc/tanstack-react-query`, `superjson` → plan default. Server prefetch uses `getQueryClient().prefetchQuery(...)` directly (a generic `prefetch` helper failed to type-check against tRPC query options).
-- **Dev proof page** → `/dev/trpc` (list + `[slug]`) with skeleton, error, empty and not-found states → proves seed → server fetch → hydrate → client refetch before auth exists; served only when `NODE_ENV !== "production"` or `DEV_ROUTES_ENABLED=true` (Playwright runs a production build, so a pure `NODE_ENV` gate would make the e2e spec impossible). Remove when Phase 4 ships real pages.
+- **Dev proof page** → `/dev/trpc` (list + `[slug]`) with skeleton, error, empty and not-found states → proves seed → server fetch → hydrate → client refetch before auth exists; served only when `NODE_ENV !== "production"` or `DEV_ROUTES_ENABLED=true` (Playwright runs a production build, so a pure `NODE_ENV` gate would make the e2e spec impossible). Removed in Phase 4 (with `DEV_ROUTES_ENABLED`) once the real pages and `e2e/projects.spec.ts` covered the same path.
 - **Better Auth tables** → hand-written `User`, `Session`, `Account`, `Verification` (table names `user`, `session`, `account`, `verification`) so `Project.userId` has a real FK; Phase 3 re-checks them against `@better-auth/cli generate`.
-- **E2E needs data** → `e2e/dev-trpc.spec.ts` needs the seeded database (`bun run db:seed`) and is skipped when `DATABASE_URL` is unset.
+- **E2E needs data** → specs that use the signed-in fixture are skipped when `DATABASE_URL` is unset.
 
 ## Phase 3 — authentication
 
@@ -62,3 +62,14 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Spinner inside buttons** → `aria-hidden` on the `Spinner` (it carries `role="status"` + `aria-label="Loading"`), because the button label already says what is happening.
 - **Gap (needs pages)** → Terms, Privacy, Docs, Status and Contact links on the sign-in screen are `#` placeholders until those pages exist.
 - **E2E signed-in fixture** → `e2e/fixtures/session.ts` inserts a user + session with `@neondatabase/serverless` and sets the HMAC-signed `better-auth.session_token` cookie (same signing as `better-call`); the user row is deleted afterwards.
+
+## Phase 4 — app shell, Home, Projects
+
+- **Slug generation** → `@sindresorhus/slugify` 4 (MIT, ESM, typed, released Nov 2026) → transliterates (`&` → `and`, `é` → `e`) so names like "Ember & Oak" give readable slugs; uniqueness comes from the DB: insert, and on a `P2002` on `slug` retry with a 4-character `nanoid` suffix (max 5 tries) → `slugify` (last release ~7 months ago, outside the maintenance window), hand-rolled regex.
+- **Project name from the prompt** → own helper (`src/lib/project-name.ts`): first sentence, leading "build me a / an / the…" removed, capped at 48 characters on a word boundary → no package does this; Phase 5 may let the agent rename the project.
+- **Relative time** → `Intl.RelativeTimeFormat` with `numeric: "auto"` (`src/lib/relative-time.ts`) → no dependency and gives the canvas copy as-is ("yesterday", "last week", "2 hours ago") → `date-fns` `formatDistanceToNow` ("1 day ago", "7 days ago").
+- **⌘K** → shadcn `Command` (`cmdk`, already installed in Phase 1) in `CommandDialog` → plan default → —
+- **Projects search** → server-side `contains` / `mode: "insensitive"` on name, slug and description; the URL update uses nuqs `debounce(300)` and the query key a 10-line `useDebouncedValue` (nuqs returns the new state immediately), with `placeholderData: keepPreviousData` so the grid doesn't flash → full-text search (not needed at this size).
+- **Limits shared by server and client** → `src/lib/project-limits.ts` (plain module) → a constant exported from a `"use client"` file reaches a Server Component as a client reference, not its value: the layout's prefetch sent `{ limit: <function> }`, failed validation silently (`prefetchQuery` swallows errors) and the page fell back to a client fetch. `e2e/projects.spec.ts` now asserts the server HTML contains the user's projects.
+- **Command palette** → this shadcn `CommandDialog` renders `children` straight into `DialogContent`, so callers wrap them in `<Command>` (cmdk crashes with "reading 'subscribe'" otherwise).
+- **Not-found status on `/p/[slug]`** → with a `loading.tsx` the response streams, so `notFound()` returns 200 with a `noindex` robots tag rather than a 404 status (documented Next.js behavior); kept, because the skeleton is mandatory.

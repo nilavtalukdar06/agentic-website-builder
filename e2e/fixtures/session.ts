@@ -33,6 +33,18 @@ export async function createTestSession(name: string) {
     VALUES (${randomUUID()}, ${token}, ${userId}, ${expiresAt}, now())`;
 
   return {
+    userId,
+    addProject: async (project: {
+      slug: string;
+      name: string;
+      description?: string;
+      githubRepo?: string | null;
+      updatedAt?: Date;
+    }) => {
+      await sql`
+        INSERT INTO "Project" (id, slug, name, description, "userId", "githubRepo", "updatedAt")
+        VALUES (${randomUUID()}, ${project.slug}, ${project.name}, ${project.description ?? null}, ${userId}, ${project.githubRepo ?? null}, ${(project.updatedAt ?? new Date()).toISOString()})`;
+    },
     cookie: {
       name: "better-auth.session_token",
       value: await sign(token, process.env.BETTER_AUTH_SECRET!),

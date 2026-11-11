@@ -295,6 +295,14 @@ model Payment {
 - **Relative time**: evaluate `date-fns` `formatDistanceToNow` vs `Intl.RelativeTimeFormat` (no dependency)
 - **⌘K**: shadcn `Command` (cmdk)
 
+**Scope notes (reconciled at Phase 4 start):**
+
+- `project.create` stores the prompt as the project's first `USER` `Message`. The `inngest.send("agent/run")` call is added in Phase 5, when Inngest is installed; it reads that message.
+- `/p/[slug]` ships in Phase 4 as a minimal page (name, slug, prompt, "waiting for the agent" state) with loading / error / not-found, so opening a project works. Phase 6 replaces its body with the workspace.
+- **Templates** is on the canvas but has no phase: the nav item is shown disabled ("Soon").
+- PromptInput **attach**, **mic**, **visibility** and **framework** chips are shown disabled with a "Coming soon" tooltip: attachments are Phase 6+, visibility has no column until Phase 8 export, and **Next.js** is the only sandbox template.
+- Sidebar credits card: balance = `SUM(delta)`; the bar is balance ÷ total credits ever granted (positive deltas).
+
 **Done when:** creating, listing, filtering and opening projects works and matches the canvas.
 
 ---
@@ -444,7 +452,6 @@ Source of truth is `src/config/env.ts`; every change to it also updates `.env.ex
 ```
 # App
 NEXT_PUBLIC_APP_URL=
-DEV_ROUTES_ENABLED=false # serve /dev/* in a production build (Playwright); always on in development
 
 # Database (Neon)
 DATABASE_URL=            # pooled, used by Prisma Client via adapter

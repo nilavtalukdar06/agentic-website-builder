@@ -61,7 +61,7 @@ export function ProjectCard({
           </p>
         </CardContent>
         <CardFooter className="justify-between pt-2 text-xs text-muted-foreground">
-          <span>{editedLabel}</span>
+          <span suppressHydrationWarning>{editedLabel}</span>
           <ArrowRightIcon className="size-3.5 transition-transform group-hover/project:translate-x-0.5" />
         </CardFooter>
       </Card>

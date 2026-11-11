@@ -1,32 +1,12 @@
 "use client";
 
 import { LogOutIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { toast } from "@/components/ui/toast";
-import { authClient } from "@/lib/auth-client";
+import { useSignOut } from "./use-sign-out";
 
 export function SignOutButton() {
-  const router = useRouter();
-  const [pending, setPending] = useState(false);
-
-  const signOut = async () => {
-    setPending(true);
-    const { error } = await authClient.signOut();
-    if (error) {
-      setPending(false);
-      toast.add({
-        type: "error",
-        title: "Couldn't sign out",
-        description: error.message ?? "Try again in a moment.",
-      });
-      return;
-    }
-    router.push("/sign-in");
-    router.refresh();
-  };
+  const { signOut, pending } = useSignOut();
 
   return (
     <Button variant="outline" disabled={pending} onClick={signOut}>
