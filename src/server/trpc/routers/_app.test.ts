@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import type { TRPCContext } from "../init";
+import type { Session, TRPCContext } from "../init";
 
 const devRoutes = vi.hoisted(() => ({ enabled: true }));
 
@@ -9,6 +9,31 @@ vi.mock("@/config/dev-routes", () => ({
 }));
 
 import { createCaller } from "./_app";
+
+function makeSession(userId: string): Session {
+  const now = new Date("2026-01-01T00:00:00Z");
+  return {
+    user: {
+      id: userId,
+      name: "Test User",
+      email: "test@example.com",
+      emailVerified: true,
+      image: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    session: {
+      id: "s1",
+      userId,
+      token: "token",
+      expiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      ipAddress: null,
+      userAgent: null,
+    },
+  };
+}
 
 function makeContext(overrides: Partial<TRPCContext> = {}) {
   const db = {
@@ -48,7 +73,7 @@ describe("project router", () => {
   });
 
   test("list filters by the session user", async () => {
-    const { ctx, db } = makeContext({ session: { user: { id: "u1" } } });
+    const { ctx, db } = makeContext({ session: makeSession("u1") });
     db.project.findMany.mockResolvedValue([project]);
     const result = await createCaller(ctx).project.list();
     expect(result).toEqual([project]);
@@ -58,7 +83,7 @@ describe("project router", () => {
   });
 
   test("bySlug applies the ownership filter", async () => {
-    const { ctx, db } = makeContext({ session: { user: { id: "u1" } } });
+    const { ctx, db } = makeContext({ session: makeSession("u1") });
     db.project.findFirst.mockResolvedValue(project);
     await createCaller(ctx).project.bySlug({ slug: "demo" });
     expect(db.project.findFirst).toHaveBeenCalledWith(
@@ -67,14 +92,14 @@ describe("project router", () => {
   });
 
   test("bySlug throws NOT_FOUND for a project the user does not own", async () => {
-    const { ctx } = makeContext({ session: { user: { id: "u1" } } });
+    const { ctx } = makeContext({ session: makeSession("u1") });
     await expect(
       createCaller(ctx).project.bySlug({ slug: "nope" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   test("bySlug validates its input", async () => {
-    const { ctx } = makeContext({ session: { user: { id: "u1" } } });
+    const { ctx } = makeContext({ session: makeSession("u1") });
     await expect(
       createCaller(ctx).project.bySlug({ slug: "" }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });

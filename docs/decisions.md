@@ -49,3 +49,16 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Dev proof page** → `/dev/trpc` (list + `[slug]`) with skeleton, error, empty and not-found states → proves seed → server fetch → hydrate → client refetch before auth exists; served only when `NODE_ENV !== "production"` or `DEV_ROUTES_ENABLED=true` (Playwright runs a production build, so a pure `NODE_ENV` gate would make the e2e spec impossible). Remove when Phase 4 ships real pages.
 - **Better Auth tables** → hand-written `User`, `Session`, `Account`, `Verification` (table names `user`, `session`, `account`, `verification`) so `Project.userId` has a real FK; Phase 3 re-checks them against `@better-auth/cli generate`.
 - **E2E needs data** → `e2e/dev-trpc.spec.ts` needs the seeded database (`bun run db:seed`) and is skipped when `DATABASE_URL` is unset.
+
+## Phase 3 — authentication
+
+- **Auth** → `better-auth` 1.7 with the Prisma adapter, GitHub as the only provider → plan default; its Prisma peer range covers v7. The hand-written `user` / `session` / `account` / `verification` models were diffed against `@better-auth/cli generate` output and match, so no extra migration → Auth.js, Clerk.
+- **Scopes** → `read:user user:email` with `disableDefaultScope`; repo access is requested at first export with `linkSocial` (Phase 8) → matches the sign-in copy on the canvas → `repo` at sign-in.
+- **OAuth tokens** → `account.encryptOAuthTokens: true` → the GitHub access token is later used server-side for export, so it is encrypted at rest.
+- **Session lookups** → `session.cookieCache` (5 min, compact) → fewer DB reads per request; revocation can take up to 5 minutes to apply.
+- **Route protection** → `src/proxy.ts` checks only for the session cookie (`getSessionCookie`) on `/`, `/projects`, `/usage`, `/p/*` and redirects to `/sign-in?callbackURL=…`; `requireSession()` and `protectedProcedure` stay authoritative. The proxy does **not** bounce signed-in users away from `/sign-in`: a stale cookie would loop between `/` and `/sign-in`. The sign-in page does that redirect after a real `getSession()`.
+- **Open redirects** → `callbackURL` is a nuqs parser (`src/lib/search-params/sign-in.ts`) that only accepts same-origin relative paths; Better Auth also validates it against trusted origins.
+- **Welcome credits** → `WELCOME_CREDITS` env var, default 0; a `databaseHooks.user.create.after` writes one `CreditLedger` row (`ADJUSTMENT`, `meta.kind = "welcome"`) only when it is > 0.
+- **Spinner inside buttons** → `aria-hidden` on the `Spinner` (it carries `role="status"` + `aria-label="Loading"`), because the button label already says what is happening.
+- **Gap (needs pages)** → Terms, Privacy, Docs, Status and Contact links on the sign-in screen are `#` placeholders until those pages exist.
+- **E2E signed-in fixture** → `e2e/fixtures/session.ts` inserts a user + session with `@neondatabase/serverless` and sets the HMAC-signed `better-auth.session_token` cookie (same signing as `better-call`); the user row is deleted afterwards.

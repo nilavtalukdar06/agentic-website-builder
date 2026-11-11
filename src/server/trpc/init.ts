@@ -1,8 +1,9 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { PrismaClient } from "@/generated/prisma/client";
+import type { AuthSession } from "@/server/auth";
 
-export type Session = { user: { id: string } };
+export type Session = AuthSession;
 
 export type TRPCContext = {
   db: PrismaClient;

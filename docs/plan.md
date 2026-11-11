@@ -73,10 +73,10 @@ Version notes:
 │  ├─ schema.prisma
 │  └─ migrations/
 ├─ prisma.config.ts
-├─ proxy.ts                     # route protection (Next 16)
 ├─ sandbox-templates/nextjs/    # E2B template (Dockerfile / template.ts)
 ├─ docs/decisions.md            # package-first decision log
 └─ src/
+   ├─ proxy.ts                  # route protection (Next 16; lives next to app/ when using src/)
    ├─ app/
    │  ├─ (marketing)/sign-in/page.tsx
    │  ├─ (app)/layout.tsx       # sidebar shell
@@ -276,7 +276,7 @@ model Payment {
 - `app/api/auth/[...all]/route.ts` → `toNextJsHandler(auth)`
 - Client: `createAuthClient` from `better-auth/react`; the sign-in button calls `authClient.signIn.social({ provider: "github", callbackURL: "/" })`
 - **Scopes:** sign-in asks only for profile and email. Repository access is requested **at first export** as an incremental scope upgrade. Check Better Auth's current API for requesting extra scopes on a linked account before building Phase 8; if it isn't supported, request `public_repo` or `repo` at sign-in and update the copy on the sign-in screen.
-- `proxy.ts`: redirect signed-out users from `(app)` and `(workspace)` routes to `/sign-in` (cookie check only). Authoritative checks stay in `protectedProcedure` and server components.
+- `src/proxy.ts`: redirect signed-out users from `(app)` and `(workspace)` routes to `/sign-in` (cookie check only). Authoritative checks stay in `protectedProcedure` and server components.
 - **Sign-in screen** from the canvas: logo, "Continue with GitHub", loading state ("Redirecting to GitHub…"), permissions note, Terms/Privacy links
 - On first sign-in, create a welcome-credit ledger entry (amount TBD, or 0)
 
@@ -455,6 +455,7 @@ BETTER_AUTH_SECRET=
 BETTER_AUTH_URL=
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
+WELCOME_CREDITS=0       # granted once on first sign-in; 0 disables
 
 # AI
 OPENAI_API_KEY=
@@ -479,8 +480,8 @@ CREDITS_PER_USD=100
 ## Open decisions
 
 1. **Credit pricing:** credits per dollar, and how token usage converts to credits (and whether failed runs are free)
-2. **Welcome credits** on sign-up (amount, or none)
-3. **GitHub scopes:** incremental `repo` at export vs up-front at sign-in (depends on Better Auth support; update sign-in copy)
+2. **Welcome credits** on sign-up: _resolved in Phase 3_: `WELCOME_CREDITS` env var, default 0 (no ledger row when 0)
+3. **GitHub scopes:** _resolved in Phase 3_: sign-in asks for `read:user user:email` only; repo scope is added at first export via Better Auth `linkSocial({ provider: "github", scopes })`
 4. **Payments in India:** Stripe invite status. If it's delayed, which second provider to add behind `PaymentProvider`
 5. **Sandbox retention:** how long an idle sandbox lives before it's recreated from the latest Version
 6. **Private repos** on export: allowed from day one, or public only at first

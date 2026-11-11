@@ -1,0 +1,46 @@
+import { randomUUID, webcrypto } from "node:crypto";
+import { neon } from "@neondatabase/serverless";
+
+async function sign(value: string, secret: string) {
+  const key = await webcrypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await webcrypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(value),
+  );
+  return encodeURIComponent(
+    `${value}.${Buffer.from(signature).toString("base64")}`,
+  );
+}
+
+export async function createTestSession(name: string) {
+  const sql = neon(process.env.DATABASE_URL!);
+  const userId = `e2e-${randomUUID()}`;
+  const token = randomUUID().replaceAll("-", "");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+  await sql`
+    INSERT INTO "user" (id, name, email, "emailVerified", "updatedAt")
+    VALUES (${userId}, ${name}, ${`${userId}@e2e.local`}, true, now())`;
+  await sql`
+    INSERT INTO "session" (id, token, "userId", "expiresAt", "updatedAt")
+    VALUES (${randomUUID()}, ${token}, ${userId}, ${expiresAt}, now())`;
+
+  return {
+    cookie: {
+      name: "better-auth.session_token",
+      value: await sign(token, process.env.BETTER_AUTH_SECRET!),
+      domain: "localhost",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax" as const,
+    },
+    cleanup: () => sql`DELETE FROM "user" WHERE id = ${userId}`,
+  };
+}
