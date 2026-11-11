@@ -40,12 +40,12 @@ export default async function SignInPage({
       </header>
       <main className="flex flex-1 items-center justify-center px-6">
         <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
-          <AppIcon
-            variant="dark"
-            size={48}
-            className="hidden dark:inline-flex"
-          />
-          <AppIcon variant="light" size={48} className="dark:hidden" />
+          <span className="hidden dark:inline-flex">
+            <AppIcon variant="dark" size={48} />
+          </span>
+          <span className="inline-flex dark:hidden">
+            <AppIcon variant="light" size={48} />
+          </span>
           <div className="flex flex-col gap-2">
             <h1 className="text-page-title">Sign in to Vibe</h1>
             <p className="text-sm text-muted-foreground">

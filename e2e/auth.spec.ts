@@ -38,6 +38,20 @@ test.describe("signed out", () => {
   });
 
   for (const theme of ["light", "dark"] as const) {
+    test(`sign-in shows only the ${theme} app icon`, async ({ page }) => {
+      await page.addInitScript(
+        (value) => localStorage.setItem("vibe-theme", value),
+        theme,
+      );
+      await page.goto("/sign-in");
+      await expect(
+        page.locator("main [data-slot='app-icon']:visible"),
+      ).toHaveCount(1);
+      await expect(
+        page.locator(`main [data-slot='app-icon'][data-variant='${theme}']`),
+      ).toBeVisible();
+    });
+
     test(`sign-in has no contrast violations in ${theme}`, async ({ page }) => {
       await page.addInitScript(
         (value) => localStorage.setItem("vibe-theme", value),
