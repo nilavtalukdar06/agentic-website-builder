@@ -23,7 +23,7 @@ const speechErrors: Record<string, string | null> = {
 };
 
 export function speechErrorMessage(error: string) {
-  return error in speechErrors
+  return Object.hasOwn(speechErrors, error)
     ? speechErrors[error]
     : "Voice input stopped unexpectedly. Try again.";
 }

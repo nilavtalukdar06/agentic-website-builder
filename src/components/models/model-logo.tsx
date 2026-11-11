@@ -1,37 +1,69 @@
 import { BotIcon } from "lucide-react";
+import { useId } from "react";
 import { cn } from "@/lib/utils";
-import { type ModelLogoProvider, modelLogoData } from "./model-logos.generated";
+import { type ModelLogoKey, modelLogoData } from "./model-logos.generated";
 
-export function hasModelLogo(provider: string): provider is ModelLogoProvider {
-  return Object.hasOwn(modelLogoData, provider);
+const providerLogos: Record<string, ModelLogoKey> = {
+  anthropic: "claude",
+  openai: "openai",
+  google: "gemini",
+  moonshotai: "kimi",
+  zai: "zai",
+  deepseek: "deepseek",
+  alibaba: "alibaba",
+  mistral: "mistral",
+};
+
+export function modelLogoKey(modelId: string): ModelLogoKey | null {
+  const [provider, name = ""] = modelId.split("/");
+  if (/codex/i.test(name)) return "codex";
+  return Object.hasOwn(providerLogos, provider)
+    ? providerLogos[provider]
+    : null;
+}
+
+export function scopeLogoIds(
+  body: string,
+  ids: readonly string[],
+  scope: string,
+) {
+  return ids.reduce(
+    (markup, id) => markup.replaceAll(id, `${id}-${scope}`),
+    body,
+  );
 }
 
 export type ModelLogoProps = Omit<React.ComponentProps<"svg">, "children"> & {
-  provider: string;
+  modelId: string;
 };
 
-export function ModelLogo({ provider, className, ...props }: ModelLogoProps) {
-  if (!hasModelLogo(provider)) {
+export function ModelLogo({ modelId, className, ...props }: ModelLogoProps) {
+  const scope = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const key = modelLogoKey(modelId);
+
+  if (!key) {
     return (
       <BotIcon
         data-slot="model-logo"
-        data-provider="generic"
+        data-logo="generic"
         aria-hidden
         className={cn("size-4 shrink-0", className)}
       />
     );
   }
 
-  const logo = modelLogoData[provider];
+  const logo = modelLogoData[key];
   return (
     <svg
       data-slot="model-logo"
-      data-provider={provider}
+      data-logo={key}
       viewBox={logo.viewBox}
       fill="currentColor"
       aria-hidden
       className={cn("size-4 shrink-0", className)}
-      dangerouslySetInnerHTML={{ __html: logo.body }}
+      dangerouslySetInnerHTML={{
+        __html: scopeLogoIds(logo.body, logo.ids, scope),
+      }}
       {...props}
     />
   );

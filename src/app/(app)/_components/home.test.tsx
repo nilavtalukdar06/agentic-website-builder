@@ -140,7 +140,9 @@ describe("NewProjectPrompt", () => {
 
   test("dictation is disabled in a browser without speech recognition", () => {
     renderWithQueryClient(<NewProjectPrompt />);
-    expect(screen.getByRole("button", { name: "Dictate" })).toBeDisabled();
+    const mic = screen.getByRole("button", { name: "Dictate" });
+    expect(mic).toHaveAttribute("aria-disabled", "true");
+    expect(mic).toHaveAttribute("aria-pressed", "false");
   });
 
   describe("dictation", () => {
@@ -207,10 +209,8 @@ describe("NewProjectPrompt", () => {
       name: "Model: Claude Sonnet 5.5. Change model",
     });
     expect(
-      chip
-        .querySelector('[data-slot="model-logo"]')
-        ?.getAttribute("data-provider"),
-    ).toBe("anthropic");
+      chip.querySelector('[data-slot="model-logo"]')?.getAttribute("data-logo"),
+    ).toBe("claude");
     fireEvent.click(chip);
     expect(await screen.findByText("Z.ai")).toBeInTheDocument();
     expect(screen.getAllByText("$2 / $10 per 1M tokens")).toHaveLength(2);
@@ -219,9 +219,9 @@ describe("NewProjectPrompt", () => {
       .map((option) =>
         option
           .querySelector('[data-slot="model-logo"]')
-          ?.getAttribute("data-provider"),
+          ?.getAttribute("data-logo"),
       );
-    expect(logos).toEqual(["anthropic", "zai"]);
+    expect(logos).toEqual(["claude", "zai"]);
     fireEvent.click(screen.getByRole("option", { name: /GLM 5\.3/ }));
     expect(
       await screen.findByRole("button", {
@@ -237,6 +237,33 @@ describe("NewProjectPrompt", () => {
         attachmentIds: [],
       }),
     );
+  });
+
+  test("Codex models show the Codex logo, other OpenAI models the OpenAI one", async () => {
+    const openai = {
+      ...sonnet,
+      provider: "openai",
+      providerLabel: "OpenAI",
+    };
+    trpcHandlers["model.list"] = vi.fn().mockResolvedValue({
+      models: [
+        { ...openai, id: "openai/gpt-5.3-codex", name: "GPT 5.3 Codex" },
+        { ...openai, id: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      ],
+      defaultModelId: "openai/gpt-5.3-codex",
+    });
+    renderWithQueryClient(<NewProjectPrompt />);
+    const chip = await screen.findByRole("button", {
+      name: "Model: GPT 5.3 Codex. Change model",
+    });
+    const logo = (element: Element) =>
+      element
+        .querySelector('[data-slot="model-logo"]')
+        ?.getAttribute("data-logo");
+    expect(logo(chip)).toBe("codex");
+    fireEvent.click(chip);
+    const options = await screen.findAllByRole("option");
+    expect(options.map(logo)).toEqual(["codex", "openai"]);
   });
 
   test("offers a retry when the model list fails", async () => {

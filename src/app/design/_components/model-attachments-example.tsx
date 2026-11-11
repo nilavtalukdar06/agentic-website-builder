@@ -61,7 +61,7 @@ export function ModelAttachmentsExample() {
                 aria-label={`Model: ${selected.name}. Change model`}
                 onClick={() => setOpen(true)}
               >
-                <ModelLogo provider={selected.provider} />
+                <ModelLogo modelId={selected.id} />
                 {selected.name}
                 <ChevronDownIcon />
               </PromptInputButton>
@@ -80,10 +80,7 @@ export function ModelAttachmentsExample() {
                             setOpen(false);
                           }}
                         >
-                          <ModelLogo
-                            provider={model.provider}
-                            className="text-muted-foreground"
-                          />
+                          <ModelLogo modelId={model.id} />
                           <ModelSelectorName>{model.name}</ModelSelectorName>
                           <span className="flex size-4 shrink-0 items-center justify-center">
                             {model.vision ? (

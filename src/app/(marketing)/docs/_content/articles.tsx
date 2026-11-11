@@ -85,8 +85,7 @@ export const docArticles: DocArticle[] = [
               The model chip in the prompt box shows which AI model will build
               your site. Select it to open a searchable list of coding models
               from Anthropic, OpenAI, Google, Moonshot AI, Z.ai, DeepSeek,
-              Alibaba and Mistral, grouped by provider and marked with the
-              provider&apos;s logo.
+              Alibaba and Mistral, grouped by provider and marked with its logo.
             </P>
             <UL>
               <li>

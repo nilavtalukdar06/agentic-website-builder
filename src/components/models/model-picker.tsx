@@ -91,7 +91,7 @@ export function ModelPicker({
         onClick={() => setOpen(true)}
         disabled={disabled || !selected}
       >
-        {selected ? <ModelLogo provider={selected.provider} /> : null}
+        {selected ? <ModelLogo modelId={selected.id} /> : null}
         <span className="max-w-36 truncate">
           {selected?.name ?? "No models"}
         </span>
@@ -115,10 +115,7 @@ export function ModelPicker({
                       setOpen(false);
                     }}
                   >
-                    <ModelLogo
-                      provider={model.provider}
-                      className="text-muted-foreground"
-                    />
+                    <ModelLogo modelId={model.id} />
                     <ModelSelectorName>{model.name}</ModelSelectorName>
                     {blocked ? (
                       <span className="shrink-0 text-xs text-muted-foreground">

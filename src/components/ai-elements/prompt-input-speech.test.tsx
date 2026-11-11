@@ -11,6 +11,8 @@ import {
 class FakeRecognition {
   static instances: FakeRecognition[] = [];
   static failToStart = false;
+  static autoStart = true;
+  static deferEnd = false;
   continuous = false;
   interimResults = false;
   lang = "";
@@ -20,10 +22,14 @@ class FakeRecognition {
   onresult: ((event: unknown) => void) | null = null;
   start = vi.fn(() => {
     if (FakeRecognition.failToStart) throw new Error("already started");
-    this.onstart?.();
+    if (FakeRecognition.autoStart) this.onstart?.();
   });
-  stop = vi.fn(() => this.onend?.());
-  abort = vi.fn(() => this.onend?.());
+  stop = vi.fn(() => {
+    if (!FakeRecognition.deferEnd) this.onend?.();
+  });
+  abort = vi.fn(() => {
+    if (!FakeRecognition.deferEnd) this.onend?.();
+  });
 
   constructor() {
     FakeRecognition.instances.push(this);
@@ -61,12 +67,13 @@ function Composer({
 }
 
 const textbox = () => screen.getByRole("textbox", { name: "Prompt" });
-const button = () =>
-  screen.getByRole("button", { name: /Dictate|Stop dictating/ });
+const button = () => screen.getByRole("button", { name: "Dictate" });
 
 beforeEach(() => {
   FakeRecognition.instances = [];
   FakeRecognition.failToStart = false;
+  FakeRecognition.autoStart = true;
+  FakeRecognition.deferEnd = false;
 });
 
 afterEach(() => {
@@ -76,10 +83,15 @@ afterEach(() => {
 });
 
 describe("PromptInputSpeechButton", () => {
-  test("is disabled where the browser has no speech recognition", () => {
+  test("is inert but still focusable where the browser has no speech recognition", () => {
     render(<Composer />);
-    expect(button()).toBeDisabled();
+    expect(button()).toHaveAttribute("aria-disabled", "true");
+    expect(button()).not.toHaveAttribute("disabled");
+    button().focus();
+    expect(button()).toHaveFocus();
+    fireEvent.click(button());
     expect(FakeRecognition.instances).toHaveLength(0);
+    expect(button()).toHaveAttribute("aria-pressed", "false");
   });
 
   describe("with speech recognition", () => {
@@ -94,12 +106,13 @@ describe("PromptInputSpeechButton", () => {
         window as { webkitSpeechRecognition?: unknown }
       ).webkitSpeechRecognition = FakeRecognition;
       render(<Composer />);
-      expect(button()).toBeEnabled();
+      expect(button()).not.toHaveAttribute("aria-disabled");
     });
 
     test("starts listening and shows interim then final words", () => {
       render(<Composer />);
       expect(button()).toBeEnabled();
+      expect(button()).not.toHaveAttribute("aria-disabled");
       expect(button()).toHaveAttribute("aria-pressed", "false");
 
       fireEvent.click(button());
@@ -107,9 +120,7 @@ describe("PromptInputSpeechButton", () => {
       expect(recognizer().continuous).toBe(true);
       expect(recognizer().interimResults).toBe(true);
       expect(recognizer().lang).toBe(navigator.language || "en-US");
-      expect(
-        screen.getByRole("button", { name: "Stop dictating" }),
-      ).toHaveAttribute("aria-pressed", "true");
+      expect(button()).toHaveAttribute("aria-pressed", "true");
 
       act(() => recognizer().say("a landing"));
       expect(textbox()).toHaveValue("a landing");
@@ -129,7 +140,7 @@ describe("PromptInputSpeechButton", () => {
       render(<Composer />);
       fireEvent.click(button());
       act(() => recognizer().say("hello"));
-      fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+      fireEvent.click(button());
       expect(recognizer().stop).toHaveBeenCalledOnce();
       expect(recognizer().abort).not.toHaveBeenCalled();
       expect(textbox()).toHaveValue("hello");
@@ -185,6 +196,70 @@ describe("PromptInputSpeechButton", () => {
       fireEvent.click(button());
       act(() => recognizer().onerror?.({ error: "aborted" }));
       expect(onSpeechError).not.toHaveBeenCalled();
+    });
+
+    test("a second click while the first is still starting replaces it cleanly", () => {
+      FakeRecognition.autoStart = false;
+      render(<Composer />);
+      fireEvent.click(button());
+      const first = recognizer();
+      fireEvent.click(button());
+      const second = recognizer();
+      expect(FakeRecognition.instances).toHaveLength(2);
+      expect(first.abort).toHaveBeenCalledOnce();
+
+      act(() => {
+        first.onstart?.();
+        first.onend?.();
+      });
+      expect(button()).toHaveAttribute("aria-pressed", "false");
+
+      act(() => second.onstart?.());
+      expect(button()).toHaveAttribute("aria-pressed", "true");
+
+      act(() => first.say("stale words"));
+      expect(textbox()).toHaveValue("");
+      act(() => second.say("fresh words"));
+      expect(textbox()).toHaveValue("fresh words");
+    });
+
+    test("an old session's late error is not reported", () => {
+      FakeRecognition.autoStart = false;
+      const onSpeechError = vi.fn();
+      render(<Composer onSpeechError={onSpeechError} />);
+      fireEvent.click(button());
+      const first = recognizer();
+      fireEvent.click(button());
+      act(() => first.onerror?.({ error: "network" }));
+      expect(onSpeechError).not.toHaveBeenCalled();
+    });
+
+    test("reports errors to the latest callback", () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      const { rerender } = render(<Composer onSpeechError={first} />);
+      fireEvent.click(button());
+      rerender(<Composer onSpeechError={second} />);
+      act(() => recognizer().onerror?.({ error: "network" }));
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledWith(
+        expect.stringMatching(/internet connection/),
+      );
+    });
+
+    test("ignores events that arrive after unmounting", () => {
+      FakeRecognition.deferEnd = true;
+      const { unmount } = render(<Composer />);
+      fireEvent.click(button());
+      const session = recognizer();
+      unmount();
+      expect(session.abort).toHaveBeenCalledOnce();
+      expect(() => {
+        act(() => {
+          session.say("too late");
+          session.onend?.();
+        });
+      }).not.toThrow();
     });
 
     test("reports a start failure instead of throwing", () => {

@@ -1243,7 +1243,12 @@ export const PromptInputSpeechButton = ({
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const baseRef = useRef("");
   const writtenRef = useRef<string | null>(null);
+  const onSpeechErrorRef = useRef(onSpeechError);
   const { value, setInput } = textInput;
+
+  useEffect(() => {
+    onSpeechErrorRef.current = onSpeechError;
+  }, [onSpeechError]);
 
   const stop = useCallback(() => {
     recognitionRef.current?.stop();
@@ -1252,25 +1257,34 @@ export const PromptInputSpeechButton = ({
   const start = () => {
     const Recognition = getSpeechRecognition();
     if (!Recognition) return;
+
+    const previous = recognitionRef.current;
+    recognitionRef.current = null;
+    previous?.abort();
+
     const recognition = new Recognition();
+    const isCurrent = () => recognitionRef.current === recognition;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = navigator.language || "en-US";
     baseRef.current = value;
     writtenRef.current = value;
 
-    recognition.onstart = () => setListening(true);
+    recognition.onstart = () => {
+      if (isCurrent()) setListening(true);
+    };
     recognition.onend = () => {
+      if (!isCurrent()) return;
+      recognitionRef.current = null;
       setListening(false);
-      if (recognitionRef.current === recognition) {
-        recognitionRef.current = null;
-      }
     };
     recognition.onerror = (event) => {
+      if (!isCurrent()) return;
       const message = speechErrorMessage(event.error);
-      if (message) onSpeechError?.(message);
+      if (message) onSpeechErrorRef.current?.(message);
     };
     recognition.onresult = (event) => {
+      if (!isCurrent()) return;
       let transcript = "";
       for (let index = 0; index < event.results.length; index++) {
         transcript += event.results[index][0]?.transcript ?? "";
@@ -1285,7 +1299,7 @@ export const PromptInputSpeechButton = ({
       recognition.start();
     } catch {
       recognitionRef.current = null;
-      onSpeechError?.(speechErrorMessage("unknown") ?? "");
+      onSpeechErrorRef.current?.(speechErrorMessage("unknown") ?? "");
     }
   };
 
@@ -1305,12 +1319,15 @@ export const PromptInputSpeechButton = ({
 
   useEffect(
     () => () => {
-      recognitionRef.current?.abort();
+      const recognition = recognitionRef.current;
+      recognitionRef.current = null;
+      recognition?.abort();
     },
     [],
   );
 
-  const tooltip = !supported
+  const unavailable = !supported;
+  const tooltip = unavailable
     ? "Voice input isn't supported in this browser"
     : listening
       ? "Stop dictating"
@@ -1318,12 +1335,14 @@ export const PromptInputSpeechButton = ({
 
   return (
     <PromptInputButton
-      aria-label={listening ? "Stop dictating" : "Dictate"}
+      aria-label="Dictate"
       aria-pressed={listening}
       tooltip={tooltip}
-      disabled={disabled || !supported}
+      disabled={disabled || unavailable}
+      focusableWhenDisabled={unavailable && !disabled}
       onClick={listening ? stop : start}
       className={cn(
+        "data-disabled:cursor-not-allowed data-disabled:opacity-50 data-disabled:hover:bg-transparent",
         listening &&
           "bg-accent text-accent-foreground motion-safe:animate-pulse",
         className,

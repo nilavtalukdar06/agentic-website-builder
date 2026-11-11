@@ -75,7 +75,10 @@ test.describe("with a session", () => {
     await expect(dialog.locator('[data-slot="model-logo"]')).toHaveCount(total);
     await dialog.getByPlaceholder("Search models…").fill("codex");
     const option = options.first();
-    await expect(option.locator('[data-slot="model-logo"]')).toBeVisible();
+    await expect(option.locator('[data-slot="model-logo"]')).toHaveAttribute(
+      "data-logo",
+      "codex",
+    );
     const name = (await option.textContent())?.split("$")[0].trim() ?? "";
     await option.click();
     await expect(
@@ -119,6 +122,7 @@ test.describe("with a session", () => {
       await expect(mic).toHaveAttribute("aria-pressed", "false");
     } else {
       await expect(mic).toBeDisabled();
+      await expect(mic).toHaveAttribute("aria-disabled", "true");
     }
   });
 

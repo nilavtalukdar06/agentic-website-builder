@@ -37,6 +37,15 @@ describe("speechErrorMessage", () => {
     expect(speechErrorMessage(code)).toMatch(message);
   });
 
+  test.each(["constructor", "toString", "__proto__", "hasOwnProperty"])(
+    "treats the object property %s as an unknown error, not a message",
+    (code) => {
+      expect(speechErrorMessage(code)).toBe(
+        "Voice input stopped unexpectedly. Try again.",
+      );
+    },
+  );
+
   test("stays quiet when the user stops it", () => {
     expect(speechErrorMessage("aborted")).toBeNull();
   });
