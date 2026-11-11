@@ -34,7 +34,10 @@ export function AppHeader() {
   return (
     <header className="flex h-13 shrink-0 items-center gap-2 px-4">
       <SidebarTrigger />
-      <Separator orientation="vertical" className="mr-1 h-4 self-center" />
+      <Separator
+        orientation="vertical"
+        className="mr-1 h-4 data-vertical:self-center"
+      />
       <Breadcrumb>
         <BreadcrumbList>
           {crumbs.map((crumb, index) => {

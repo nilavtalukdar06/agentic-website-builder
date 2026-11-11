@@ -151,7 +151,7 @@ function PromptComposer() {
           </PromptInputTools>
         </PromptInputFooter>
       </PromptInput>
-      <Suggestions className="w-auto max-w-full">
+      <Suggestions>
         {promptSuggestions.map((suggestion) => (
           <Suggestion
             key={suggestion.label}
