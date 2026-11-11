@@ -1,6 +1,7 @@
+import { env } from "@/config/env";
 import { brandHex } from "@/components/brand/logo-paths";
 
-export function getSiteUrl(value = process.env.NEXT_PUBLIC_APP_URL) {
+export function getSiteUrl(value = env.NEXT_PUBLIC_APP_URL) {
   try {
     return new URL(value || "http://localhost:3000");
   } catch {

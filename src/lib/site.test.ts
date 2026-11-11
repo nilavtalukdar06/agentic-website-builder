@@ -24,6 +24,6 @@ describe("site metadata", () => {
   test("robots keeps private and internal routes out of the index", () => {
     const rules = robots().rules;
     const rule = Array.isArray(rules) ? rules[0] : rules;
-    expect(rule.disallow).toEqual(["/api/", "/p/", "/design"]);
+    expect(rule.disallow).toEqual(["/api/", "/p/", "/design", "/dev"]);
   });
 });

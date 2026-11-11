@@ -55,7 +55,7 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | GitHub export        | GitHub REST API                              | `@octokit/rest` (candidate; see Phase 8)                                                                                                |
 | Theming              | light/dark                                   | `next-themes`                                                                                                                           |
 | Fonts                | Geist / Geist Mono                           | `geist` (or `next/font/google`)                                                                                                         |
-| Env validation       | typed env                                    | `@t3-oss/env-nextjs` (candidate)                                                                                                        |
+| Env validation       | typed env                                    | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
 
 Version notes:
 
@@ -439,9 +439,12 @@ Scope is **view, copy, download**, nothing editable.
 
 ## Environment variables
 
+Source of truth is `src/config/env.ts`; every change to it also updates `.env.example` and this list.
+
 ```
 # App
 NEXT_PUBLIC_APP_URL=
+DEV_ROUTES_ENABLED=false # serve /dev/* in a production build (Playwright); always on in development
 
 # Database (Neon)
 DATABASE_URL=            # pooled, used by Prisma Client via adapter

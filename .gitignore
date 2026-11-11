@@ -28,6 +28,7 @@ yarn-error.log*
 .pnpm-debug.log*
 
 .env*
+!.env.example
 
 .vercel
 
@@ -35,3 +36,5 @@ yarn-error.log*
 next-env.d.ts
 
 *.tmp.*
+
+/src/generated
