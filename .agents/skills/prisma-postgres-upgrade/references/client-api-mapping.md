@@ -23,7 +23,10 @@ import { contractFromJson } from "@prisma/orm-postgres/static";
 import type { Contract } from "./prisma/contract.js";
 import contractJson from "./prisma/contract.json";
 
-export const db = postgres({ contract: contractFromJson<Contract>(contractJson), url: process.env["DATABASE_URL"]! });
+export const db = postgres({
+  contract: contractFromJson<Contract>(contractJson),
+  url: process.env["DATABASE_URL"]!,
+});
 ```
 
 In a CommonJS `.ts` file, import the JSON without the `with { type: "json" }` attribute the
@@ -35,20 +38,20 @@ On Compute, `prisma-compute` replaces this client with `service.load().db.client
 Queries start at `db.orm.public.<Model>`. For anything not listed here, follow the synced
 `prisma-8` skill (`references/queries.md`, `references/runtime.md`).
 
-| Prisma ORM 6 / 7 | Prisma 8 |
-|------------------|----------|
-| `findMany({ where, orderBy })` | `.where({...}).orderBy((m) => m.field.asc()).all()` |
-| `include: { _count: { select: { posts: true } } }` | `.include("posts", (p) => p.count())`; the number is `row.posts`, not `row._count.posts` |
-| `orderBy: { votes: { _count: "desc" } }` | `.orderBy((p) => p.votes.count().desc())` |
-| `findUnique({ where: { id } })` | `.first({ id })` |
-| `findUnique` on an `@unique` or `@@unique` field | `.where({...}).first()` |
-| `create({ data: { ..., votes: { create: {...} } } })` | `.create({ ..., votes: (v) => v.create([{...}]) })` |
-| `deleteMany({ where })` then `.count` | `.where({...}).deleteAndCount()` |
-| `deleteMany()` with no filter (seeds, tests) | `.where((m) => m.id.isNotNull()).deleteAll()`: writes need a filter |
-| `createMany({ data: [...] })` | `.createAll([...])` |
-| `count({ where })` | `.where({...}).aggregate((a) => ({ total: a.count() }))` |
-| `Object.values(PostStatus)` from `@prisma/client` | `db.nativeEnums.public.PostStatus.values` |
-| ``$queryRaw`SELECT 1` `` (health checks) | ``db.execute(db.raw.sql`SELECT 1`.affectedCount().build())`` |
+| Prisma ORM 6 / 7                                      | Prisma 8                                                                                 |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `findMany({ where, orderBy })`                        | `.where({...}).orderBy((m) => m.field.asc()).all()`                                      |
+| `include: { _count: { select: { posts: true } } }`    | `.include("posts", (p) => p.count())`; the number is `row.posts`, not `row._count.posts` |
+| `orderBy: { votes: { _count: "desc" } }`              | `.orderBy((p) => p.votes.count().desc())`                                                |
+| `findUnique({ where: { id } })`                       | `.first({ id })`                                                                         |
+| `findUnique` on an `@unique` or `@@unique` field      | `.where({...}).first()`                                                                  |
+| `create({ data: { ..., votes: { create: {...} } } })` | `.create({ ..., votes: (v) => v.create([{...}]) })`                                      |
+| `deleteMany({ where })` then `.count`                 | `.where({...}).deleteAndCount()`                                                         |
+| `deleteMany()` with no filter (seeds, tests)          | `.where((m) => m.id.isNotNull()).deleteAll()`: writes need a filter                      |
+| `createMany({ data: [...] })`                         | `.createAll([...])`                                                                      |
+| `count({ where })`                                    | `.where({...}).aggregate((a) => ({ total: a.count() }))`                                 |
+| `Object.values(PostStatus)` from `@prisma/client`     | `db.nativeEnums.public.PostStatus.values`                                                |
+| ``$queryRaw`SELECT 1` `` (health checks)              | ``db.execute(db.raw.sql`SELECT 1`.affectedCount().build())``                             |
 
 What has no Prisma 8 form yet, such as `increment` in an update, is listed in
 [Coming from Prisma ORM 7](https://www.prisma.io/docs/orm/coming-from-prisma-orm-7#queries).
@@ -81,7 +84,9 @@ const board = await db.orm.public.Board.whereUnique({ slug }).first(); // does n
 
 ```typescript
 const board = await db.orm.public.Board.where({ slug }).first();
-const post = await db.orm.public.Post.include("votes", (v) => v.count()).first({ id }); // post.votes
+const post = await db.orm.public.Post.include("votes", (v) => v.count()).first({
+  id,
+}); // post.votes
 ```
 
 ## References

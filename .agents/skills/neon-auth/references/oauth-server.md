@@ -62,7 +62,9 @@ Both pages receive the signed authorization query. Use `@neon/auth` 0.8.0 or lat
 ```tsx
 // lib/auth/client.ts
 import { createAuthClient } from "@neon/auth";
-export const authClient = createAuthClient(process.env.NEXT_PUBLIC_NEON_AUTH_URL!);
+export const authClient = createAuthClient(
+  process.env.NEXT_PUBLIC_NEON_AUTH_URL!,
+);
 ```
 
 Login page. Existing sign-in calls (`signIn.email`, `signIn.social`) carry the query automatically. On every load, including the return from a social sign-in, resume if the user already has a session:
@@ -71,7 +73,8 @@ Login page. Existing sign-in calls (`signIn.email`, `signIn.social`) carry the q
 const { data } = await authClient.getSession();
 if (data?.user) {
   const { error } = await authClient.oauth2.continue({ selected: true });
-  if (error) showError("This sign-in link expired. Go back to the app and try again.");
+  if (error)
+    showError("This sign-in link expired. Go back to the app and try again.");
 }
 ```
 

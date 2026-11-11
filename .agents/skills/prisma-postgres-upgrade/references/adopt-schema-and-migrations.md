@@ -17,7 +17,10 @@ tables.
 
 ```typescript
 import "dotenv/config"; // only if the app already uses dotenv
-import { defineConfig as orm, prisma7Schema } from "@prisma/orm-postgres/config";
+import {
+  defineConfig as orm,
+  prisma7Schema,
+} from "@prisma/orm-postgres/config";
 import { definePrismaConfig } from "prisma/config";
 
 export default definePrismaConfig({

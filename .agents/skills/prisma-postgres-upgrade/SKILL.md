@@ -53,15 +53,15 @@ use those. Use Node.js 24.11 or newer if the app will run under `prisma dev`.
 
 ## The path
 
-| Step | What happens | Where the detail is |
-|------|--------------|---------------------|
-| 0 | Run the repo's own checks and record the results | `verify-upgrade-checklist` |
-| 1 | Remove `prisma`, install the versions above, remove `prisma generate` from scripts | this file |
-| 2 | Write the Prisma 8 `prisma.config.ts`, then `npx prisma skills sync` | `adopt-schema-and-migrations` |
-| 3 | `contract emit`, `db sign`, baseline migration, retire `prisma/migrations` | `adopt-schema-and-migrations` |
-| 4 | Create the Prisma 8 client and rewrite every query | `client-api-mapping` |
-| 5 | Remove `@prisma/client`, the adapter and the generated client | this file |
-| 6 | Run the same checks again and start the app | `verify-upgrade-checklist` |
+| Step | What happens                                                                       | Where the detail is           |
+| ---- | ---------------------------------------------------------------------------------- | ----------------------------- |
+| 0    | Run the repo's own checks and record the results                                   | `verify-upgrade-checklist`    |
+| 1    | Remove `prisma`, install the versions above, remove `prisma generate` from scripts | this file                     |
+| 2    | Write the Prisma 8 `prisma.config.ts`, then `npx prisma skills sync`               | `adopt-schema-and-migrations` |
+| 3    | `contract emit`, `db sign`, baseline migration, retire `prisma/migrations`         | `adopt-schema-and-migrations` |
+| 4    | Create the Prisma 8 client and rewrite every query                                 | `client-api-mapping`          |
+| 5    | Remove `@prisma/client`, the adapter and the generated client                      | this file                     |
+| 6    | Run the same checks again and start the app                                        | `verify-upgrade-checklist`    |
 
 In step 1, also remove `prisma generate` from `build`, `postinstall` and any other script: the
 Prisma 8 CLI has no `generate` and fails with `CLI.UNKNOWN_COMMAND`. Step 1 removes the only
@@ -97,11 +97,11 @@ The agent cannot do these; stop and ask:
 
 ## Reference files
 
-| Reference | What it covers |
-|-----------|----------------|
+| Reference                                   | What it covers                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `references/adopt-schema-and-migrations.md` | The first `prisma.config.ts`, keeping `schema.prisma` as the contract, CommonJS `tsconfig`, the baseline, retiring the old migration setup |
-| `references/client-api-mapping.md` | The Prisma 8 client, Prisma ORM 6/7 calls to Prisma 8, and the differences that break rewrites |
-| `references/verify-upgrade-checklist.md` | Proving the upgrade with the repo's own checks |
+| `references/client-api-mapping.md`          | The Prisma 8 client, Prisma ORM 6/7 calls to Prisma 8, and the differences that break rewrites                                             |
+| `references/verify-upgrade-checklist.md`    | Proving the upgrade with the repo's own checks                                                                                             |
 
 ## Verified against
 
