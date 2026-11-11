@@ -24,6 +24,10 @@ export const template = Template()
     `sed -i 's/= {}/= {\\n  allowedDevOrigins: ["${ALLOWED_DEV_ORIGIN}"],\\n}/' next.config.ts && grep -q allowedDevOrigins next.config.ts`,
   )
   .runCmd("npx --yes shadcn@latest add --all --yes --overwrite")
+  .copy("agents-rules.md", "/tmp/agents-rules.md")
+  .runCmd(
+    "cat /tmp/agents-rules.md AGENTS.md > AGENTS.merged && mv AGENTS.merged AGENTS.md && grep -q 'Always start here' AGENTS.md && grep -q 'BEGIN:nextjs-agent-rules' AGENTS.md",
+  )
   .setStartCmd(
     "npx next dev --turbopack -p 3000",
     waitForURL("http://localhost:3000"),

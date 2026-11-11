@@ -37,27 +37,29 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 
 ## 1. Tech stack
 
-| Concern              | Choice                                       | Packages (verify latest at install time)                                                                                                |
-| -------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework            | Next.js 16 (App Router, Turbopack), React 19 | `next`, `react`, `react-dom`                                                                                                            |
-| Styling              | Tailwind CSS v4 + CSS variables              | `tailwindcss`, `@tailwindcss/postcss`, `tw-animate-css`                                                                                 |
-| UI                   | shadcn/ui (copy-in components)               | `npx shadcn@latest init / add …`, `lucide-react`                                                                                        |
-| AI UI                | AI Elements (shadcn-based registry)          | `npx ai-elements@latest add <component>`                                                                                                |
-| Data fetching        | tRPC v11 + TanStack React Query v5           | `@trpc/server`, `@trpc/client`, `@trpc/tanstack-react-query`, `@tanstack/react-query`, `zod`, `superjson`, `client-only`, `server-only` |
-| URL state            | nuqs v2                                      | `nuqs`                                                                                                                                  |
-| Agents               | Inngest v4 + AI SDK (own durable tool loop)  | `inngest` (v4), `ai` (v7) — AgentKit dropped in Phase 5, see `docs/decisions.md`                                                        |
-| Agent → UI streaming | Inngest v4 built-in realtime                 | `inngest/realtime` (channels, publish), `inngest/react` (`useRealtime`, Phase 6)                                                        |
-| LLM                  | Vercel AI Gateway via the AI SDK             | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway     |
-| Voice input          | Browser Web Speech API                       | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                   |
-| File storage         | Neon Object Storage (S3-compatible)          | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                |
-| Sandbox              | E2B (custom Next.js template)                | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                          |
-| Auth                 | Better Auth, **GitHub OAuth only**           | `better-auth`                                                                                                                           |
-| Payments             | Stripe Checkout (one-time, custom amount)    | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                     |
-| Database             | PostgreSQL on Neon, Prisma 7                 | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                    |
-| GitHub export        | GitHub REST API                              | `@octokit/rest` (candidate; see Phase 8)                                                                                                |
-| Theming              | light/dark                                   | `next-themes`                                                                                                                           |
-| Fonts                | Geist / Geist Mono                           | `geist` (or `next/font/google`)                                                                                                         |
-| Env validation       | typed env                                    | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
+| Concern              | Choice                                                                                           | Packages (verify latest at install time)                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework            | Next.js 16 (App Router, Turbopack), React 19                                                     | `next`, `react`, `react-dom`                                                                                                            |
+| Styling              | Tailwind CSS v4 + CSS variables                                                                  | `tailwindcss`, `@tailwindcss/postcss`, `tw-animate-css`                                                                                 |
+| UI                   | shadcn/ui (copy-in components)                                                                   | `npx shadcn@latest init / add …`, `lucide-react`                                                                                        |
+| AI UI                | AI Elements (shadcn-based registry)                                                              | `npx ai-elements@latest add <component>`                                                                                                |
+| Data fetching        | tRPC v11 + TanStack React Query v5                                                               | `@trpc/server`, `@trpc/client`, `@trpc/tanstack-react-query`, `@tanstack/react-query`, `zod`, `superjson`, `client-only`, `server-only` |
+| URL state            | nuqs v2                                                                                          | `nuqs`                                                                                                                                  |
+| Agents               | Inngest v4 + AI SDK (own durable tool loop); several specialist agents per request from Phase 5b | `inngest` (v4), `ai` (v7) — AgentKit dropped in Phase 5, see `docs/decisions.md`                                                        |
+| Agent → UI streaming | Inngest v4 built-in realtime                                                                     | `inngest/realtime` (channels, publish), `inngest/react` (`useRealtime`, Phase 6)                                                        |
+| LLM                  | Vercel AI Gateway via the AI SDK                                                                 | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway     |
+| Agent skills         | `skills` CLI at template build (Phase 5b)                                                        | `skills` (dev/build only, MIT); five skills in every sandbox, own `loadSkill` tool                                                      |
+| Web search           | AI Gateway search tools (Phase 5b)                                                               | `ai` (`gateway.tools.parallelSearch`); works with every model, billed per search through the gateway                                    |
+| Voice input          | Browser Web Speech API                                                                           | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                   |
+| File storage         | Neon Object Storage (S3-compatible)                                                              | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                |
+| Sandbox              | E2B (custom Next.js template)                                                                    | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                          |
+| Auth                 | Better Auth, **GitHub OAuth only**                                                               | `better-auth`                                                                                                                           |
+| Payments             | Stripe Checkout (one-time, custom amount)                                                        | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                     |
+| Database             | PostgreSQL on Neon, Prisma 7                                                                     | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                    |
+| GitHub export        | GitHub REST API                                                                                  | `@octokit/rest` (candidate; see Phase 8)                                                                                                |
+| Theming              | light/dark                                                                                       | `next-themes`                                                                                                                           |
+| Fonts                | Geist / Geist Mono                                                                               | `geist` (or `next/font/google`)                                                                                                         |
+| Env validation       | typed env                                                                                        | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
 
 Version notes:
 
@@ -119,6 +121,9 @@ Version notes:
    │  ├─ publisher.ts           # publish helper (never fails a step)
    │  ├─ functions/run-agent.ts
    │  └─ agent/                 # model turn, tools, tool executor, persistence, prompts
+   │     ├─ router.ts           # (Phase 5b) picks specialists for a message
+   │     ├─ agents/             # (Phase 5b) researcher, designer, builder, reviewer
+   │     └─ skills.ts           # (Phase 5b) skill index + `loadSkill`
    ├─ trpc/                     # client.tsx, server.tsx, query-client.ts
    ├─ lib/search-params/        # nuqs parsers (shared server/client)
    └─ styles/globals.css        # design tokens
@@ -413,6 +418,107 @@ One channel per project, `project:<projectId>`, typed with zod in `src/inngest/c
 
 ---
 
+## Phase 5b — Agent skills, web search and multiple agents (between Phase 5 and Phase 6)
+
+**Goal:** the single coding agent becomes a small team chosen for each request. Every generated site ships with five agent skills and an `AGENTS.md` that makes agents read them, and agents can search the web. Added at the owner's request after Phase 5. Phase 6 does not depend on it, but Phase 6's chat shows its output (§5b.7).
+
+**Shipped ahead of this phase (Phase 5 follow-up):** the sandbox `AGENTS.md` rules (§5b.2) and the system prompt line that sends the agent to them. Everything else below is planned.
+
+### 5b.1 Skills in every site
+
+Each new site's sandbox contains these five skills:
+
+| Skill                         | Source repository          | Install command (non-interactive, add `-y`)                                                      | Used by                     |
+| ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------- |
+| `vercel-react-best-practices` | `vercel-labs/agent-skills` | `npx skills add https://github.com/vercel-labs/agent-skills --skill vercel-react-best-practices` | Builder, Reviewer           |
+| `next-best-practices`         | `vercel-labs/openreview`   | `npx skills add https://github.com/vercel-labs/openreview --skill next-best-practices`           | Builder, Reviewer           |
+| `frontend-design`             | `anthropics/skills`        | `npx skills add anthropics/skills --skill frontend-design`                                       | Designer, Builder           |
+| `shadcn`                      | `shadcn-ui/ui`             | `npx skills add shadcn-ui/ui --skill shadcn`                                                     | Designer, Builder, Reviewer |
+| `vercel-composition-patterns` | `vercel-labs/agent-skills` | `npx skills add vercel-labs/agent-skills --skill vercel-composition-patterns`                    | Builder, Reviewer           |
+
+- **Installed once, at template build time** (`sandbox-templates/nextjs/template.ts`, after `shadcn add --all`), not per sandbox: no run-time latency, no GitHub dependency when a project starts, and every sandbox from one template build has identical skills. The `skills` CLI (1.8.1, MIT, `vercel-labs/skills`) was checked in a scratch project: all five commands run without prompts with `-y`, and each writes `.agents/skills/<name>/`, a symlink in `.claude/skills/`, and a source plus content hash in `skills-lock.json`. Keep that lockfile with the template so a skill update is a deliberate rebuild (`npx skills update`), never silent. This repo's own skills come from the same five sources.
+- Use the **skill names** above in the commands: `--skill` matches the skill's name, while the source folders are `skills/react-best-practices` and `skills/composition-patterns`.
+- **Weight:** 131 files and 836 KB in total; each `SKILL.md` is 2.9–21.6 KB. The five descriptions together are about 1.5 KB (a cheap always-on index); loading every `SKILL.md` body would cost about 45 KB (roughly 11 k tokens), which is why each agent gets an allowlist (table in §5b.4) and skills are loaded on demand.
+- **Not part of the project's files:** `.agents/` and `.claude/` are left out of Version snapshots (131 files would use a third of the 400-file cap) and out of the GitHub export, and agents can read but never write them (path guard: read allowed, write denied). A restore does not delete them: a new sandbox from the template already has them.
+
+### 5b.2 How agents use skills
+
+- **`AGENTS.md` in every site** (shipped): `sandbox-templates/nextjs/agents-rules.md` is placed **above** the block `next dev` manages (that block is re-added if removed, so our text must stay outside it; `CLAUDE.md` is just `@AGENTS.md`). It tells any agent to read `AGENTS.md` in full before writing or changing code, to re-read it at the start of every request, and to **load the available skills before any change, even a small one** (a color, a label, a spacing fix), with `.agents/skills/<name>/SKILL.md` as the place to look and "if the folder is missing or empty, carry on". The template build fails if the rules or the managed block are missing after the merge.
+- **The agent is sent there by the system prompt** (shipped): our loop does not auto-load `AGENTS.md` the way Claude Code does, so the prompt says to read it with `readFiles` first on every request.
+- **Index in each agent's prompt:** name and description (from the `SKILL.md` frontmatter) of the skills on that agent's allowlist.
+- **`loadSkill({ name })` tool:** returns the `SKILL.md` body and the list of files in the skill's folder; other files are read with `readFiles` only when needed (progressive disclosure). Cached-input pricing keeps repeat turns cheap.
+- **Enforced, not just asked.** The Phase 5 live tests showed agents miss prompt rules (a model put theme-token text, which turns light in dark mode, on a hard-coded light gradient despite the instruction). So the tool executor rejects an agent's first `createOrUpdateFiles` until it has read `AGENTS.md` and loaded at least one skill from its allowlist ("Load the skills that apply before writing code"). This applies to small edits too.
+- **Existing projects:** a restore writes the last Version's `AGENTS.md` over the template's, so older projects would miss the rules. `ensureAgentInstructions()` (same idea as `ensureDevOrigins`) adds the section when it is missing, before the agent starts.
+
+### 5b.3 Web search
+
+- **Choice: AI Gateway search tools.** They run on the gateway, work with **every** model in the curated list, and need no new vendor or key (`AI_GATEWAY_API_KEY`). Default `gateway.tools.parallelSearch({ mode: "basic", maxResults: 5, maxCharsTotal: ~6000 })`. To evaluate when building: `perplexitySearch` (recency and domain filters), and `browserbaseFetch` / `deepseekFetch` for reading a URL the user supplied. Rejected: provider-native search (`openai.tools.webSearch` and similar) because it ties a tool to one provider and breaks the any-model picker; our own scraper (maintenance, abuse).
+- **Probed on the owner's free-tier account (November 2026):** works with `openai/gpt-5.1-codex-mini`. One search added **$0.005** to the generation's `totalCost` (the model tokens were about $0.0012 of $0.0062). `billableWebSearchCalls` stayed 0, so count searches from `tool-result` parts, not from that field. The generation record needed more than 3 s to appear, which our cost lookup already allows for (retries at 0, 2 and 5 s).
+- **Metering:** the exact cost we already read includes the fee (one search is about half a credit at 100 credits per dollar, rounded up once per run). The **fallback estimate must add a flat `$0.005 × searches`**, otherwise a failed cost lookup under-bills searches.
+- **Limits:** at most 6 searches per run. Only the **Researcher** has the tool (one place to cap spend and context). Search results are untrusted text: they go to the Researcher only, which returns a short brief with source URLs; other agents receive that brief as data and never see raw pages.
+- **Realtime and persistence:** new `search` topic `{ query, sources: [{ title, url }] }`, persisted as a `sources` message part (Phase 6 renders it with AI Elements `Sources`).
+- **Privacy:** the Researcher's queries (derived from the user's prompt) go to the search provider through the gateway. Update the Privacy Policy (who we share data with) when this ships.
+
+### 5b.4 From one agent to several
+
+Today `run-agent` runs one coding loop. New: an **orchestrator** step chooses the specialists for each message. Specialists run as namespaced step loops inside the same Inngest function (`researcher-<turn>`, `builder-<turn>`, …), so the run id keeps giving idempotent `run_<runId>_*` writes and there is still **one credit debit per user message**.
+
+| Agent      | Job                                                                                                                                                                                                           | Tools                                                     | Skills (allowlist)                                                                                               | Runs when                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Researcher | Web research, or reading a referenced site; returns a short brief with sources                                                                                                                                | `parallel_search` (and a fetch tool), `readFiles`         | none                                                                                                             | The request needs outside facts: a real brand or business, "like example.com", current data      |
+| Designer   | Turns the request and any attached images into a design brief: palette tokens, type scale, layout, component list. Read-only                                                                                  | `readFiles`, `loadSkill`                                  | `frontend-design`, `shadcn`                                                                                      | A new site, a redesign, or a look-and-feel request                                               |
+| Builder    | The Phase 5 coding agent: writes files and runs commands                                                                                                                                                      | terminal, `createOrUpdateFiles`, `readFiles`, `loadSkill` | `next-best-practices`, `vercel-react-best-practices`, `vercel-composition-patterns`, `shadcn`, `frontend-design` | Always, when code changes                                                                        |
+| Reviewer   | Checks the result: `npx tsc --noEmit`, lint, that the page compiles, and the skill checklists (server and client boundaries, composition, accessibility). Returns findings; the Builder gets **one** fix pass | terminal (read-only commands), `readFiles`, `loadSkill`   | all five                                                                                                         | After the Builder, for a first version or when it wrote 5 or more files; skipped for small edits |
+
+- **Router:** one cheap structured call (zod: `{ agents: ("researcher" | "designer" | "builder" | "reviewer")[], reason }`) from the message, whether the project has a Version, its file list and any attachments. Obvious cases are decided in code, the model only handles the rest. **Default when unsure: Builder alone** (cheapest and safe). Reviewer is decided after the Builder finishes, from the number of files written.
+
+  | Message                                    | Agents                                     |
+  | ------------------------------------------ | ------------------------------------------ |
+  | "Make the heading bigger"                  | Builder                                    |
+  | "Add a newsletter signup"                  | Builder (+ Reviewer if it wrote 5+ files)  |
+  | "A landing page for Ember & Oak"           | Designer → Builder → Reviewer              |
+  | "A site for Acme, like stripe.com/pricing" | Researcher → Designer → Builder → Reviewer |
+
+- **Order and parallelism:** sequential by default, because all agents share one sandbox. Only **read-only** agents run in parallel (Researcher and Designer, as parallel step branches). Never two writers at once.
+- **Handoff:** compact briefs (about 1.5 k tokens at most), persisted as `agent` parts, not transcripts. This is the AI SDK subagent pattern: the parent sees a summary, not the subagent's whole context.
+- **Models:** the Builder and Designer use the user's picked model (vision matters for images). The router and Researcher use a cheap fixed model from the curated list (`AI_ROUTER_MODEL`; on the owner's free tier it must be one of the three allowed models).
+- **Metering:** one debit per message; ledger `meta.agents = [{ name, model, usd, searches }]` gives the breakdown. The Phase 5 balance stop applies across agents. Turn caps: Researcher 6, Designer 4, Builder 30 (as today), Reviewer 6; at most 3 specialists plus one fix pass per message.
+- **Failure isolation:** a failed Researcher or Designer degrades (the Builder proceeds without the brief and says so). A failed Builder or Reviewer follows the Phase 5 rules (error reply, no charge).
+- **Loop choice:** keep our durable per-step loop on Inngest. The AI SDK `ToolLoopAgent` as a subagent runs a whole loop inside one tool call (no per-step durability or retries), so it is used only where a single structured answer is needed (the router).
+
+### 5b.5 Evaluated and not chosen
+
+- **AI SDK harnesses** (`@ai-sdk/harness-*` for Claude Code, Codex, OpenCode and others): native skills, subagents and `webSearch`. The AI SDK docs mark them **experimental** ("expect breaking changes"). Each adapter runs one vendor's agent runtime that owns the loop and the session, so our model picker, Inngest per-step durability, per-turn credit stop and command and path guards would not carry over, and the runtime runs inside the sandbox with provider credentials (against "no secrets in sandboxes"). Revisit when they stabilise.
+- **eve** (agent framework on the AI SDK): a second durable-run system that overlaps Inngest.
+- **Fetching skills from GitHub on every run:** slower, depends on the network, unpinned.
+
+### 5b.6 Realtime events and message parts (additions to §5.3)
+
+`agent` topic `{ name, state: started | done | skipped, summary? }` and the `search` topic above. Tasks carry an `agent` tag; new persisted parts `agent` and `sources` (added to `src/lib/agent/parts.ts`).
+
+### 5b.7 Phase 6 impact
+
+The chat shows one `Task` group per agent ("Researcher · 3 sources", "Designer · design brief", "Builder · 12 files", "Reviewer · 2 fixes"), `Sources` for search results, and the per-agent credit breakdown on the version.
+
+### 5b.8 Package decisions (recorded in `docs/decisions.md` when built)
+
+| Need              | Chosen                                                           | Rejected                                                      |
+| ----------------- | ---------------------------------------------------------------- | ------------------------------------------------------------- |
+| Installing skills | `skills` CLI at template build, `skills-lock.json` kept          | Hand-copied folders; per-run GitHub fetch                     |
+| Loading skills    | Own `loadSkill` tool (about 40 lines) on our loop                | AI SDK harness skills (need a harness runtime); eve           |
+| Web search        | `gateway.tools.parallelSearch` (Perplexity / Exa as options)     | Provider-native search tools; own scraper                     |
+| Multiple agents   | Namespaced step loops in `run-agent`, router via structured call | `ToolLoopAgent` subagents (no per-step durability); harnesses |
+
+**Done when:**
+
+- A fresh sandbox has the five skills (`ls .agents/skills`) and an `AGENTS.md` with the rules, and `.agents/` is absent from Version snapshots.
+- `bun run agent:smoke` with "make the heading bigger" still shows `AGENTS.md` read and a skill loaded **before** the first write (enforced by the executor, not just asked).
+- A prompt that needs research produces a Researcher brief with source URLs; the four routing cases above are unit-tested with a stubbed model; the live smoke test runs on a free-tier model.
+- The ledger meta shows the per-agent breakdown, and searches are billed (the exact cost includes the fee; the fallback estimate adds it).
+- Docs updated: `/docs`, the Privacy Policy (search provider), `docs/decisions.md`.
+
+---
+
 ## Phase 6 — Workspace UI (`/p/[slug]`)
 
 Layout: header (logo, project switcher, version badge, **Preview | Code** tabs, theme, **Export to GitHub**, avatar) + chat column + main panel. Resizable split via shadcn `Resizable` (react-resizable-panels).
@@ -424,6 +530,7 @@ nuqs state: `?view=preview|code`, `?file=app/page.tsx`, `?device=desktop|tablet|
 AI Elements, installed and themed in Phase 1:
 
 - `Conversation` (auto-scroll), `Message` (user bubble / assistant plain), `Reasoning`, `Task` + file chips, `Tool` (+ `Terminal` for output), `Shimmer` for the active step, `Checkpoint` (Restore → set active Version, rewrite the sandbox files), `Suggestion`, `PromptInput` (Stop while running, Send when idle, image attachments, the model chip and the mic as on Home, §5.4–5.6)
+- Agent groups (Phase 5b): one `Task` group per agent that ran (Researcher, Designer, Builder, Reviewer), `Sources` for web search results, per-agent credits on the version
 - Message actions: copy, retry, thumbs up/down (store feedback)
 
 ### 6.2 Preview mode
@@ -489,7 +596,7 @@ Scope is **view, copy, download**, nothing editable.
   - `@octokit/rest` with the Git Data API (create blobs → tree → commit → update ref), all server-side with the user's GitHub access token from Better Auth's `Account` table
   - Alternative: run `git` inside the E2B sandbox and push with a short-lived token (no file round-trip, but a token enters the sandbox; prefer the Octokit route)
 - Re-export pushes a new commit to the same repo; store `githubRepo` on the project
-- Exclude `node_modules`, `.next`, `.env*`; add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
+- Exclude `node_modules`, `.next`, `.env*`, `.agents/` and `.claude/` (the skills, Phase 5b); add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
 
 **Done when:** a project exports to a new repo that `git clone && npm i && npm run dev` runs locally.
 
@@ -568,7 +675,8 @@ STRIPE_WEBHOOK_SECRET=
 4. **Payments in India:** Stripe invite status. If it's delayed, which second provider to add behind `PaymentProvider`
 5. **Sandbox retention:** _partly resolved in Phase 5_: 30-minute sandbox timeout; an expired sandbox is recreated from the latest Version on the next run. Pausing instead of killing is a Phase 9 option
 6. **Private repos** on export: allowed from day one, or public only at first
-7. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
+7. **Phase 5b knobs:** which model the router and Researcher use (`AI_ROUTER_MODEL`) and their budget; whether the Reviewer's fix pass should be automatic or ask the user; the Reviewer's "5 or more files" threshold; skill update policy (pin per template build, or refresh on a schedule); whether users can add their own skills later; whether the Designer should ever run for tiny edits ("make it warmer")
+8. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
 
 ---
 
@@ -580,6 +688,7 @@ STRIPE_WEBHOOK_SECRET=
 - [ ] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
 - [ ] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
+- [ ] Phase 5b: five skills + `AGENTS.md` rules in every site (rules shipped), web search, router and Researcher / Designer / Builder / Reviewer agents
 - [ ] Phase 6: workspace (chat, preview + overlay, read-only code)
 - [ ] Phase 7: credits ledger, Stripe top-ups, usage page
 - [ ] Phase 8: Export to GitHub

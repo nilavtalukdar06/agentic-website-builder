@@ -275,6 +275,11 @@ export const docArticles: DocArticle[] = [
             <li>A standard Next.js App Router project you can run anywhere.</li>
             <li>Tailwind CSS styling and shadcn/ui components.</li>
             <li>
+              An <Code>AGENTS.md</Code> file that tells AI coding tools how to
+              work in the project. Vibe&apos;s own agent reads it before every
+              change, even a small one.
+            </li>
+            <li>
               Light and dark themes that follow each visitor&apos;s system
               setting, unless your design is one fixed look. Ask for a fixed
               look in your prompt if you want one.
