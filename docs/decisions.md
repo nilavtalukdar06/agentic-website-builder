@@ -73,3 +73,12 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Limits shared by server and client** → `src/lib/project-limits.ts` (plain module) → a constant exported from a `"use client"` file reaches a Server Component as a client reference, not its value: the layout's prefetch sent `{ limit: <function> }`, failed validation silently (`prefetchQuery` swallows errors) and the page fell back to a client fetch. `e2e/projects.spec.ts` now asserts the server HTML contains the user's projects.
 - **Command palette** → this shadcn `CommandDialog` renders `children` straight into `DialogContent`, so callers wrap them in `<Command>` (cmdk crashes with "reading 'subscribe'" otherwise).
 - **Not-found status on `/p/[slug]`** → with a `loading.tsx` the response streams, so `notFound()` returns 200 with a `noindex` robots tag rather than a 404 status (documented Next.js behavior); kept, because the skeleton is mandatory.
+
+## Phase 3.1 — public pages
+
+- **Uptime data** → own `HealthCheck` table + `/api/cron/health` probe + Vercel Cron every 5 minutes → no external service needed and the numbers are the app's own; a pure bucketing function (`src/lib/status.ts`) is unit-tested → hosted monitors (Better Stack, UptimeRobot, Instatus: another account and a paid tier for a public status page), faking data (a status page must not).
+- **Probe semantics** → the probe runs inside the app and checks the database, so a full outage writes nothing; past hours therefore count missing checks as down, and hours before the first check are "No data". Vercel Hobby limits cron to once a day: the 5-minute schedule needs Pro, or point any external pinger at the same route with the bearer token.
+- **Status bars** → plain flex divs coloured with `--success` / `--warning` / `--destructive` / `--muted` + shadcn `Tooltip` → a chart library for 24–168 equal-width bars is overkill and Recharts is reserved for the usage page.
+- **Brand marks** → own SVGs for Instagram and LinkedIn (`src/components/icons/`), stroke style like lucide → lucide 1.x has no brand icons, `react-icons` / `simple-icons` would pull in whole sets for two glyphs.
+- **Docs content** → typed TS data rendered by one `DocBlocks` component → MDX (`@next/mdx` plus loaders) for six short articles, and a CMS.
+- **Legal copy** → drafted from what the app actually stores (Better Auth tables, credit ledger, payments, sandbox providers in the plan); governing law is India because the plan targets Indian billing. Needs the owner's review, it is not legal advice.

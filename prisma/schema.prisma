@@ -157,3 +157,12 @@ model Payment {
 
   @@index([userId, createdAt])
 }
+
+model HealthCheck {
+  id        String   @id @default(cuid())
+  checkedAt DateTime @default(now())
+  ok        Boolean
+  latencyMs Int
+
+  @@index([checkedAt])
+}

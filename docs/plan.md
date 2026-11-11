@@ -284,6 +284,24 @@ model Payment {
 
 ---
 
+## Phase 3.1 — Public pages (reconciled after Phase 4)
+
+**Goal:** every link on the sign-in screen goes somewhere real. All pages live in the `(marketing)` route group, are public (not in the `proxy.ts` matcher), share one header (Logo + theme toggle) and the canvas footer (Docs · Status · Contact), and use only existing tokens and shadcn components.
+
+- **`/terms`, `/privacy`**: long-form legal text (effective date at the top, sticky "On this page" list on wide screens). Linked from the sign-in "Terms" / "Privacy Policy".
+- **`/docs`, `/docs/[slug]`**: docs index (link cards) and articles (Getting started, How Vibe builds, Projects, Credits & billing, Export to GitHub, FAQ). Content is typed data in `src/app/(marketing)/docs/_content/`, not MDX. Articles describe only what the product does; features that ship later are labelled "coming soon". `[slug]` has `generateStaticParams`, `notFound()`, `not-found.tsx`.
+- **`/contact`**: email, Instagram, LinkedIn, GitHub as link cards (mail: `nilavtalukdar9@gmail.com`, Instagram `nilav.talukdar`, LinkedIn `nilav-talukdar`, GitHub `nilavtalukdar06`).
+- **`/status`**: hourly uptime of the application.
+  - A health probe (`GET /api/cron/health`, `Authorization: Bearer $CRON_SECRET`, run every 5 minutes by Vercel Cron) runs `SELECT 1`, stores `{ checkedAt, ok, latencyMs }` in `HealthCheck` and prunes rows older than 30 days.
+  - `status.uptime` (public tRPC procedure, input `range`: `24h | 72h | 7d`) buckets checks per UTC hour. Past hours count missing checks as down (expected 12 per hour); the current hour only counts recorded checks; hours before the first check are "No data".
+  - UI: banner (operational / degraded / disruption), three stat cards (uptime, average response, last check), one status bar per hour coloured with `--success` / `--warning` / `--destructive` / `--muted`, tooltip per bar, range tabs via nuqs `?range=`, polling every 60 s.
+  - States: skeleton (`loading.tsx`), `error.tsx` with retry, empty state when no check has ever been recorded.
+- Brand marks for Instagram and LinkedIn are small own SVGs (lucide 1.x has none), see `docs/decisions.md`.
+
+**Done when:** all links resolve, every page is usable in light and dark, the status bars match the tokens in both themes, and the new routes pass the loading / error / empty / not-found rules in `CLAUDE.md`.
+
+---
+
 ## Phase 4 — App shell, Home, Projects
 
 - **Sidebar layout** (shadcn `Sidebar`): workspace switcher, New project (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
@@ -463,6 +481,9 @@ BETTER_AUTH_URL=
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 WELCOME_CREDITS=0       # granted once on first sign-in; 0 disables
+
+# Status page
+CRON_SECRET=             # bearer token Vercel Cron sends to /api/cron/health; unset = probe disabled
 
 # AI
 OPENAI_API_KEY=

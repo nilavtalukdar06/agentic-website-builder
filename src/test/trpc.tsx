@@ -36,6 +36,7 @@ export const trpcMock = {
     pathFilter: () => ({ queryKey: ["project"] }),
   },
   credits: { balance: query("credits.balance") },
+  status: { uptime: query("status.uptime") },
 };
 
 export function resetTrpcHandlers() {
