@@ -10,9 +10,13 @@ export const metadata: Metadata = {
 };
 
 export default async function Home() {
-  await getQueryClient().prefetchQuery(
-    trpc.project.recent.queryOptions({ limit: HOME_RECENT_LIMIT }),
-  );
+  const queryClient = getQueryClient();
+  await Promise.all([
+    queryClient.prefetchQuery(
+      trpc.project.recent.queryOptions({ limit: HOME_RECENT_LIMIT }),
+    ),
+    queryClient.prefetchQuery(trpc.model.list.queryOptions()),
+  ]);
 
   return (
     <HydrateClient>

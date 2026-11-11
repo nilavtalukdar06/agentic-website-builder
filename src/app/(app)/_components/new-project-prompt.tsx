@@ -2,28 +2,37 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import {
-  ArrowUpIcon,
-  ChevronDownIcon,
-  GlobeIcon,
-  MicIcon,
-  PaperclipIcon,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowUpIcon, PaperclipIcon } from "lucide-react";
 import {
   PromptInput,
+  PromptInputAttachment,
+  PromptInputAttachments,
   PromptInputBody,
   PromptInputButton,
   PromptInputFooter,
+  PromptInputHeader,
   PromptInputProvider,
+  PromptInputSpeechButton,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import {
+  ModelPicker,
+  resolveSelectedModel,
+  useAgentModels,
+} from "@/components/models/model-picker";
 import { PROMPT_INPUT_ID } from "@/components/shell/new-project-button";
 import { toast } from "@/components/ui/toast";
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
+} from "@/lib/attachments";
+import { uploadAttachment } from "@/lib/upload-attachment";
 import { useTRPC } from "@/trpc/client";
 
 export const promptSuggestions = [
@@ -54,13 +63,26 @@ export const promptSuggestions = [
   },
 ] as const;
 
-const soon = "Coming soon";
+const attachErrors = {
+  accept: "Only PNG, JPEG, WebP and GIF images can be attached.",
+  max_file_size: "Images must be 4 MB or smaller.",
+  max_files: `You can attach up to ${MAX_ATTACHMENTS} images.`,
+} as const;
 
 function PromptComposer() {
   const trpc = useTRPC();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { textInput } = usePromptInputController();
+  const { textInput, attachments } = usePromptInputController();
+  const [modelId, setModelId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const models = useAgentModels();
+  const selectedModel = resolveSelectedModel(
+    models.data?.models,
+    modelId,
+    models.data?.defaultModelId,
+  );
+  const hasImages = attachments.files.length > 0;
 
   const create = useMutation(
     trpc.project.create.mutationOptions({
@@ -88,6 +110,7 @@ function PromptComposer() {
   }, [setInput]);
 
   const empty = textInput.value.trim().length === 0;
+  const busy = uploading || create.isPending;
 
   const applySuggestion = (prompt: string) => {
     textInput.setInput(prompt);
@@ -98,12 +121,63 @@ function PromptComposer() {
     <div className="flex w-full flex-col items-center gap-5">
       <PromptInput
         className="w-full"
-        onSubmit={async ({ text }) => {
+        accept={ATTACHMENT_ACCEPT}
+        multiple
+        maxFiles={MAX_ATTACHMENTS}
+        maxFileSize={MAX_ATTACHMENT_BYTES}
+        onError={({ code }) =>
+          toast.add({
+            type: "error",
+            title: "Couldn't attach the image",
+            description: attachErrors[code],
+          })
+        }
+        onSubmit={async ({ text, files }) => {
           const prompt = text.trim();
-          if (!prompt || create.isPending) return;
-          await create.mutateAsync({ prompt });
+          if (!prompt || busy) return;
+          if (files.length > 0 && selectedModel && !selectedModel.vision) {
+            toast.add({
+              type: "error",
+              title: `${selectedModel.name} can't read images`,
+              description:
+                "Pick a model that supports images, or remove the images.",
+            });
+            throw new Error("Model can't read images");
+          }
+          let attachmentIds: string[] = [];
+          if (files.length > 0) {
+            setUploading(true);
+            try {
+              const uploaded = await Promise.all(
+                files.map((file) => uploadAttachment(file)),
+              );
+              attachmentIds = uploaded.map((attachment) => attachment.id);
+            } catch (error) {
+              toast.add({
+                type: "error",
+                title: "Couldn't upload the images",
+                description:
+                  error instanceof Error ? error.message : "Try again.",
+              });
+              throw error;
+            } finally {
+              setUploading(false);
+            }
+          }
+          await create.mutateAsync({
+            prompt,
+            model: selectedModel?.id,
+            attachmentIds,
+          });
         }}
       >
+        {hasImages ? (
+          <PromptInputHeader>
+            <PromptInputAttachments className="p-0">
+              {(file) => <PromptInputAttachment data={file} />}
+            </PromptInputAttachments>
+          </PromptInputHeader>
+        ) : null}
         <PromptInputBody>
           <PromptInputTextarea
             id={PROMPT_INPUT_ID}
@@ -112,41 +186,43 @@ function PromptComposer() {
             className="min-h-24"
             maxLength={4000}
             autoFocus
-            disabled={create.isPending}
+            disabled={busy}
           />
         </PromptInputBody>
         <PromptInputFooter>
           <PromptInputTools>
             <PromptInputButton
-              aria-label="Attach files"
-              tooltip={soon}
-              disabled
+              aria-label="Attach images"
+              tooltip="Attach reference images (PNG, JPEG, WebP or GIF, up to 4 MB)"
+              onClick={() => attachments.openFileDialog()}
+              disabled={busy || attachments.files.length >= MAX_ATTACHMENTS}
             >
               <PaperclipIcon />
             </PromptInputButton>
-            <PromptInputButton tooltip={soon} disabled>
-              <GlobeIcon />
-              Public
-              <ChevronDownIcon />
-            </PromptInputButton>
-            <PromptInputButton
-              tooltip="The sandbox runs Next.js. More frameworks soon"
-              disabled
-            >
-              Next.js
-              <ChevronDownIcon />
-            </PromptInputButton>
+            <ModelPicker
+              value={modelId}
+              onChange={setModelId}
+              needsVision={hasImages}
+              disabled={busy}
+            />
           </PromptInputTools>
           <PromptInputTools>
-            <PromptInputButton aria-label="Dictate" tooltip={soon} disabled>
-              <MicIcon />
-            </PromptInputButton>
+            <PromptInputSpeechButton
+              disabled={busy}
+              onSpeechError={(message) =>
+                toast.add({
+                  type: "error",
+                  title: "Voice input",
+                  description: message,
+                })
+              }
+            />
             <PromptInputSubmit
               aria-label="Create project"
-              status={create.isPending ? "submitted" : undefined}
-              disabled={empty || create.isPending}
+              status={busy ? "submitted" : undefined}
+              disabled={empty || busy}
             >
-              {create.isPending ? undefined : <ArrowUpIcon />}
+              {busy ? undefined : <ArrowUpIcon />}
             </PromptInputSubmit>
           </PromptInputTools>
         </PromptInputFooter>
@@ -157,7 +233,7 @@ function PromptComposer() {
             key={suggestion.label}
             suggestion={suggestion.prompt}
             onClick={applySuggestion}
-            disabled={create.isPending}
+            disabled={busy}
           >
             {suggestion.label}
           </Suggestion>

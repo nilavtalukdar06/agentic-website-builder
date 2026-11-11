@@ -1,6 +1,37 @@
 // @vitest-environment node
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { Prisma } from "@/generated/prisma/client";
+
+const send = vi.hoisted(() => vi.fn());
+const gateway = vi.hoisted(() => ({
+  findAgentModel: vi.fn(),
+  getAgentModels: vi.fn(),
+  pickDefaultModel: vi.fn(),
+}));
+vi.mock("@/inngest/client", () => ({ inngest: { send } }));
+vi.mock("@/server/ai/gateway", () => gateway);
+
+const sonnet = {
+  id: "anthropic/claude-sonnet-5.5",
+  name: "Claude Sonnet 5.5",
+  provider: "anthropic",
+  providerLabel: "Anthropic",
+  vision: true,
+  pricing: null,
+};
+const textOnly = {
+  ...sonnet,
+  id: "zai/glm-5.3",
+  name: "GLM 5.3",
+  vision: false,
+};
+
+beforeEach(() => {
+  send.mockReset().mockResolvedValue({ ids: ["e1"] });
+  gateway.findAgentModel.mockReset().mockResolvedValue(sonnet);
+  gateway.getAgentModels.mockReset().mockResolvedValue([sonnet, textOnly]);
+  gateway.pickDefaultModel.mockReset().mockReturnValue(sonnet);
+});
 import type { Session, TRPCContext } from "../init";
 import { createCaller } from "./_app";
 
@@ -36,6 +67,12 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(),
+    },
+    message: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    attachment: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     creditLedger: {
       aggregate: vi.fn(),
@@ -79,6 +116,7 @@ describe("auth", () => {
       () => caller.project.bySlug({ slug: "demo" }),
       () => caller.project.create({ prompt: "A site" }),
       () => caller.credits.balance(),
+      () => caller.model.list(),
     ]) {
       await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     }
@@ -171,15 +209,58 @@ describe("project.bySlug", () => {
     const { ctx, db } = signedIn();
     db.project.findFirst.mockResolvedValue({
       ...project,
+      previewUrl: null,
       messages: [{ content: "Build a coffee site" }],
     });
     await expect(
       createCaller(ctx).project.bySlug({ slug: "demo" }),
-    ).resolves.toEqual({ ...project, prompt: "Build a coffee site" });
+    ).resolves.toEqual({
+      ...project,
+      previewUrl: null,
+      prompt: "Build a coffee site",
+      agent: { status: "building", reply: null },
+    });
     expect(db.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { slug: "demo", userId: "u1" } }),
     );
+    expect(db.message.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { project: { slug: "demo", userId: "u1" } },
+      }),
+    );
   });
+
+  test.each([
+    [{ role: "USER", content: "Add a footer", parts: null }, "building", null],
+    [
+      {
+        role: "ASSISTANT",
+        content: "Built it",
+        parts: [{ type: "text", text: "Built it" }],
+      },
+      "done",
+      "Built it",
+    ],
+    [
+      {
+        role: "ASSISTANT",
+        content: "Failed",
+        parts: [{ type: "error", message: "Failed" }],
+      },
+      "failed",
+      "Failed",
+    ],
+  ])(
+    "reports the agent state from the latest message (%#)",
+    async (latest, status, reply) => {
+      const { ctx, db } = signedIn();
+      db.project.findFirst.mockResolvedValue({ ...project, messages: [] });
+      db.message.findFirst.mockResolvedValue(latest);
+      await expect(
+        createCaller(ctx).project.bySlug({ slug: "demo" }),
+      ).resolves.toMatchObject({ agent: { status, reply } });
+    },
+  );
 
   test("prompt is null when there is no message", async () => {
     const { ctx, db } = signedIn();
@@ -210,7 +291,12 @@ describe("project.create", () => {
   test("names the project from the prompt and stores the prompt", async () => {
     const { ctx, db } = signedIn();
     db.project.create.mockImplementation(({ data }) =>
-      Promise.resolve({ id: "p1", slug: data.slug, name: data.name }),
+      Promise.resolve({
+        id: "p1",
+        slug: data.slug,
+        name: data.name,
+        messages: [{ id: "m1" }],
+      }),
     );
     await expect(
       createCaller(ctx).project.create({ prompt: `  ${prompt}  ` }),
@@ -226,10 +312,104 @@ describe("project.create", () => {
           name: "Landing page for Ember & Oak",
           description: prompt,
           userId: "u1",
-          messages: { create: { role: "USER", content: prompt } },
+          messages: {
+            create: {
+              role: "USER",
+              content: prompt,
+              model: sonnet.id,
+              attachments: { connect: [] },
+            },
+          },
         },
       }),
     );
+    expect(gateway.findAgentModel).toHaveBeenCalledWith(undefined);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0][0]).toMatchObject({
+      name: "agent/run",
+      data: { projectId: "p1", userId: "u1", messageId: "m1" },
+    });
+  });
+
+  test("stores the chosen model and links the user's images", async () => {
+    const { ctx, db } = signedIn();
+    db.attachment.findMany.mockResolvedValue([{ id: "a1" }, { id: "a2" }]);
+    db.project.create.mockResolvedValue({
+      id: "p1",
+      slug: "x",
+      name: "X",
+      messages: [{ id: "m1" }],
+    });
+    await createCaller(ctx).project.create({
+      prompt,
+      model: sonnet.id,
+      attachmentIds: ["a1", "a2", "a1"],
+    });
+    expect(gateway.findAgentModel).toHaveBeenCalledWith(sonnet.id);
+    expect(db.attachment.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1", "a2"] }, userId: "u1", messageId: null },
+      select: { id: true },
+    });
+    expect(
+      db.project.create.mock.calls[0][0].data.messages.create.attachments,
+    ).toEqual({ connect: [{ id: "a1" }, { id: "a2" }] });
+  });
+
+  test("rejects an unknown model", async () => {
+    const { ctx, db } = signedIn();
+    gateway.findAgentModel.mockResolvedValue(null);
+    await expect(
+      createCaller(ctx).project.create({ prompt, model: "nope/model" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.project.create).not.toHaveBeenCalled();
+  });
+
+  test("rejects images that aren't the user's or are already used", async () => {
+    const { ctx, db } = signedIn();
+    db.attachment.findMany.mockResolvedValue([{ id: "a1" }]);
+    await expect(
+      createCaller(ctx).project.create({ prompt, attachmentIds: ["a1", "a2"] }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.project.create).not.toHaveBeenCalled();
+  });
+
+  test("rejects images for a model without vision", async () => {
+    const { ctx, db } = signedIn();
+    gateway.findAgentModel.mockResolvedValue(textOnly);
+    db.attachment.findMany.mockResolvedValue([{ id: "a1" }]);
+    await expect(
+      createCaller(ctx).project.create({ prompt, attachmentIds: ["a1"] }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringMatching(/can't read images/),
+    });
+  });
+
+  test("allows at most four images", async () => {
+    const { ctx } = signedIn();
+    await expect(
+      createCaller(ctx).project.create({
+        prompt,
+        attachmentIds: ["1", "2", "3", "4", "5"],
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("still returns the project when the agent can't be started", async () => {
+    const { ctx, db } = signedIn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    send.mockRejectedValue(new Error("Inngest is down"));
+    db.project.create.mockResolvedValue({
+      id: "p1",
+      slug: "x",
+      name: "X",
+      messages: [{ id: "m1" }],
+    });
+    await expect(createCaller(ctx).project.create({ prompt })).resolves.toEqual(
+      { id: "p1", slug: "x", name: "X" },
+    );
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
   test("retries with a suffix when the slug is taken", async () => {
@@ -237,7 +417,12 @@ describe("project.create", () => {
     db.project.create
       .mockRejectedValueOnce(uniqueViolation())
       .mockImplementation(({ data }) =>
-        Promise.resolve({ id: "p2", slug: data.slug, name: data.name }),
+        Promise.resolve({
+          id: "p2",
+          slug: data.slug,
+          name: data.name,
+          messages: [{ id: "m2" }],
+        }),
       );
     const result = await createCaller(ctx).project.create({ prompt });
     expect(result.slug).toMatch(/^landing-page-for-ember-and-oak-[a-z0-9]{4}$/);
@@ -248,7 +433,12 @@ describe("project.create", () => {
     const { ctx, db } = signedIn();
     db.project.create
       .mockRejectedValueOnce(uniqueViolation(undefined))
-      .mockResolvedValue({ id: "p2", slug: "x", name: "x" });
+      .mockResolvedValue({
+        id: "p2",
+        slug: "x",
+        name: "x",
+        messages: [{ id: "m2" }],
+      });
     await createCaller(ctx).project.create({ prompt });
     expect(db.project.create).toHaveBeenCalledTimes(2);
   });
@@ -260,6 +450,7 @@ describe("project.create", () => {
       createCaller(ctx).project.create({ prompt }),
     ).rejects.toMatchObject({ code: "CONFLICT" });
     expect(db.project.create).toHaveBeenCalledTimes(5);
+    expect(send).not.toHaveBeenCalled();
   });
 
   test("rethrows other database errors without retrying", async () => {
@@ -281,6 +472,26 @@ describe("project.create", () => {
       expect(db.project.create).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("model.list", () => {
+  test("returns the curated models and the default", async () => {
+    const { ctx } = signedIn();
+    await expect(createCaller(ctx).model.list()).resolves.toEqual({
+      models: [sonnet, textOnly],
+      defaultModelId: sonnet.id,
+    });
+  });
+
+  test("reports an unavailable catalogue", async () => {
+    const { ctx } = signedIn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    gateway.getAgentModels.mockRejectedValue(new Error("down"));
+    await expect(createCaller(ctx).model.list()).rejects.toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+    });
+    error.mockRestore();
+  });
 });
 
 describe("credits.balance", () => {

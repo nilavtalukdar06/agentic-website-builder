@@ -38,9 +38,17 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             <Strong>Your projects.</Strong> Project names and slugs, your
-            prompts and chat messages, the files the agent writes, saved
-            versions, the preview address, and the linked GitHub repository
-            after you export.
+            prompts and chat messages, the AI model you chose for each message,
+            the images you attach as references, the files the agent writes,
+            saved versions, the preview address, and the linked GitHub
+            repository after you export.
+          </li>
+          <li>
+            <Strong>Voice input.</Strong> If you use the microphone button, your
+            browser turns your speech into text. Depending on your browser, its
+            maker processes the audio (for example Google for Chrome and
+            Microsoft for Edge). Vibe never receives or stores the audio, only
+            the text you choose to send as a prompt.
           </li>
           <li>
             <Strong>Credits and payments.</Strong> A ledger of credits added and
@@ -101,11 +109,15 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             <Strong>Neon</Strong>: the PostgreSQL database that stores your
-            account and projects.
+            account and projects, and the private storage that holds images you
+            attach.
           </li>
           <li>
-            <Strong>OpenAI</Strong>: your prompts and the relevant project
-            context are sent to the AI model that writes your code.
+            <Strong>Vercel AI Gateway</Strong> and the AI provider of the model
+            you pick (such as Anthropic, OpenAI, Google, Moonshot AI, Z.ai,
+            DeepSeek, Alibaba or Mistral): your prompts, attached images and the
+            relevant project context are sent to that model to write your code.
+            Attached images reach it through links that expire after an hour.
           </li>
           <li>
             <Strong>E2B</Strong>: runs the sandbox where your project is built
@@ -161,8 +173,8 @@ export const privacySections: ArticleSection[] = [
         <li>Sessions: until they expire or you sign out.</li>
         <li>Uptime check records: 30 days.</li>
         <li>
-          When you ask us to delete your account we remove your account and
-          projects, except what we must keep by law.
+          When you ask us to delete your account we remove your account,
+          projects and the images you attached, except what we must keep by law.
         </li>
       </UL>
     ),

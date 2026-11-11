@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { TRPCContext } from "../init";
 import { createCaller } from "./_app";
 
+vi.mock("@/inngest/client", () => ({ inngest: { send: vi.fn() } }));
+vi.mock("@/server/ai/gateway", () => ({}));
+
 function setup({
   checks = [] as { checkedAt: Date; ok: boolean; latencyMs: number }[],
   first = null as Date | null,

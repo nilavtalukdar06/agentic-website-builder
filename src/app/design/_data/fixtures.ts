@@ -1,4 +1,5 @@
 import type { GeneratingFile } from "@/components/workspace/generating-overlay";
+import type { AgentModel } from "@/lib/ai/models";
 
 export const sampleUser = { name: "Nilav", plan: "Pay as you go" };
 
@@ -229,5 +230,64 @@ export const sampleActivity = [
     project: "Pawprint vet clinic",
     description: "Generated site · 11 files",
     credits: -51,
+  },
+];
+
+export const sampleModels: AgentModel[] = [
+  {
+    id: "anthropic/claude-sonnet-5.5",
+    name: "Claude Sonnet 5.5",
+    provider: "anthropic",
+    providerLabel: "Anthropic",
+    vision: true,
+    pricing: {
+      inputPerMTok: 2,
+      outputPerMTok: 10,
+      cachedInputPerMTok: 0.2,
+      cacheWritePerMTok: 2.5,
+    },
+  },
+  {
+    id: "openai/gpt-5.3-codex",
+    name: "GPT 5.3 Codex",
+    provider: "openai",
+    providerLabel: "OpenAI",
+    vision: true,
+    pricing: {
+      inputPerMTok: 1.75,
+      outputPerMTok: 14,
+      cachedInputPerMTok: 0.175,
+      cacheWritePerMTok: null,
+    },
+  },
+  {
+    id: "zai/glm-5.3",
+    name: "GLM 5.3",
+    provider: "zai",
+    providerLabel: "Z.ai",
+    vision: false,
+    pricing: {
+      inputPerMTok: 1.4,
+      outputPerMTok: 4.4,
+      cachedInputPerMTok: null,
+      cacheWritePerMTok: null,
+    },
+  },
+];
+
+export const sampleAttachments = [
+  {
+    id: "sample-1",
+    type: "file" as const,
+    filename: "hero-reference.png",
+    mediaType: "image/png",
+    url: "/window.svg",
+  },
+  {
+    id: "sample-2",
+    type: "file" as const,
+    filename: "palette.png",
+    mediaType: "image/png",
+    url: "/globe.svg",
   },
 ];

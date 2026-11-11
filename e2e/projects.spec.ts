@@ -60,7 +60,7 @@ test("creating a project from the prompt opens it", async ({ page }) => {
     page.getByText(`Landing page for Ember ${suffix} roastery`).first(),
   ).toBeVisible();
   await expect(page.getByText(prompt)).toBeVisible();
-  await expect(page.getByText("Waiting for the agent")).toBeVisible();
+  await expect(page.getByText("The agent is building your site")).toBeVisible();
 
   await page.getByRole("link", { name: "Back to projects" }).click();
   await expect(page).toHaveURL("/projects");

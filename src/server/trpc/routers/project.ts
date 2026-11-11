@@ -2,12 +2,17 @@ import { TRPCError } from "@trpc/server";
 import { customAlphabet } from "nanoid";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
+import { inngest } from "@/inngest/client";
+import { agentRun } from "@/inngest/events";
+import { agentPartsSchema } from "@/lib/agent/parts";
+import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import {
   projectNameFromPrompt,
   slugFromName,
   withSlugSuffix,
 } from "@/lib/project-name";
 import { projectFilters, projectSorts } from "@/lib/search-params/projects";
+import { findAgentModel } from "@/server/ai/gateway";
 import { createTRPCRouter, protectedProcedure } from "../init";
 
 export const projectSelect = {
@@ -69,6 +74,37 @@ function isSlugConflict(error: unknown) {
     : String(target).includes("slug");
 }
 
+function agentState(
+  latest: {
+    role: "USER" | "ASSISTANT";
+    content: string;
+    parts: unknown;
+  } | null,
+) {
+  if (!latest || latest.role === "USER") {
+    return { status: "building" as const, reply: null };
+  }
+  const parts = agentPartsSchema.safeParse(latest.parts);
+  const failed =
+    parts.success && parts.data.some((part) => part.type === "error");
+  return {
+    status: failed ? ("failed" as const) : ("done" as const),
+    reply: latest.content,
+  };
+}
+
+async function startAgent(data: {
+  projectId: string;
+  userId: string;
+  messageId: string;
+}) {
+  try {
+    await inngest.send(agentRun.create(data));
+  } catch (error) {
+    console.error("[project.create] couldn't start the agent", error);
+  }
+}
+
 export const projectRouter = createTRPCRouter({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const owner = { userId: ctx.session.user.id };
@@ -99,49 +135,128 @@ export const projectRouter = createTRPCRouter({
   bySlug: protectedProcedure
     .input(z.object({ slug: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findFirst({
-        where: { slug: input.slug, userId: ctx.session.user.id },
-        select: {
-          ...projectSelect,
-          messages: {
-            where: { role: "USER" },
-            orderBy: { createdAt: "asc" },
-            take: 1,
-            select: { content: true },
+      const owner = { slug: input.slug, userId: ctx.session.user.id };
+      const [project, latest] = await Promise.all([
+        ctx.db.project.findFirst({
+          where: owner,
+          select: {
+            ...projectSelect,
+            previewUrl: true,
+            messages: {
+              where: { role: "USER" },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { content: true },
+            },
           },
-        },
-      });
+        }),
+        ctx.db.message.findFirst({
+          where: { project: owner },
+          orderBy: { createdAt: "desc" },
+          select: { role: true, content: true, parts: true },
+        }),
+      ]);
       if (!project) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
       const { messages, ...rest } = project;
-      return { ...rest, prompt: messages[0]?.content ?? null };
+      return {
+        ...rest,
+        prompt: messages[0]?.content ?? null,
+        agent: agentState(latest),
+      };
     }),
   create: protectedProcedure
     .input(
-      z.object({ prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH) }),
+      z.object({
+        prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH),
+        model: z.string().min(1).max(120).optional(),
+        attachmentIds: z
+          .array(z.string().min(1).max(64))
+          .max(MAX_ATTACHMENTS)
+          .default([]),
+      }),
     )
     .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const attachmentIds = [...new Set(input.attachmentIds)];
+      const [model, attachments] = await Promise.all([
+        findAgentModel(input.model).catch(() => {
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: "Couldn't load the model list. Try again in a moment.",
+          });
+        }),
+        attachmentIds.length
+          ? ctx.db.attachment.findMany({
+              where: { id: { in: attachmentIds }, userId, messageId: null },
+              select: { id: true },
+            })
+          : Promise.resolve([]),
+      ]);
+      if (!model) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "That model isn't available. Pick another one.",
+        });
+      }
+      if (attachments.length !== attachmentIds.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Some images are missing. Attach them again.",
+        });
+      }
+      if (attachmentIds.length > 0 && !model.vision) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${model.name} can't read images. Pick a model that supports images.`,
+        });
+      }
+
       const name = projectNameFromPrompt(input.prompt);
       const baseSlug = slugFromName(name);
 
       for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
         const slug =
           attempt === 0 ? baseSlug : withSlugSuffix(baseSlug, slugSuffix());
+        let project;
         try {
-          return await ctx.db.project.create({
+          project = await ctx.db.project.create({
             data: {
               slug,
               name,
               description: input.prompt,
-              userId: ctx.session.user.id,
-              messages: { create: { role: "USER", content: input.prompt } },
+              userId,
+              messages: {
+                create: {
+                  role: "USER",
+                  content: input.prompt,
+                  model: model.id,
+                  attachments: {
+                    connect: attachmentIds.map((id) => ({ id })),
+                  },
+                },
+              },
             },
-            select: { id: true, slug: true, name: true },
+            select: {
+              id: true,
+              slug: true,
+              name: true,
+              messages: { select: { id: true }, take: 1 },
+            },
           });
         } catch (error) {
           if (!isSlugConflict(error)) throw error;
+          continue;
         }
+
+        const { messages, ...created } = project;
+        await startAgent({
+          projectId: created.id,
+          userId,
+          messageId: messages[0].id,
+        });
+        return created;
       }
 
       throw new TRPCError({

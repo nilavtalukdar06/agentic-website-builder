@@ -34,6 +34,16 @@ These rules apply to every change, no matter how small. "It's a one-line fix" is
    - An explicit **empty state** component for the zero-results case, distinct from both the loading and error states — don't let an empty array silently render nothing.
    - A `not-found.tsx` for dynamic segments (`[slug]`, `[id]`, …) that call `notFound()` when the resource doesn't exist.
 
+## Keep the documentation in sync — mandatory (from Phase 5 on)
+
+Every code change ships with its documentation update in the same change. Code is not done while the docs describe something else.
+
+1. **In-app docs** (`src/app/(marketing)/docs/_content/articles.tsx`, served at `/docs`, linked from the sign-in page): when a change adds, removes or changes anything a user can see or do (a flow, a limit, pricing, a page, a state, wording a user relies on), update the matching article. Describe only what the product does today: remove a "Coming soon" note once the feature ships, and add one when a user-visible feature is announced but not live. Keep the tone and the prose components already used there (`src/components/marketing/prose.tsx`), and keep `articles.test.tsx` passing.
+2. **Legal pages** (`/terms`, `/privacy`): when a change adds a new data store, third-party provider or kind of personal data, update the matching section and flag it to the owner for review.
+3. **Project docs**: when a change departs from or settles something in `docs/plan.md`, update the plan (the phase section, the env list, open decisions, the checklist). Record every package or approach choice in `docs/decisions.md` per §0.1.
+4. **Environment**: every change to `src/config/env.ts` also updates `.env.example`, the env list in `docs/plan.md` and `vitest.config.mts` test env.
+5. In the final report, list which docs were updated, or say why none needed it.
+
 ## Cleanup after every task — mandatory
 
 Before reporting a task as done, remove everything the task created that isn't part of the deliverable:

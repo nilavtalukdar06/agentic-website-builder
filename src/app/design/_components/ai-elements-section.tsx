@@ -102,6 +102,7 @@ import {
   type SampleTreeNode,
 } from "../_data/fixtures";
 import { DesignSection, Example } from "./section";
+import { ModelAttachmentsExample } from "./model-attachments-example";
 
 function TreeNodes({ nodes }: { nodes: SampleTreeNode[] }) {
   return nodes.map((node) =>
@@ -277,6 +278,9 @@ export function AiElementsSection() {
                 />
               ))}
             </div>
+          </Example>
+          <Example title="ModelSelector · Attachments · Voice input">
+            <ModelAttachmentsExample />
           </Example>
           <Example title="Snippet · Shimmer">
             <Snippet code="npx create-next-app@latest ember-oak">

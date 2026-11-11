@@ -9,6 +9,7 @@ vi.mock("@/trpc/server", () => ({
   HydrateClient: ({ children }: { children: React.ReactNode }) => children,
   trpc: {
     project: { recent: { queryOptions: (input: unknown) => ({ input }) } },
+    model: { list: { queryOptions: () => ({}) } },
   },
 }));
 

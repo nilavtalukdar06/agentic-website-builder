@@ -38,7 +38,15 @@ describe("docs content", () => {
     expect(termsSections.map((section) => section.id)).toEqual(
       expect.arrayContaining(["content", "credits"]),
     );
-    expect(privacySections.map((section) => section.id)).toContain("sharing");
+    expect(privacySections.map((section) => section.id)).toEqual(
+      expect.arrayContaining(["sharing", "collect"]),
+    );
+  });
+
+  test("anchors linked from other articles exist", () => {
+    expect(
+      getDocArticle("getting-started")?.sections.map((section) => section.id),
+    ).toEqual(expect.arrayContaining(["model", "images", "voice", "build"]));
   });
 
   test("legal section ids are unique", () => {

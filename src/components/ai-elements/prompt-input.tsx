@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+import { Button } from "@/components/ui/button";
 import {
   Command,
   CommandEmpty,
@@ -39,12 +41,19 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  getSpeechRecognition,
+  joinTranscript,
+  speechErrorMessage,
+} from "@/lib/speech";
 import { cn } from "@/lib/utils";
 import type { ChatStatus, FileUIPart, SourceDocumentUIPart } from "ai";
 import {
   CornerDownLeftIcon,
   ImageIcon,
+  MicIcon,
   Monitor,
+  PaperclipIcon,
   PlusIcon,
   SquareIcon,
   XIcon,
@@ -66,12 +75,14 @@ import type {
 import {
   Children,
   createContext,
+  Fragment,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 const convertBlobUrlToDataUrl = async (url: string): Promise<string | null> => {
@@ -349,6 +360,119 @@ export const usePromptInputAttachments = () => {
   }
   return context;
 };
+
+export type PromptInputAttachmentProps = HTMLAttributes<HTMLDivElement> & {
+  data: FileUIPart & { id: string };
+};
+
+export function PromptInputAttachment({
+  data,
+  className,
+  ...props
+}: PromptInputAttachmentProps) {
+  const attachments = usePromptInputAttachments();
+  const filename = data.filename || "";
+  const isImage = Boolean(data.mediaType?.startsWith("image/") && data.url);
+  const label = filename || (isImage ? "Image" : "Attachment");
+
+  return (
+    <PromptInputHoverCard>
+      <PromptInputHoverCardTrigger
+        render={
+          <div
+            className={cn(
+              "group relative flex h-8 cursor-default items-center gap-1.5 rounded-md border px-1.5 text-sm font-medium transition-colors select-none hover:bg-accent hover:text-accent-foreground",
+              className,
+            )}
+            {...props}
+          />
+        }
+      >
+        <div className="relative size-5 shrink-0">
+          <div className="absolute inset-0 flex size-5 items-center justify-center overflow-hidden rounded bg-background transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+            {isImage ? (
+              <Image
+                alt=""
+                className="size-5 object-cover"
+                height={20}
+                src={data.url}
+                unoptimized
+                width={20}
+              />
+            ) : (
+              <PaperclipIcon className="size-3 text-muted-foreground" />
+            )}
+          </div>
+          <Button
+            aria-label={`Remove ${label}`}
+            className="absolute inset-0 size-5 rounded p-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 [&>svg]:size-2.5"
+            onClick={(event) => {
+              event.stopPropagation();
+              attachments.remove(data.id);
+            }}
+            type="button"
+            variant="ghost"
+          >
+            <XIcon />
+          </Button>
+        </div>
+        <span className="max-w-40 flex-1 truncate">{label}</span>
+      </PromptInputHoverCardTrigger>
+      <PromptInputHoverCardContent className="w-auto p-2">
+        <div className="flex flex-col gap-3">
+          {isImage ? (
+            <div className="flex max-h-96 w-96 max-w-[80vw] items-center justify-center overflow-hidden rounded-md border">
+              <Image
+                alt={label}
+                className="max-h-96 w-auto object-contain"
+                height={384}
+                src={data.url}
+                unoptimized
+                width={384}
+              />
+            </div>
+          ) : null}
+          <div className="flex min-w-0 flex-col gap-1 px-0.5">
+            <p className="truncate text-sm leading-none font-semibold">
+              {label}
+            </p>
+            {data.mediaType ? (
+              <p className="truncate font-mono text-xs text-muted-foreground">
+                {data.mediaType}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </PromptInputHoverCardContent>
+    </PromptInputHoverCard>
+  );
+}
+
+export type PromptInputAttachmentsProps = Omit<
+  HTMLAttributes<HTMLDivElement>,
+  "children"
+> & {
+  children: (attachment: FileUIPart & { id: string }) => ReactNode;
+};
+
+export function PromptInputAttachments({
+  children,
+  className,
+  ...props
+}: PromptInputAttachmentsProps) {
+  const attachments = usePromptInputAttachments();
+  if (!attachments.files.length) return null;
+  return (
+    <div
+      className={cn("flex w-full flex-wrap items-center gap-2 p-3", className)}
+      {...props}
+    >
+      {attachments.files.map((file) => (
+        <Fragment key={file.id}>{children(file)}</Fragment>
+      ))}
+    </div>
+  );
+}
 
 export interface ReferencedSourcesContext {
   sources: (SourceDocumentUIPart & { id: string })[];
@@ -850,7 +974,9 @@ export const PromptInput = ({
         ref={formRef}
         {...props}
       >
-        <InputGroup className="overflow-hidden">{children}</InputGroup>
+        <InputGroup className="overflow-hidden has-disabled:bg-transparent has-disabled:opacity-100 dark:has-disabled:bg-input/30">
+          {children}
+        </InputGroup>
       </form>
     </>
   );
@@ -1087,6 +1213,125 @@ export const PromptInputButton = ({
         )}
       </TooltipContent>
     </Tooltip>
+  );
+};
+
+const noopSubscribe = () => () => {};
+const speechSupported = () => getSpeechRecognition() !== null;
+const speechUnsupported = () => false;
+
+export type PromptInputSpeechButtonProps = Omit<
+  ComponentProps<typeof PromptInputButton>,
+  "children" | "onClick" | "onError" | "tooltip"
+> & {
+  onSpeechError?: (message: string) => void;
+};
+
+export const PromptInputSpeechButton = ({
+  className,
+  disabled,
+  onSpeechError,
+  ...props
+}: PromptInputSpeechButtonProps) => {
+  const { textInput } = usePromptInputController();
+  const supported = useSyncExternalStore(
+    noopSubscribe,
+    speechSupported,
+    speechUnsupported,
+  );
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const baseRef = useRef("");
+  const writtenRef = useRef<string | null>(null);
+  const { value, setInput } = textInput;
+
+  const stop = useCallback(() => {
+    recognitionRef.current?.stop();
+  }, []);
+
+  const start = () => {
+    const Recognition = getSpeechRecognition();
+    if (!Recognition) return;
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+    baseRef.current = value;
+    writtenRef.current = value;
+
+    recognition.onstart = () => setListening(true);
+    recognition.onend = () => {
+      setListening(false);
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+    };
+    recognition.onerror = (event) => {
+      const message = speechErrorMessage(event.error);
+      if (message) onSpeechError?.(message);
+    };
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let index = 0; index < event.results.length; index++) {
+        transcript += event.results[index][0]?.transcript ?? "";
+      }
+      const next = joinTranscript(baseRef.current, transcript);
+      writtenRef.current = next;
+      setInput(next);
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      onSpeechError?.(speechErrorMessage("unknown") ?? "");
+    }
+  };
+
+  useEffect(() => {
+    if (
+      writtenRef.current !== null &&
+      recognitionRef.current &&
+      value !== writtenRef.current
+    ) {
+      recognitionRef.current.abort();
+    }
+  }, [value]);
+
+  useEffect(() => {
+    if (disabled) recognitionRef.current?.abort();
+  }, [disabled]);
+
+  useEffect(
+    () => () => {
+      recognitionRef.current?.abort();
+    },
+    [],
+  );
+
+  const tooltip = !supported
+    ? "Voice input isn't supported in this browser"
+    : listening
+      ? "Stop dictating"
+      : "Dictate your prompt";
+
+  return (
+    <PromptInputButton
+      aria-label={listening ? "Stop dictating" : "Dictate"}
+      aria-pressed={listening}
+      tooltip={tooltip}
+      disabled={disabled || !supported}
+      onClick={listening ? stop : start}
+      className={cn(
+        listening &&
+          "bg-accent text-accent-foreground motion-safe:animate-pulse",
+        className,
+      )}
+      {...props}
+    >
+      <MicIcon />
+    </PromptInputButton>
   );
 };
 

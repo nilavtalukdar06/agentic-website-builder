@@ -39,11 +39,25 @@ export async function createTestSession(name: string) {
       name: string;
       description?: string;
       githubRepo?: string | null;
+      previewUrl?: string | null;
       updatedAt?: Date;
     }) => {
+      const id = randomUUID();
       await sql`
-        INSERT INTO "Project" (id, slug, name, description, "userId", "githubRepo", "updatedAt")
-        VALUES (${randomUUID()}, ${project.slug}, ${project.name}, ${project.description ?? null}, ${userId}, ${project.githubRepo ?? null}, ${(project.updatedAt ?? new Date()).toISOString()})`;
+        INSERT INTO "Project" (id, slug, name, description, "userId", "githubRepo", "previewUrl", "updatedAt")
+        VALUES (${id}, ${project.slug}, ${project.name}, ${project.description ?? null}, ${userId}, ${project.githubRepo ?? null}, ${project.previewUrl ?? null}, ${(project.updatedAt ?? new Date()).toISOString()})`;
+      return id;
+    },
+    addMessage: async (message: {
+      projectId: string;
+      role: "USER" | "ASSISTANT";
+      content: string;
+      parts?: unknown;
+      createdAt?: Date;
+    }) => {
+      await sql`
+        INSERT INTO "Message" (id, "projectId", role, content, parts, "createdAt")
+        VALUES (${randomUUID()}, ${message.projectId}, ${message.role}, ${message.content}, ${message.parts === undefined ? null : JSON.stringify(message.parts)}::jsonb, ${(message.createdAt ?? new Date()).toISOString()})`;
     },
     cookie: {
       name: "better-auth.session_token",

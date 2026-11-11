@@ -1,5 +1,5 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   renderWithQueryClient,
   resetTrpcHandlers,
@@ -10,6 +10,7 @@ import { RecentProjects } from "./recent-projects";
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 const toast = vi.hoisted(() => ({ add: vi.fn() }));
+const upload = vi.hoisted(() => ({ uploadAttachment: vi.fn() }));
 
 vi.mock("@/trpc/client", async () => {
   const { trpcMock } = await import("@/test/trpc");
@@ -20,12 +21,56 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
 }));
 vi.mock("@/components/ui/toast", () => ({ toast }));
+vi.mock("@/lib/upload-attachment", () => upload);
+
+const sonnet = {
+  id: "anthropic/claude-sonnet-5.5",
+  name: "Claude Sonnet 5.5",
+  provider: "anthropic",
+  providerLabel: "Anthropic",
+  vision: true,
+  pricing: {
+    inputPerMTok: 2,
+    outputPerMTok: 10,
+    cachedInputPerMTok: null,
+    cacheWritePerMTok: null,
+  },
+};
+const glm = {
+  ...sonnet,
+  id: "zai/glm-5.3",
+  name: "GLM 5.3",
+  provider: "zai",
+  providerLabel: "Z.ai",
+  vision: false,
+};
 
 beforeEach(() => {
   resetTrpcHandlers();
   router.push.mockReset();
   toast.add.mockReset();
+  upload.uploadAttachment.mockReset();
+  trpcHandlers["model.list"] = vi
+    .fn()
+    .mockResolvedValue({ models: [sonnet, glm], defaultModelId: sonnet.id });
+  URL.createObjectURL = vi.fn(() => "blob:preview");
+  URL.revokeObjectURL = vi.fn();
+  Element.prototype.scrollIntoView ??= () => {};
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
 });
+
+function attach(...files: File[]) {
+  fireEvent.change(screen.getByLabelText("Upload files"), {
+    target: { files },
+  });
+}
+
+const image = (name = "ref.png") =>
+  new File([new Uint8Array(10)], name, { type: "image/png" });
 
 describe("NewProjectPrompt", () => {
   const textbox = () =>
@@ -52,6 +97,7 @@ describe("NewProjectPrompt", () => {
       .mockResolvedValue({ id: "p1", slug: "coffee-site", name: "Coffee" });
     const { queryClient } = renderWithQueryClient(<NewProjectPrompt />);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByRole("button", { name: /Change model/ });
     fireEvent.change(textbox(), { target: { value: " A coffee site " } });
     fireEvent.click(submit());
     await waitFor(() =>
@@ -59,6 +105,8 @@ describe("NewProjectPrompt", () => {
     );
     expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
       prompt: "A coffee site",
+      model: sonnet.id,
+      attachmentIds: [],
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project"] });
   });
@@ -82,11 +130,188 @@ describe("NewProjectPrompt", () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  test("unbuilt controls are disabled", () => {
+  test("shows only the controls that work", () => {
     renderWithQueryClient(<NewProjectPrompt />);
-    expect(screen.getByRole("button", { name: "Attach files" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Attach images" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: /Public|Next\.js/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("dictation is disabled in a browser without speech recognition", () => {
+    renderWithQueryClient(<NewProjectPrompt />);
     expect(screen.getByRole("button", { name: "Dictate" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Public/ })).toBeDisabled();
+  });
+
+  describe("dictation", () => {
+    class FakeRecognition {
+      static last: FakeRecognition | null = null;
+      continuous = false;
+      interimResults = false;
+      lang = "";
+      onstart: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      onerror: ((event: { error: string }) => void) | null = null;
+      onresult: ((event: unknown) => void) | null = null;
+      start = () => this.onstart?.();
+      stop = () => this.onend?.();
+      abort = () => this.onend?.();
+      constructor() {
+        FakeRecognition.last = this;
+      }
+    }
+
+    beforeEach(() => {
+      (window as { SpeechRecognition?: unknown }).SpeechRecognition =
+        FakeRecognition;
+    });
+
+    afterEach(() => {
+      delete (window as { SpeechRecognition?: unknown }).SpeechRecognition;
+      FakeRecognition.last = null;
+    });
+
+    test("speaking fills the prompt and enables Create project", async () => {
+      renderWithQueryClient(<NewProjectPrompt />);
+      expect(submit()).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+      act(() =>
+        FakeRecognition.last?.onresult?.({
+          results: [[{ transcript: "A coffee roastery site" }]],
+        }),
+      );
+      expect(textbox()).toHaveValue("A coffee roastery site");
+      expect(submit()).toBeEnabled();
+    });
+
+    test("a blocked microphone shows a toast", () => {
+      renderWithQueryClient(<NewProjectPrompt />);
+      fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+      act(() => FakeRecognition.last?.onerror?.({ error: "not-allowed" }));
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "error",
+          title: "Voice input",
+          description: expect.stringMatching(/Microphone access is blocked/),
+        }),
+      );
+    });
+  });
+
+  test("the model chip shows the default and switches models", async () => {
+    trpcHandlers["project.create"] = vi
+      .fn()
+      .mockResolvedValue({ id: "p1", slug: "coffee-site", name: "Coffee" });
+    renderWithQueryClient(<NewProjectPrompt />);
+    const chip = await screen.findByRole("button", {
+      name: "Model: Claude Sonnet 5.5. Change model",
+    });
+    expect(
+      chip
+        .querySelector('[data-slot="model-logo"]')
+        ?.getAttribute("data-provider"),
+    ).toBe("anthropic");
+    fireEvent.click(chip);
+    expect(await screen.findByText("Z.ai")).toBeInTheDocument();
+    expect(screen.getAllByText("$2 / $10 per 1M tokens")).toHaveLength(2);
+    const logos = screen
+      .getAllByRole("option")
+      .map((option) =>
+        option
+          .querySelector('[data-slot="model-logo"]')
+          ?.getAttribute("data-provider"),
+      );
+    expect(logos).toEqual(["anthropic", "zai"]);
+    fireEvent.click(screen.getByRole("option", { name: /GLM 5\.3/ }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Model: GLM 5.3. Change model",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.change(textbox(), { target: { value: "A coffee site" } });
+    fireEvent.click(submit());
+    await waitFor(() =>
+      expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
+        prompt: "A coffee site",
+        model: glm.id,
+        attachmentIds: [],
+      }),
+    );
+  });
+
+  test("offers a retry when the model list fails", async () => {
+    trpcHandlers["model.list"] = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValue({ models: [sonnet], defaultModelId: sonnet.id });
+    renderWithQueryClient(<NewProjectPrompt />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Models unavailable/ }),
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: "Model: Claude Sonnet 5.5. Change model",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  test("uploads attached images before creating the project", async () => {
+    upload.uploadAttachment.mockResolvedValue({
+      id: "a1",
+      name: "ref.png",
+      contentType: "image/png",
+      size: 10,
+    });
+    trpcHandlers["project.create"] = vi
+      .fn()
+      .mockResolvedValue({ id: "p1", slug: "coffee-site", name: "Coffee" });
+    renderWithQueryClient(<NewProjectPrompt />);
+    await screen.findByRole("button", { name: /Change model/ });
+    attach(image());
+    expect(await screen.findByText("ref.png")).toBeInTheDocument();
+    fireEvent.change(textbox(), { target: { value: "Match this" } });
+    fireEvent.click(submit());
+    await waitFor(() =>
+      expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
+        prompt: "Match this",
+        model: sonnet.id,
+        attachmentIds: ["a1"],
+      }),
+    );
+    expect(upload.uploadAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ filename: "ref.png", mediaType: "image/png" }),
+    );
+  });
+
+  test("rejects files that aren't images", async () => {
+    renderWithQueryClient(<NewProjectPrompt />);
+    attach(new File(["x"], "notes.txt", { type: "text/plain" }));
+    await waitFor(() =>
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Only PNG, JPEG, WebP and GIF images can be attached.",
+        }),
+      ),
+    );
+  });
+
+  test("blocks images for a model that can't read them", async () => {
+    trpcHandlers["project.create"] = vi.fn();
+    renderWithQueryClient(<NewProjectPrompt />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Change model/ }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: /GLM 5\.3/ }));
+    attach(image());
+    fireEvent.change(textbox(), { target: { value: "Match this" } });
+    fireEvent.click(submit());
+    await waitFor(() =>
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "GLM 5.3 can't read images" }),
+      ),
+    );
+    expect(upload.uploadAttachment).not.toHaveBeenCalled();
+    expect(trpcHandlers["project.create"]).not.toHaveBeenCalled();
   });
 });
 

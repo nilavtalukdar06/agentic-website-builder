@@ -28,16 +28,17 @@ enum PaymentStatus {
 }
 
 model User {
-  id            String    @id
+  id            String       @id
   name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  email         String       @unique
+  emailVerified Boolean      @default(false)
   image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
   sessions      Session[]
   accounts      Account[]
   projects      Project[]
+  attachments   Attachment[]
 
   @@map("user")
 }
@@ -108,15 +109,33 @@ model Project {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  role      Role
-  content   String
-  parts     Json?
-  createdAt DateTime @default(now())
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role        Role
+  content     String
+  parts       Json?
+  model       String?
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
 
   @@index([projectId, createdAt])
+}
+
+model Attachment {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId   String?
+  message     Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  key         String   @unique
+  name        String
+  contentType String
+  size        Int
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([messageId])
 }
 
 model Version {

@@ -36,6 +36,7 @@ export const trpcMock = {
     pathFilter: () => ({ queryKey: ["project"] }),
   },
   credits: { balance: query("credits.balance") },
+  model: { list: query("model.list") },
   status: { uptime: query("status.uptime") },
 };
 

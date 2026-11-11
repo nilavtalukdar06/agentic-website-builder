@@ -45,10 +45,12 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | AI UI                | AI Elements (shadcn-based registry)          | `npx ai-elements@latest add <component>`                                                                                                |
 | Data fetching        | tRPC v11 + TanStack React Query v5           | `@trpc/server`, `@trpc/client`, `@trpc/tanstack-react-query`, `@tanstack/react-query`, `zod`, `superjson`, `client-only`, `server-only` |
 | URL state            | nuqs v2                                      | `nuqs`                                                                                                                                  |
-| Agents               | Inngest + AgentKit                           | `inngest`, `@inngest/agent-kit`                                                                                                         |
-| Agent → UI streaming | AgentKit realtime                            | `@inngest/use-agent`, `@inngest/realtime`                                                                                               |
-| LLM                  | OpenAI models via AgentKit `openai()`        | (bundled adapter; model id from env)                                                                                                    |
-| Sandbox              | E2B (custom Next.js template)                | `e2b` (SDK ≥ 2.3 for templates), `@e2b/cli` (dev)                                                                                       |
+| Agents               | Inngest v4 + AI SDK (own durable tool loop)  | `inngest` (v4), `ai` (v7) — AgentKit dropped in Phase 5, see `docs/decisions.md`                                                        |
+| Agent → UI streaming | Inngest v4 built-in realtime                 | `inngest/realtime` (channels, publish), `inngest/react` (`useRealtime`, Phase 6)                                                        |
+| LLM                  | Vercel AI Gateway via the AI SDK             | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway     |
+| Voice input          | Browser Web Speech API                       | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                   |
+| File storage         | Neon Object Storage (S3-compatible)          | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                |
+| Sandbox              | E2B (custom Next.js template)                | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                          |
 | Auth                 | Better Auth, **GitHub OAuth only**           | `better-auth`                                                                                                                           |
 | Payments             | Stripe Checkout (one-time, custom amount)    | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                     |
 | Database             | PostgreSQL on Neon, Prisma 7                 | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                    |
@@ -58,6 +60,9 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | Env validation       | typed env                                    | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
 
 Version notes:
+
+- **Inngest v4**: triggers live in the function options (`triggers: [agentRun]`), events are typed with `eventType(name, { schema })`, realtime is built in (no `@inngest/realtime` middleware), the SDK defaults to **cloud** mode (set `INNGEST_DEV=1` locally), and checkpointing is on by default.
+- **AI SDK v7**: `streamText` with `instructions`, tools defined with `tool({ inputSchema })` and **no `execute`**, so every tool call runs as its own Inngest step.
 
 - **Next.js 16**: `middleware.ts` is deprecated; route protection goes in **`proxy.ts`** (exported function `proxy`, runs on the Node.js runtime).
 - **Prisma 7**: the connection URL is **not** in `schema.prisma` any more; it lives in `prisma.config.ts`. The client is constructed with a **driver adapter** (`PrismaNeon`) and generated to a custom output path (`generator client { provider = "prisma-client" … }`). It requires Node 20.19+ / 22.12+ / 24+.
@@ -73,6 +78,7 @@ Version notes:
 │  ├─ schema.prisma
 │  └─ migrations/
 ├─ prisma.config.ts
+├─ neon.ts                      # Neon infrastructure as code (object storage buckets)
 ├─ sandbox-templates/nextjs/    # E2B template (Dockerfile / template.ts)
 ├─ docs/decisions.md            # package-first decision log
 └─ src/
@@ -89,6 +95,7 @@ Version notes:
    │     ├─ auth/[...all]/route.ts
    │     ├─ trpc/[trpc]/route.ts
    │     ├─ inngest/route.ts
+   │     ├─ attachments/route.ts   # image upload → Neon Object Storage
    │     ├─ realtime/token/route.ts
    │     └─ webhooks/stripe/route.ts
    ├─ components/
@@ -102,11 +109,16 @@ Version notes:
    │  ├─ trpc/                  # init, routers, context
    │  ├─ billing/               # PaymentProvider + Stripe impl + ledger
    │  ├─ github/                # export service
+   │  ├─ ai/                    # AI Gateway client, model catalogue, generation cost
+   │  ├─ storage/               # Neon Object Storage (attachments)
    │  └─ sandbox/               # E2B helpers
    ├─ inngest/
    │  ├─ client.ts
+   │  ├─ events.ts              # typed `agent/run` event
+   │  ├─ channels.ts            # realtime channel `project:<id>` + topics
+   │  ├─ publisher.ts           # publish helper (never fails a step)
    │  ├─ functions/run-agent.ts
-   │  └─ agent/                 # network, agents, tools, prompts
+   │  └─ agent/                 # model turn, tools, tool executor, persistence, prompts
    ├─ trpc/                     # client.tsx, server.tsx, query-client.ts
    ├─ lib/search-params/        # nuqs parsers (shared server/client)
    └─ styles/globals.css        # design tokens
@@ -305,7 +317,7 @@ model Payment {
 ## Phase 4 — App shell, Home, Projects
 
 - **Sidebar layout** (shadcn `Sidebar`): workspace switcher, New project (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
-- **Home**: heading, **PromptInput** (AI Elements) with attach / visibility / framework chips; Suggestion chips; "Recent projects" (6 cards) + "See all projects"
+- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects"
   - Submit → `project.create` (name + slug generated from the prompt, see below) → `inngest.send("agent/run")` → navigate to `/p/[slug]`
 - **Projects page**: search, filter tabs (All / On GitHub / Not exported), sort, grid of **ProjectCard** (name, slug, description, edited time, "On GitHub" badge), empty state
   - nuqs: `?q=`, `?filter=all|github|local`, `?sort=edited|name|created`
@@ -318,7 +330,7 @@ model Payment {
 - `project.create` stores the prompt as the project's first `USER` `Message`. The `inngest.send("agent/run")` call is added in Phase 5, when Inngest is installed; it reads that message.
 - `/p/[slug]` ships in Phase 4 as a minimal page (name, slug, prompt, "waiting for the agent" state) with loading / error / not-found, so opening a project works. Phase 6 replaces its body with the workspace.
 - **Templates** is on the canvas but has no phase: the nav item is shown disabled ("Soon").
-- PromptInput **attach**, **mic**, **visibility** and **framework** chips are shown disabled with a "Coming soon" tooltip: attachments are Phase 6+, visibility has no column until Phase 8 export, and **Next.js** is the only sandbox template.
+- PromptInput **attach** and **mic** were shown disabled with a "Coming soon" tooltip (_both are live as of Phase 5, §5.5 and §5.6_). The **visibility** and **framework** chips from the canvas were dropped (_removed at the owner's request in Phase 5: visibility has no column until Phase 8 export, and Next.js is the only template, so a chip had nothing to choose_). (_Phase 5 enabled **attach** for image references and added a **model** chip, see §5.4–5.5; the mic dictates, see §5.6._)
 - Sidebar credits card: balance = `SUM(delta)`; the bar is balance ÷ total credits ever granted (positive deltas).
 
 **Done when:** creating, listing, filtering and opening projects works and matches the canvas.
@@ -329,42 +341,75 @@ model Payment {
 
 ### 5.1 E2B template
 
-- `sandbox-templates/nextjs/`: Next.js + Tailwind + shadcn pre-installed, dev server started in the template so sandboxes boot hot
-- Build with the E2B CLI and store the template id in `E2B_TEMPLATE_ID`
-- Helpers: `getSandbox(id)` (connect or create), `previewUrl = "https://" + sandbox.getHost(3000)`, timeout/keep-alive policy
+- `sandbox-templates/nextjs/template.ts` (E2B Template SDK): Node 24 image, the app scaffolded with **`shadcn create --name app --template next --base base --preset nova`** (Next.js 16 App Router, TypeScript, Tailwind v4, no `src/`, Base UI `base-nova` style, Geist fonts, lucide, a `ThemeProvider` for class-based dark mode) then `next.config.ts` gets `allowedDevOrigins: ["*.e2b.app"]` (a `sed` step with a `grep` check, so a template change fails the build instead of silently losing it), then `shadcn add --all`, app in `/home/user/app`, start command `next dev --turbopack -p 3000` with a ready check on `http://localhost:3000`, so sandboxes boot with the dev server already running
+- Build with `bun run sandbox:build` (needs `E2B_API_KEY`); it prints the id to store in `E2B_TEMPLATE_ID`
+- Helpers in `src/server/sandbox/`: `getOrCreateSandbox(id, loadRestore)` (connect, or create and restore the latest Version's files, then `npm install` if `package.json` was restored), `previewUrlFor(sandbox)` = `"https://" + sandbox.getHost(3000)`, `snapshotSandbox()` (source tree without `node_modules`, `.next`, `.git`, lock files, `.env*`, binaries; capped at 400 files / 4 MB), 30-minute sandbox timeout
 
-### 5.2 Inngest + AgentKit
+### 5.2 Inngest + AI SDK agent
 
-- `inngest/client.ts`, `app/api/inngest/route.ts` (`serve`)
+- `inngest/client.ts`, `app/api/inngest/route.ts` (`serve`, `maxDuration = 300`, checkpointing `maxRuntime: "240s"`)
+- `project.create` sends `agent/run` (`{ projectId, userId, messageId }`); if sending fails the project is still created and the error is logged (retry UI is Phase 6/9)
 - Function `run-agent` (event `agent/run`):
-  1. `step.run("sandbox")`: create or connect the sandbox, save `sandboxId`
-  2. Build the **network**: one coding agent (`createAgent`, model `openai({ model: env.OPENAI_MODEL })`) with tools:
-     - `terminal`: `sandbox.commands.run(cmd)` with streamed stdout/stderr
-     - `createOrUpdateFiles`: `sandbox.files.write(...)`, records the path in network state
+  1. `step.run("load-project")`: ownership check, history up to the triggering message, latest Version file list, credit balance. Balance ≤ 0 → assistant error message ("out of credits"), no model call, no charge
+  2. `step.run("sandbox")`: connect or create (restoring the latest Version), make sure `next.config.ts` still has `allowedDevOrigins` (`ensureDevOrigins`, also re-run in `persist` before the snapshot), save `sandboxId` + `previewUrl`
+  3. Loop, max **30 turns**: `step.run("model-N")` streams one model turn (`streamText` through AI Gateway with the user's chosen model, §5.4); each tool call then runs in its own `step.run("tool-N-M")`. Tools:
+     - `terminal`: `sandbox.commands.run(cmd)` in `/home/user/app`, stdout/stderr streamed, 3-minute timeout, output truncated for the model
+     - `createOrUpdateFiles`: `sandbox.files.write(...)`, records created/edited paths and line counts
      - `readFiles`: `sandbox.files.read(path)`
-  3. Router: stop when the agent emits a final summary or the iteration cap is hit
-  4. `step.run("persist")`: save the assistant message (with parts), the Version snapshot, `previewUrl`
-  5. `step.run("meter")`: write a `CreditLedger` debit from token usage (formula TBD); stop early if the balance hits 0
-- Prompt files in `inngest/agent/prompts/`: system prompt (Next.js App Router, shadcn, Tailwind, no secrets, write files only via tools) and a summary prompt
-- Guardrails: max iterations, max files, command allowlist or denylist, per-user concurrency limit (Inngest `concurrency` key = userId)
+  4. Router: stop when a turn has no tool calls (the reply holds `<task_summary>`). Hitting the turn cap without a summary is a failure. If the running cost reaches the balance, stop early and keep what was built
+  5. `step.run("title")`: a short version title from the summary prompt
+  6. `step.run("persist")`: warm the preview (`curl localhost:3000`), snapshot files, then one transaction: Version (next number, title, files, `creditCost`), assistant Message with `parts`, `previewUrl`
+  7. `step.run("meter")`: one `CreditLedger` debit (`GENERATION` for the first version, `EDIT` after), then `credits` / `preview` / `status: done` events
+  - `onFailure` (after retries, or a `NonRetriableError`): assistant error message, `status: error`, **no charge**
+  - Model errors are classified: **429** waits for the gateway's `Retry after` (`RetryAfterError`, capped at 5 minutes); **401/403/404** stop the run with "the selected model isn't available, pick another" (e.g. AI Gateway free-tier restrictions); other **400s** stop with the generic failure; anything else is retried. A failed title call falls back to a default title instead of failing a finished build
+  - All writes use ids derived from the Inngest run id (`run_<runId>_reply|version|debit`), so retried steps never duplicate a message, version or debit
+- Prompts in `inngest/agent/prompts/`: system prompt (Next.js 16 App Router, Base UI shadcn with `render` not `asChild`, Tailwind, the template's placeholder page, missing metadata and `ThemeProvider` (theme tokens, or `forcedTheme` for a fixed palette), the dev server is already running, no secrets, files only via tools) and a title prompt
+- Guardrails: 30 turns, 32 k output tokens per turn (a turn that hits it is discarded and the agent is told to take smaller steps), history compaction (only the last 3 turns keep full tool output and file contents), `readFiles` capped at 20 k characters per file and 60 k per call, 80 changed files per run (20 per call, 60 k characters per file), path guard (inside `/home/user/app`, no `node_modules` / `.next` / `.git` / `.env*`), command denylist (`sudo`, starting/stopping/building the dev server, `kill`, recursive deletes of `/`, `~`, `.` or `*`, `curl | sh`, `.env`), concurrency 2 runs per user and 1 per project
+- **Metering** (decided at Phase 5 start): credits = `ceil(model cost in USD × CREDITS_PER_USD × CREDIT_MARKUP)`, with the cost reported by AI Gateway (§5.4). Failed runs are free
 
 ### 5.3 Realtime events (what the UI shows live)
 
-Publish typed events on a per-project channel. Use AgentKit's `useAgent` streaming if its event set covers ours; otherwise publish custom topics with `@inngest/realtime`:
+One channel per project, `project:<projectId>`, typed with zod in `src/inngest/channels.ts`. Publishing happens only inside steps (never in the function body, which replays). Topic names are single words; the plan's event names map like this:
 
-| Event                                                     | UI effect                              |
-| --------------------------------------------------------- | -------------------------------------- |
-| `status` (thinking / building / compiling / done / error) | header badge, Shimmer                  |
-| `reasoning.delta`                                         | Reasoning ("Thought for N seconds")    |
-| `task.item` (sandbox ready, installed deps…)              | Task list rows                         |
-| `file.started` / `file.written` (path, verb, +lines)      | file chips + generating overlay stream |
-| `tool.call` / `tool.output` (command, stdout chunks)      | Tool card + Terminal                   |
-| `credits.used`                                            | "N credits used" in the composer       |
-| `preview.ready` (url)                                     | swap overlay for WebPreview iframe     |
+| Topic       | Plan event                               | Payload                                                                   | UI effect                              |
+| ----------- | ---------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------- |
+| `status`    | `status`                                 | `{ state: thinking \| building \| compiling \| done \| error, message? }` | header badge, Shimmer                  |
+| `reasoning` | `reasoning.delta`                        | `{ turn, delta }`                                                         | Reasoning ("Thought for N seconds")    |
+| `text`      | (added) assistant text delta             | `{ turn, delta }`                                                         | streaming assistant text               |
+| `task`      | `task.item`                              | sandbox / install / file item                                             | Task list rows                         |
+| `file`      | `file.started` / `file.written`          | `{ phase, path, verb, lines? }`                                           | file chips + generating overlay stream |
+| `tool`      | `tool.call` / `tool.output` (+ `result`) | `{ phase, callId, name, command?, chunk?, exitCode? }`                    | Tool card + Terminal                   |
+| `credits`   | `credits.used`                           | `{ used }`                                                                | "N credits used" in the composer       |
+| `preview`   | `preview.ready`                          | `{ url }`                                                                 | swap overlay for WebPreview iframe     |
 
-- Token endpoint: `app/api/realtime/token/route.ts` (subscription token scoped to the user's project channel)
+- Token endpoint: `POST /api/realtime/token` `{ projectId }` → session + ownership check → `getClientSubscriptionToken(inngest, { channel, topics })` (Phase 6 passes it to `useRealtime`)
+- Persisted message `parts` (`src/lib/agent/parts.ts`, zod): `reasoning`, `task`, `tool`, `text`, `error`, for Phase 6 to render on reload
+- Until Phase 6, `/p/[slug]` shows the agent state from the latest message: building (with Refresh), done (reply + Open preview) or stopped (error reply)
 
-**Done when:** sending a prompt from a test script produces a running sandbox with written files, a reachable preview URL, persisted messages/version, and a ledger debit, with events visible in the Inngest dev server.
+### 5.4 Model choice and pricing (added at the owner's request during Phase 5)
+
+- Every model call goes through **Vercel AI Gateway** (`createGateway({ apiKey: AI_GATEWAY_API_KEY })` from `ai`), so the agent is not tied to one provider
+- **Curated list** of agentic-coding models in `src/lib/ai/models.ts` (Anthropic, OpenAI, Google, Moonshot AI, Z.ai, DeepSeek, Alibaba, Mistral), each with a `vision` flag. At runtime it is intersected with `gateway.getAvailableModels()` (cached 1 hour), which supplies the display names and **live prices**; retired models drop out on their own
+- `model.list` (tRPC, prefetched on Home) feeds the **model chip** in the composer: AI Elements `ModelSelector` (searchable command dialog, grouped by provider, each row with the provider's **logo**, price per 1M tokens, image icon for vision; the chip shows the selected model's logo). Default from `AI_DEFAULT_MODEL`
+- The chosen model is stored on the user `Message.model`; `run-agent` uses it for every turn and for the title (falls back to the default if it was retired)
+- **Cost**: during the run, a live estimate (usage × gateway prices, including cache reads/writes) drives `credits.used` and the out-of-credits stop; at the end, `step.run("cost")` asks the gateway for the **exact cost** of every call (`getGenerationInfo`, by the `generationId` in provider metadata; BYOK uses `upstreamInferenceCost`) and falls back to the estimate for any call it can't resolve. Credits = `ceil(USD × CREDITS_PER_USD × CREDIT_MARKUP)`; the ledger meta keeps model, USD cost, exact/estimated call counts and generation ids
+
+### 5.5 Image attachments (added at the owner's request during Phase 5)
+
+- Up to **4 images** per prompt (PNG, JPEG, WebP, GIF, **4 MB** each, under Vercel's 4.5 MB request limit), attached with the paperclip, by paste or by the file dialog; chips with a hover preview (`PromptInputAttachment(s)`, ported from the AI Elements registry to Base UI)
+- On submit the composer uploads each image to `POST /api/attachments` (multipart, session-checked, validated), which stores it in the private **`attachments` bucket on Neon Object Storage** under `users/<userId>/<id>.<ext>` and writes an `Attachment` row (key, name, type, size; `messageId` empty). `project.create` then links the ids to the new `USER` message after checking they belong to the user and are unused, and rejects images for a model without vision
+- The agent sees images as file parts. History keeps only the bucket key (`vibe-attachment:<key>` placeholders), and each model step swaps them for **1-hour presigned URLs**, so no image bytes or URLs land in Inngest step state. A model without vision gets a text note instead. The system prompt treats images as visual references
+- Bucket declared in `neon.ts`; `neon deploy` provisions it and writes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`
+- Phase 9: delete orphaned uploads (no `messageId` after a day) and bucket objects of deleted projects
+
+### 5.6 Model logos and voice input (added at the owner's request during Phase 5)
+
+- **Model logos**: the 8 providers' monochrome marks from `@lobehub/icons-static-svg` (dev dependency, MIT), baked into `src/components/models/model-logos.generated.ts` (~10 KB) by `bun run logos:generate` (rejects anything that isn't a plain single-color mark). `ModelLogo` renders them with `currentColor`, so they follow light and dark themes, with a generic icon for an unknown provider. A unit test fails if a curated provider has no logo. No runtime request to a third party
+- **Voice input**: the mic in the composer is `PromptInputSpeechButton` (AI Elements pattern, adapted to our `PromptInputProvider`). It uses the browser's built-in **Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`, language from the browser): free, no server, no credits. Words appear live (interim, then final) after any text already typed. Clicking again stops and keeps the words; typing, submitting or leaving the page stops it and discards pending speech so it can't overwrite the edit. Errors (blocked microphone, no microphone, offline) show as a toast
+- **Support**: Chrome, Edge and Safari. Firefox has no speech recognition, so the button is disabled with an explanatory tooltip. In Chrome and Edge the browser sends the audio to its vendor's speech service; Vibe never receives audio, only the text the user sends (stated in the privacy policy)
+- Not done: server-side transcription (works in every browser but costs money per minute, needs recording, upload, limits and credit metering). Revisit if Firefox users matter
+
+**Done when:** `bun run agent:smoke` (or a prompt from Home) produces a running sandbox with written files, a reachable preview URL, persisted messages/version, and a ledger debit, with events visible in the Inngest dev server.
 
 ---
 
@@ -378,7 +423,7 @@ nuqs state: `?view=preview|code`, `?file=app/page.tsx`, `?device=desktop|tablet|
 
 AI Elements, installed and themed in Phase 1:
 
-- `Conversation` (auto-scroll), `Message` (user bubble / assistant plain), `Reasoning`, `Task` + file chips, `Tool` (+ `Terminal` for output), `Shimmer` for the active step, `Checkpoint` (Restore → set active Version, rewrite the sandbox files), `Suggestion`, `PromptInput` (Stop while running, Send when idle, attachments later)
+- `Conversation` (auto-scroll), `Message` (user bubble / assistant plain), `Reasoning`, `Task` + file chips, `Tool` (+ `Terminal` for output), `Shimmer` for the active step, `Checkpoint` (Restore → set active Version, rewrite the sandbox files), `Suggestion`, `PromptInput` (Stop while running, Send when idle, image attachments, the model chip and the mic as on Home, §5.4–5.6)
 - Message actions: copy, retry, thumbs up/down (store feedback)
 
 ### 6.2 Preview mode
@@ -444,7 +489,7 @@ Scope is **view, copy, download**, nothing editable.
   - `@octokit/rest` with the Git Data API (create blobs → tree → commit → update ref), all server-side with the user's GitHub access token from Better Auth's `Account` table
   - Alternative: run `git` inside the E2B sandbox and push with a short-lived token (no file round-trip, but a token enters the sandbox; prefer the Octokit route)
 - Re-export pushes a new commit to the same repo; store `githubRepo` on the project
-- Exclude `node_modules`, `.next`, `.env*`; add a README and `.gitignore`
+- Exclude `node_modules`, `.next`, `.env*`; add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
 
 **Done when:** a project exports to a new repo that `git clone && npm i && npm run dev` runs locally.
 
@@ -485,34 +530,45 @@ WELCOME_CREDITS=0       # granted once on first sign-in; 0 disables
 # Status page
 CRON_SECRET=             # bearer token Vercel Cron sends to /api/cron/health; unset = probe disabled
 
-# AI
-OPENAI_API_KEY=
-OPENAI_MODEL=            # current OpenAI coding model, set per environment
+# AI (Vercel AI Gateway)
+AI_GATEWAY_API_KEY=
+AI_DEFAULT_MODEL=anthropic/claude-sonnet-5.5   # must be in src/lib/ai/models.ts
+
+# Credits (Phase 5 metering)
+CREDITS_PER_USD=100
+CREDIT_MARKUP=1          # 1 = model cost only
 
 # Sandbox
 E2B_API_KEY=
-E2B_TEMPLATE_ID=
+E2B_TEMPLATE_ID=         # printed by `bun run sandbox:build`
+
+# Image attachments (Neon Object Storage; written by `neon deploy`)
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_ENDPOINT_URL_S3=
+AWS_REGION=
 
 # Inngest
+INNGEST_DEV=             # 1 locally (Dev Server); unset in production
 INNGEST_EVENT_KEY=
 INNGEST_SIGNING_KEY=
 
 # Billing
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
-CREDITS_PER_USD=100
 ```
 
 ---
 
 ## Open decisions
 
-1. **Credit pricing:** credits per dollar, and how token usage converts to credits (and whether failed runs are free)
+1. **Credit pricing:** _resolved in Phase 5_: credits = `ceil(cost USD × CREDITS_PER_USD × CREDIT_MARKUP)` with the exact cost from AI Gateway; failed runs are free. `CREDIT_MARKUP` (margin) is still a product call
 2. **Welcome credits** on sign-up: _resolved in Phase 3_: `WELCOME_CREDITS` env var, default 0 (no ledger row when 0)
 3. **GitHub scopes:** _resolved in Phase 3_: sign-in asks for `read:user user:email` only; repo scope is added at first export via Better Auth `linkSocial({ provider: "github", scopes })`
 4. **Payments in India:** Stripe invite status. If it's delayed, which second provider to add behind `PaymentProvider`
-5. **Sandbox retention:** how long an idle sandbox lives before it's recreated from the latest Version
+5. **Sandbox retention:** _partly resolved in Phase 5_: 30-minute sandbox timeout; an expired sandbox is recreated from the latest Version on the next run. Pausing instead of killing is a Phase 9 option
 6. **Private repos** on export: allowed from day one, or public only at first
+7. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
 
 ---
 
@@ -523,7 +579,7 @@ CREDITS_PER_USD=100
 - [ ] Phase 2: Prisma 7 + Neon, tRPC v11, nuqs
 - [ ] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
 - [ ] Phase 4: sidebar shell, Home, Projects
-- [ ] Phase 5: E2B template, Inngest + AgentKit, realtime events, metering
+- [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
 - [ ] Phase 6: workspace (chat, preview + overlay, read-only code)
 - [ ] Phase 7: credits ledger, Stripe top-ups, usage page
 - [ ] Phase 8: Export to GitHub
