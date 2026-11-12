@@ -65,8 +65,8 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | Payments             | Stripe Checkout (one-time, custom amount)                                                        | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                     |
 | Database             | PostgreSQL on Neon, Prisma 7                                                                     | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                    |
 | GitHub export        | GitHub REST API                                                                                  | `@octokit/rest` (candidate; see Phase 8)                                                                                                |
-| Theming              | light/dark                                                                                       | `next-themes`                                                                                                                           |
-| Fonts                | Geist / Geist Mono                                                                               | `geist` (or `next/font/google`)                                                                                                         |
+| Theming              | light/dark                                                                                       | own `ThemeProvider` (`src/components/theme/`, `useSyncExternalStore`), not `next-themes` — see `docs/decisions.md`                      |
+| Fonts                | Geist / Geist Mono                                                                               | `next/font/google` (`Geist`, `Geist_Mono`)                                                                                              |
 | Env validation       | typed env                                                                                        | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
 
 Version notes:
@@ -99,8 +99,8 @@ Version notes:
    │  ├─ (app)/layout.tsx       # sidebar shell
    │  ├─ (app)/page.tsx         # Home
    │  ├─ (app)/projects/page.tsx
-   │  ├─ (app)/usage/page.tsx
-   │  ├─ (workspace)/p/[slug]/page.tsx
+   │  ├─ (app)/usage/page.tsx   # (Phase 7) not yet built
+   │  ├─ (workspace)/p/[slug]/page.tsx   # route scaffold only (shell header, loading/error/not-found); chat, preview and code view are Phase 6
    │  ├─ design/page.tsx        # design system (Phase 1)
    │  └─ api/
    │     ├─ auth/[...all]/route.ts
@@ -108,7 +108,8 @@ Version notes:
    │     ├─ inngest/route.ts
    │     ├─ attachments/route.ts   # image upload → Neon Object Storage
    │     ├─ realtime/token/route.ts
-   │     └─ webhooks/stripe/route.ts
+   │     ├─ cron/health/route.ts   # Phase 3.1 status-page probe
+   │     └─ webhooks/stripe/route.ts   # (Phase 7) not yet built
    ├─ components/
    │  ├─ ui/                    # shadcn
    │  ├─ ai-elements/           # AI Elements
@@ -118,8 +119,8 @@ Version notes:
    │  ├─ db.ts                  # Prisma + Neon adapter
    │  ├─ auth.ts                # Better Auth
    │  ├─ trpc/                  # init, routers, context
-   │  ├─ billing/               # PaymentProvider + Stripe impl + ledger
-   │  ├─ github/                # export service
+   │  ├─ billing/               # credit ledger + pricing built in Phase 5; PaymentProvider + Stripe impl are Phase 7
+   │  ├─ github/                # (Phase 8) export service, not yet built
    │  ├─ ai/                    # AI Gateway client, model catalogue, generation cost
    │  ├─ storage/               # Neon Object Storage (attachments)
    │  ├─ secrets/               # (Phase 5c) encrypt, store, inject project secrets
@@ -283,6 +284,8 @@ model Payment {
   createdAt   DateTime @default(now())
 }
 ```
+
+This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth today. Since built: the hand-written Better Auth tables (`User`, `Session`, `Account`, `Verification`, Phase 3), `Attachment` (Phase 5, image uploads) and `HealthCheck` (Phase 3.1, status page). `Payment` exists as a model but has no application code yet (Phase 7).
 
 ### 2.2 tRPC v11 + React Query
 
@@ -1019,15 +1022,15 @@ AWS_REGION=
 INNGEST_DEV=             # 1 locally (Dev Server); unset in production
 INNGEST_EVENT_KEY=
 INNGEST_SIGNING_KEY=
-
-# Billing
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
 ```
 
 **Planned variables** (not yet in `src/config/env.ts`; they move into the list above when their phase is built, together with `.env.example` and the test env):
 
 ```
+# Phase 7 (billing)
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
 # Phase 5c
 SECRETS_ENCRYPTION_KEY=  # 32 random bytes, base64: AES-256-GCM key for project secrets (versioned for rotation)
 AI_GUARD_MODEL=          # policy classifier, default openai/gpt-oss-safeguard-20b
@@ -1065,18 +1068,19 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 
 ## Phase checklist
 
-- [ ] Phase 0: bootstrap, CI, preview deploy
-- [ ] Phase 1: `/design` (tokens, logo, components, AI Elements, patterns) **approved**
-- [ ] Phase 2: Prisma 7 + Neon, tRPC v11, nuqs
-- [ ] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
-- [ ] Phase 4: sidebar shell, Home, Projects
+- [ ] Phase 0: bootstrap, CI, preview deploy (bootstrap and Vercel Cron/deploy config done; no CI workflow yet — no `.github/workflows/`)
+- [x] Phase 1: `/design` (tokens, logo, components, AI Elements, patterns) **approved**
+- [x] Phase 2: Prisma 7 + Neon, tRPC v11, nuqs
+- [x] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
+- [x] Phase 3.1: public pages (`/terms`, `/privacy`, `/docs`, `/docs/[slug]`, `/contact`, `/status`)
+- [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
 - [ ] Phase 5b: five skills + `AGENTS.md` rules in every site (rules shipped), web search, router and Researcher / Designer / Builder / Reviewer agents
 - [ ] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery
 - [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role)
 - [ ] Phase 5e: skill discovery with Firecrawl, approved and pinned installs, memory with Supermemory
-- [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry)
-- [ ] Phase 6: workspace (chat, preview + overlay, read-only code)
-- [ ] Phase 7: credits ledger, Stripe top-ups, usage page
+- [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry) — package decisions recorded in `docs/decisions.md`, harness and `evals/` not yet built
+- [ ] Phase 6: workspace (chat, preview + overlay, read-only code) — only the route scaffold exists (`(workspace)/p/[slug]`: shell header, loading/error/not-found states); no chat, preview or code view yet
+- [ ] Phase 7: credits ledger, Stripe top-ups, usage page (credit ledger and balance card from Phase 5/3 only; no Stripe top-up or usage page)
 - [ ] Phase 8: Export to GitHub
 - [ ] Phase 9: hardening, tests, launch

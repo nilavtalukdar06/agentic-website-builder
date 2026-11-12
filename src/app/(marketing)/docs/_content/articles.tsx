@@ -70,7 +70,7 @@ export const docArticles: DocArticle[] = [
               </li>
             </UL>
             <P>
-              Press <Strong>Create project</Strong>. Vibe names the project from
+              Select the arrow button to send it. Vibe names the project from
               your prompt and opens it.
             </P>
           </>
@@ -256,7 +256,7 @@ export const docArticles: DocArticle[] = [
               built. To keep runs safe and predictable, it has limits:
             </P>
             <UL>
-              <li>At most 30 steps per run.</li>
+              <li>At most 60 steps per run.</li>
               <li>At most 80 changed files per run.</li>
               <li>
                 It can only write inside the project, never to <Code>.env</Code>{" "}
@@ -498,11 +498,19 @@ export const docArticles: DocArticle[] = [
         id: "access",
         title: "Access",
         body: (
-          <P>
-            Signing in only reads your profile and email. The first time you
-            export, GitHub asks you to approve repository access. You can revoke
-            it any time in GitHub under Settings → Applications.
-          </P>
+          <>
+            <Note title="Coming soon">
+              <P>
+                Export to GitHub is planned and not available yet. The sections
+                below describe how it will work once it ships.
+              </P>
+            </Note>
+            <P>
+              Signing in only reads your profile and email. The first time you
+              export, GitHub asks you to approve repository access. You can
+              revoke it any time in GitHub under Settings → Applications.
+            </P>
+          </>
         ),
       },
       {
@@ -544,15 +552,10 @@ export const docArticles: DocArticle[] = [
         id: "again",
         title: "Exporting again",
         body: (
-          <>
-            <P>
-              Exporting again pushes a new commit to the same repository, and
-              the project shows an <Strong>On GitHub</Strong> badge.
-            </P>
-            <Note title="Coming soon">
-              <P>Export to GitHub is planned and not available yet.</P>
-            </Note>
-          </>
+          <P>
+            Exporting again pushes a new commit to the same repository, and the
+            project shows an <Strong>On GitHub</Strong> badge.
+          </P>
         ),
       },
     ],
