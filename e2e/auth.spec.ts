@@ -32,6 +32,24 @@ test.describe("signed out", () => {
     ).toBeVisible();
   });
 
+  test("sign-in shows the gradient showcase on wide screens only", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/sign-in");
+    const showcase = page.locator("[data-slot='sign-in-showcase']");
+    await expect(showcase).toBeVisible();
+    await expect(showcase.locator("[data-slot='aurora']")).toBeAttached();
+    await expect(
+      showcase.getByRole("status", { name: "Example prompt" }),
+    ).toContainText(/Ask Vibe/, { timeout: 10_000 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(showcase).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Continue with GitHub" }),
+    ).toBeVisible();
+  });
+
   test("shows the OAuth error from the callback", async ({ page }) => {
     await page.goto("/sign-in?error=access_denied");
     await expect(page.getByText(/access_denied/)).toBeVisible();

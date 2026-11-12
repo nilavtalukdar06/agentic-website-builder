@@ -57,6 +57,7 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | Generated-app DB     | Prisma 7.10.1 + Neon, the user's own database URL (Phase 5d)                                     | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless` (all pinned; `latest` is still an 8.0 release candidate) |
 | Skill discovery      | Firecrawl search, server-side (Phase 5e)                                                         | `firecrawl` (Node SDK); `FIRECRAWL_API_KEY`                                                                                             |
 | Memory               | Supermemory behind a `MemoryProvider` (Phase 5e)                                                 | `supermemory` (v5 SDK); `SUPERMEMORY_API_KEY`                                                                                           |
+| Agent evaluation     | DeepEval for TypeScript over AI SDK OpenTelemetry spans, local only (Phase 5f)                   | `deepeval`, `@ai-sdk/otel` (dev only); judge through the gateway with `AISDKModel`; no hosted dashboard                                 |
 | Voice input          | Browser Web Speech API                                                                           | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                   |
 | File storage         | Neon Object Storage (S3-compatible)                                                              | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                |
 | Sandbox              | E2B (custom Next.js template)                                                                    | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                          |
@@ -89,6 +90,7 @@ Version notes:
 ├─ prisma.config.ts
 ├─ neon.ts                      # Neon infrastructure as code (object storage buckets)
 ├─ sandbox-templates/nextjs/    # E2B template (Dockerfile / template.ts)
+├─ evals/                       # (Phase 5f) DeepEval datasets, harness, baselines; never part of `bun run test:run`
 ├─ docs/decisions.md            # package-first decision log
 └─ src/
    ├─ proxy.ts                  # route protection (Next 16; lives next to app/ when using src/)
@@ -306,7 +308,7 @@ model Payment {
 - Client: `createAuthClient` from `better-auth/react`; the sign-in button calls `authClient.signIn.social({ provider: "github", callbackURL: "/" })`
 - **Scopes:** sign-in asks only for profile and email. Repository access is requested **at first export** as an incremental scope upgrade. Check Better Auth's current API for requesting extra scopes on a linked account before building Phase 8; if it isn't supported, request `public_repo` or `repo` at sign-in and update the copy on the sign-in screen.
 - `src/proxy.ts`: redirect signed-out users from `(app)` and `(workspace)` routes to `/sign-in` (cookie check only). Authoritative checks stay in `protectedProcedure` and server components.
-- **Sign-in screen** from the canvas: logo, "Continue with GitHub", loading state ("Redirecting to GitHub…"), permissions note, Terms/Privacy links
+- **Sign-in screen** from the canvas: logo, "Continue with GitHub", loading state ("Redirecting to GitHub…"), permissions note, Terms/Privacy links. _Restyled after Phase 5 at the owner's request to match Lovable's login:_ a two-column layout on `lg` and up (form left-aligned, a rounded **aurora** gradient panel on the right with an example-prompt bubble whose text is typed out and rotated by `useTypewriter`); below `lg` the panel is hidden and the canvas layout remains. Copy, links and the GitHub-only flow are unchanged.
 - On first sign-in, create a welcome-credit ledger entry (amount TBD, or 0)
 
 **Done when:** sign in / out works, protected pages redirect, `ctx.session` is available in tRPC.
@@ -334,7 +336,7 @@ model Payment {
 ## Phase 4 — App shell, Home, Projects
 
 - **Sidebar layout** (shadcn `Sidebar`): workspace switcher, New project (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
-- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects"
+- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects". _After Phase 5 the hero (heading, prompt, chips) sits in a rounded panel filled with the **aurora** gradient (`<Aurora />`, `src/components/brand/aurora.tsx`, tokens `--aurora-*` in `globals.css`), and the prompt placeholder is typed out and rotated through four example prompts by `useTypewriter` (`src/hooks/use-typewriter.ts`). Reduced motion shows whole phrases and no drift animation._
   - Submit → `project.create` (name + slug generated from the prompt, see below) → `inngest.send("agent/run")` → navigate to `/p/[slug]`
 - **Projects page**: search, filter tabs (All / On GitHub / Not exported), sort, grid of **ProjectCard** (name, slug, description, edited time, "On GitHub" badge), empty state
   - nuqs: `?q=`, `?filter=all|github|local`, `?sort=edited|name|created`
@@ -790,6 +792,90 @@ A **Scout** role runs when the task touches a domain with no installed skill, or
 
 ---
 
+## Phase 5f — Agent evaluation with DeepEval (between Phase 5e and Phase 6)
+
+**Goal:** measure whether the agents do the job well, not only whether the code compiles. After every change to a prompt, a model, a skill or a tool, one command shows whether task completion, tool use and efficiency got better or worse. Added at the owner's request, built on DeepEval's AI SDK integration (`https://deepeval.com/integrations/frameworks/ai-sdk`) and its tracing, end-to-end and trajectory pages, read on 2026-11-12. The TypeScript package is new, so re-read those pages before building.
+
+### 5f.1 What it adds and what it does not replace
+
+- Vitest checks our code with stubbed models. `agent:smoke` shows that one prompt works end to end. Neither says whether a prompt edit, a model swap or a new skill made the agent worse. Evals do.
+- Evals replace nothing. They are slower, cost tokens and are not deterministic, so they never run inside `bun run test:run` and never gate an ordinary pull request.
+- Anything code can decide is a plain assertion, not a judge: the build passes, the preview answers, `AGENTS.md` was read and a skill loaded before the first write, a secret value appears nowhere in the output. A judge model scores only what code cannot decide.
+
+### 5f.2 How DeepEval connects (from its docs)
+
+- npm package `deepeval` (TypeScript). The AI SDK emits OpenTelemetry spans; `configureAiSdkTracing` from `deepeval/integrations/ai-sdk` returns a tracer that is handed to `OpenTelemetry` from `@ai-sdk/otel` in a call's `telemetry` option. Telemetry is opt-in per call.
+- **Requirements:** AI SDK 7 (`ai>=7.0.93 <8`) and Node 22 or later. We are on `ai` ^7.0.168 and Node 24. The older `experimental_telemetry` of AI SDK 5 and 6 is not supported.
+- **Spans:** each top-level `generateText`, `streamText`, `generateObject` or `streamObject` is **one trace** with an agent span, each model call is an LLM span, each tool call is a tool span, and every tool call is also collected on the trace. Embeddings are not traced.
+- **Local by default:** no account is needed. A `CONFIDENT_API_KEY` only adds upload to Confident AI, and outside evals only then are spans exported over OTLP.
+- **Running:** Vitest through `deepeval/vitest` (`toPass`) with `npx deepeval test run <file>`, where a failing metric fails the run, or a script over `EvaluationDataset` and `evalsIterator`.
+- **Metrics:** trajectory (`TaskCompletionMetric`, `StepEfficiencyMetric`, `PlanAdherenceMetric`, `PlanQualityMetric`), tool use (`ToolCorrectnessMetric`, `ArgumentCorrectnessMetric`), custom (`GEval`, `DAGMetric`). Scores run from 0 to 1 and pass at the threshold, 0.5 by default. They are scored by a judge model, set with `AISDKModel`, which wraps any AI SDK model.
+
+### 5f.3 Design
+
+- **Separate from production.** Code lives in `evals/` (`datasets/`, `harness/`, `*.eval.ts`, `baselines.json`) with its own Vitest config and the scripts `bun run eval` and `bun run eval:live`. `deepeval` and `@ai-sdk/otel` are dev dependencies. Whether `deepeval/vitest` works with our Vitest 5.1 is checked first; the fallback is the `evalsIterator` script.
+- **Telemetry stays off in production.** Only the harness passes the tracer. `run-agent` never does, so no prompt or tool result leaves the system, and a unit test asserts that the production model call has no `telemetry` option.
+- **One trace per run.** Production makes one `streamText` call per Inngest step, which is one model turn, so DeepEval would record one trace per turn and its trajectory metrics would see a single step. The harness therefore runs the same agent as **one multi-step `generateText`** with `stopWhen: stepCountIs(30)`: the production system prompt, the production tool definitions, the production executor guards (path guard, command denylist, "read `AGENTS.md` and load a skill before the first write") and a real E2B sandbox from the template. It does not exercise Inngest durability, retries or history compaction, which stay covered by unit tests and `agent:smoke`. If prompts, tools and the executor are not importable in a form the harness can reuse, extracting them is part of this phase and must not change production behaviour: the existing tests stay green.
+- **Judge.** A gateway model passed through `AISDKModel` at temperature 0, set by `EVAL_JUDGE_MODEL`, preferably not the model under test. That `AISDKModel` accepts a gateway model is verified first.
+- **Free-tier reality.** The owner's gateway allows three curated models at 5 requests per minute each, and the judge's calls count. Live suites are therefore small and run one case at a time. Expect a live suite to take as long as `agent:smoke` per case plus judging.
+- **No side effects.** Evals touch no credits, no ledger and no user project. They use a throwaway sandbox and written test prompts, never real user prompts or memories. Model, judge and sandbox costs are billed to the owner's gateway and E2B accounts; the cost per suite is recorded once measured.
+- **Streaming and flush.** Streamed calls must be read to the end so their spans close, and the process calls `forceFlush()` before it exits.
+
+### 5f.4 What gets evaluated
+
+Each suite holds 4 to 8 goldens and at most 5 metrics (DeepEval's own advice: 2 or 3 generic, 1 or 2 custom).
+
+| Suite                  | Protects     | Cases                                                                                                        | Checks                                                                                                                                                                         |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Builder core           | Phase 5, 5b  | New landing page, new portfolio, a small edit ("make the heading bigger"), a request to run a banned command | `TaskCompletionMetric`, `StepEfficiencyMetric`, `ToolCorrectnessMetric` (reads `AGENTS.md`, loads a skill, then writes); code: build passes, preview answers, at most 30 turns |
+| Design rules           | Phase 5, 5b  | The same prompts, judged on the written files                                                                | Code checks for `render` not `asChild`, metadata present, no theme-token text on a hard-coded light gradient; one `GEval` for the rest                                         |
+| Router and roles       | Phase 5b     | The four routing cases, a research prompt                                                                    | Code: the right specialists are chosen; `GEval` that a Researcher brief cites its sources                                                                                      |
+| Guardrails             | Phase 5c     | Prompt injection in a search result, a phishing clone request, a pasted secret                               | Code: verdict is `block` and the secret value is in no span, message or file; `ToolCorrectnessMetric` that no denied tool is called                                            |
+| Human in the loop      | Phase 5c, 5d | A database request with no URL, an AI feature with no provider                                               | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on `askUser` and the choice card                                                                                       |
+| Full-stack             | Phase 5d     | A site with a database, a site with an AI feature                                                            | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on the Prisma and process commands; `TaskCompletionMetric`                                                             |
+| Skill scout and memory | Phase 5e     | A tier-3 skill source, a skill that tells the agent to send the environment, a recalled decision             | Code: refused or rejected, recalled without asking again                                                                                                                       |
+
+Router, guardrail and scout cases are single calls with no sandbox, so they are cheap and run on every `bun run eval`. Sandbox suites run under `bun run eval:live`.
+
+### 5f.5 Datasets, baselines and thresholds
+
+- Goldens are JSON files in `evals/datasets/`, reviewed like code and loaded with `addGoldensFromJSON`. A dataset is single-turn or multi-turn, never both. Pulling datasets from Confident AI is not used.
+- The first run uses DeepEval's default threshold of 0.5 and writes the scores to `evals/baselines.json`. After that each metric's threshold is set just under its baseline, and a drop larger than the tolerance (start 0.1) fails the run.
+- A failing case is re-run once before it is reported, because judges vary even at temperature 0.
+
+### 5f.6 When it runs
+
+- On demand before changing a prompt, a model, a skill or tool code. This is the main use.
+- When CI exists: a manual run, a weekly schedule and a label that triggers it on pull requests touching `src/inngest/agent/**` or `src/lib/ai/models.ts`. A failing metric fails the job.
+- **Production monitoring is not adopted.** Online evals mean enabling telemetry in production and sending real user prompts to Confident AI. That needs a Privacy Policy change, a review of what the Phase 5c redaction covers and the owner's decision. Revisit in Phase 9.
+
+### 5f.7 Known limits
+
+- The TypeScript integration is new and its pages disagree in places (one page lists `JevEval` for TypeScript while another says Python only; metric class names in some summaries were not confirmed). Pin the `deepeval` version and read a metric's own page before using it.
+- Evals measure the model and the prompts, not Inngest. Durability stays with unit tests and `agent:smoke`.
+- Judge cost and the free-tier rate limit cap the suite size.
+
+### 5f.8 Package decisions (recorded in `docs/decisions.md` when built)
+
+| Need             | Chosen                                                                                  | Rejected                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Agent evaluation | `deepeval` (TypeScript), dev only; license and release date checked at install per §0.1 | Other eval tools were not evaluated: DeepEval was chosen by the owner              |
+| Tracing          | `@ai-sdk/otel` with `configureAiSdkTracing`, harness only                               | Own span recording; `experimental_telemetry` (unsupported in AI SDK 7 integration) |
+| Judge            | `AISDKModel` over a gateway model                                                       | A separate OpenAI key (new provider, new key to disclose)                          |
+| Runner           | `deepeval/vitest` with `npx deepeval test run`, `evalsIterator` fallback                | Adding evals to `bun run test:run`                                                 |
+| Dashboard        | None, local results only                                                                | Confident AI (user prompts would leave the system; needs a Privacy Policy change)  |
+
+**Done when:**
+
+- `bun run eval` runs the cheap suites and prints a score per metric per golden; `bun run eval:live` runs the Builder core suite against a real sandbox with a free-tier model.
+- One run's trace shows an agent span, LLM spans and tool spans, and the trajectory metrics see every turn of the run, not one.
+- Breaking a rule on purpose (for example, removing the `AGENTS.md` instruction from the system prompt) makes a metric fail, so the suite is shown to be able to fail.
+- Baselines are stored and thresholds set. No `CONFIDENT_API_KEY` is needed, and the unit test that asserts production calls carry no `telemetry` passes.
+- `bun run test:run` and `bun run lint` do not run evals; the harness code is type-checked and linted.
+- Docs updated: `docs/decisions.md` and the env list. `/docs` and the legal pages need no change while nothing user-visible changes and no data leaves; adopting Confident AI changes that and is flagged to the owner first.
+
+---
+
 ## Phase 6 — Workspace UI (`/p/[slug]`)
 
 Layout: header (logo, project switcher, version badge, **Preview | Code** tabs, theme, **Export to GitHub**, avatar) + chat column + main panel. Resizable split via shadcn `Resizable` (react-resizable-panels).
@@ -883,7 +969,7 @@ Scope is **view, copy, download**, nothing editable.
 - **Errors:** agent failure → assistant error message + "Retry" (no charge for failed runs, or a refund ledger entry); sandbox boot failure; webhook failures alerting
 - **Observability:** Inngest dashboard for runs; app logs; optional Sentry
 - **Security:** never expose E2B / OpenAI / Stripe keys to the client; validate all tRPC inputs with zod; check project ownership in every procedure; **no Vibe secret (E2B, gateway, Stripe, Firecrawl, Supermemory keys) is ever in a sandbox**. User-provided project secrets (Phase 5c) are the exception: encrypted at rest, injected only at runtime, behind an egress allowlist and redaction, never in files, snapshots or exports. Sandbox preview URLs are not private, so a project that holds a database URL warns the user until private previews exist (open decision)
-- **Testing:** Vitest for ledger math, slug, routers; Playwright for sign-in (mocked), create → generate → preview, top-up (Stripe test mode)
+- **Testing:** Vitest for ledger math, slug, routers; Playwright for sign-in (mocked), create → generate → preview, top-up (Stripe test mode); agent evals (Phase 5f) on a schedule, never inside the default test run
 - **Accessibility:** keyboard paths for tabs, file tree, prompt; focus ring visible (`--ring`); contrast checked on `/design`
 - **Deploy:** Vercel (app), Neon (DB, branches per preview), Inngest Cloud (functions), E2B (template), Stripe live keys after the invite
 
@@ -950,6 +1036,10 @@ AI_GUARD_MODEL=          # policy classifier, default openai/gpt-oss-safeguard-2
 FIRECRAWL_API_KEY=       # skill discovery and URL reading, server-side only
 FIRECRAWL_USD_PER_CREDIT=  # for metering, from the owner's plan
 SUPERMEMORY_API_KEY=     # memory, server-side only
+
+# Phase 5f (evals only, never needed in production)
+EVAL_JUDGE_MODEL=        # gateway model id the DeepEval judge uses (`AISDKModel`)
+CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results to Confident AI
 ```
 
 ---
@@ -969,6 +1059,7 @@ SUPERMEMORY_API_KEY=     # memory, server-side only
 11. **Full-stack (Phase 5d):** `@prisma/adapter-neon` or `@prisma/adapter-pg` per deployment target; when to move generated apps to Prisma 8 (still a release candidate); AgentKit or plain `inngest` for users who ask for agents; whether to pre-install `inngest-cli` and the Prisma CLI in the template; the egress allowlist per integration
 12. **Skills (Phase 5e):** the trusted-owner allowlist, whether T1 skills are pre-approved by default, the Firecrawl credit budget per run and per user, and whether the Researcher should move from gateway search to Firecrawl
 13. **Memory (Phase 5e):** Supermemory or our own pgvector table on Neon in the long run; the retention and backup-purge answers from Supermemory before launch; how much of "What Vibe remembers" ships in Phase 6
+14. **Evals (Phase 5f):** which model judges; the regression tolerance (start 0.1); whether to build the harness and the Builder core suite **before** Phase 5b so that Phases 5b to 5e are measured against a baseline instead of judged by eye (recommended); the CI cadence once CI exists; whether Confident AI or any production telemetry is ever adopted (Privacy Policy and redaction review first)
 
 ---
 
@@ -984,6 +1075,7 @@ SUPERMEMORY_API_KEY=     # memory, server-side only
 - [ ] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery
 - [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role)
 - [ ] Phase 5e: skill discovery with Firecrawl, approved and pinned installs, memory with Supermemory
+- [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry)
 - [ ] Phase 6: workspace (chat, preview + overlay, read-only code)
 - [ ] Phase 7: credits ledger, Stripe top-ups, usage page
 - [ ] Phase 8: Export to GitHub

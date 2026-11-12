@@ -27,6 +27,7 @@ import {
 } from "@/components/models/model-picker";
 import { PROMPT_INPUT_ID } from "@/components/shell/new-project-button";
 import { toast } from "@/components/ui/toast";
+import { useTypewriter } from "@/hooks/use-typewriter";
 import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENT_BYTES,
@@ -63,6 +64,13 @@ export const promptSuggestions = [
   },
 ] as const;
 
+export const promptPlaceholders = [
+  "Ask Vibe to build a landing page for my coffee roastery…",
+  "Ask Vibe for a developer portfolio with project cards…",
+  "Ask Vibe for a restaurant menu with table booking…",
+  "Ask Vibe for an admin dashboard with charts…",
+] as const;
+
 const attachErrors = {
   accept: "Only PNG, JPEG, WebP and GIF images can be attached.",
   max_file_size: "Images must be 4 MB or smaller.",
@@ -77,6 +85,7 @@ function PromptComposer() {
   const [modelId, setModelId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const models = useAgentModels();
+  const placeholder = useTypewriter(promptPlaceholders);
   const selectedModel = resolveSelectedModel(
     models.data?.models,
     modelId,
@@ -182,7 +191,7 @@ function PromptComposer() {
           <PromptInputTextarea
             id={PROMPT_INPUT_ID}
             aria-label="Describe the website to build"
-            placeholder="A landing page for my coffee roastery with a shop section…"
+            placeholder={placeholder.text}
             className="min-h-24"
             maxLength={4000}
             autoFocus
@@ -234,6 +243,7 @@ function PromptComposer() {
             suggestion={suggestion.prompt}
             onClick={applySuggestion}
             disabled={busy}
+            className="bg-background/70 backdrop-blur-md"
           >
             {suggestion.label}
           </Suggestion>
