@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { customAlphabet } from "nanoid";
 import { inngest } from "@/inngest/client";
+import { agentPartsSchema } from "@/lib/agent/parts";
 import { agentRun } from "@/inngest/events";
 import {
   projectNameFromPrompt,
@@ -105,6 +106,29 @@ async function main() {
         getCreditBalance(db, user.id),
       ]);
       console.log(`\nreply\n${reply.content}\n`);
+      const parts = agentPartsSchema.safeParse(reply.parts);
+      const agentParts = parts.success
+        ? parts.data.flatMap((part) => (part.type === "agent" ? [part] : []))
+        : [];
+      for (const part of agentParts) {
+        console.log(
+          `agent    ${part.name} ${part.state} · skills [${part.skills.join(", ")}] · ${part.searches} searches${part.summary ? `\n         ${part.summary.split("\n")[0].slice(0, 160)}` : ""}`,
+        );
+      }
+      const sources = parts.success
+        ? parts.data.flatMap((part) =>
+            part.type === "sources" ? part.sources : [],
+          )
+        : [];
+      for (const source of sources) {
+        console.log(`source   ${source.title} <${source.url}>`);
+      }
+      const builder = agentParts.find((part) => part.name === "builder");
+      if (builder && builder.skills.length === 0) {
+        console.warn(
+          "warning  the builder wrote without loading a skill (no skills installed in the sandbox?)",
+        );
+      }
       console.log(`sandbox  ${project?.sandboxId ?? "-"}`);
       console.log(`preview  ${project?.previewUrl ?? "-"}`);
       if (version) {
@@ -116,6 +140,18 @@ async function main() {
       console.log(
         `debit    ${debit?.delta ?? 0} credits (${debit?.reason ?? "none"})`,
       );
+      const breakdown = (debit?.meta as { agents?: unknown } | null)?.agents;
+      if (Array.isArray(breakdown)) {
+        for (const entry of breakdown as {
+          name: string;
+          usd: number;
+          searches: number;
+        }[]) {
+          console.log(
+            `cost     ${entry.name} $${entry.usd.toFixed(4)} · ${entry.searches} searches`,
+          );
+        }
+      }
       console.log(`balance  ${after.balance} credits`);
       return;
     }

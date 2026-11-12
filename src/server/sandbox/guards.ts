@@ -3,10 +3,14 @@ import { posix } from "node:path";
 export const APP_DIR = "/home/user/app";
 
 const blockedSegments = new Set(["node_modules", ".next", ".git"]);
+const readOnlySegments = new Set([".agents", ".claude"]);
+const readOnlyFiles = new Set(["skills-lock.json"]);
+
+export type PathMode = "read" | "write";
 
 export class GuardError extends Error {}
 
-export function resolveAppPath(input: string) {
+export function resolveAppPath(input: string, mode: PathMode = "write") {
   const trimmed = input.trim().replace(/^\.\/+/, "");
   if (!trimmed) throw new GuardError("Path is empty.");
   const absolute = trimmed.startsWith("/")
@@ -23,6 +27,12 @@ export function resolveAppPath(input: string) {
   }
   if (segments.some((segment) => /^\.env(\.|$)/.test(segment))) {
     throw new GuardError("Environment files are not allowed.");
+  }
+  if (
+    mode === "write" &&
+    (readOnlySegments.has(segments[0]) || readOnlyFiles.has(relative))
+  ) {
+    throw new GuardError(`Path is read-only (installed skills): ${relative}`);
   }
   return { absolute, relative };
 }
@@ -51,6 +61,12 @@ const blockedCommands: { pattern: RegExp; reason: string }[] = [
     pattern: /(^|\s)\.env(\.|\s|$)/,
     reason: "environment files are off limits",
   },
+  {
+    pattern:
+      /(\b(rm|mv|cp|tee|touch|chmod|ln|truncate)\b|\bsed\s+-i|>)[^;&|]*(\.agents|\.claude|skills-lock\.json)\b|\bskills\s+(add|remove|update|init)\b/,
+    reason:
+      "the installed skills in .agents/ and .claude/ are read-only; read them, don't change them",
+  },
 ];
 
 export function checkCommand(command: string) {
@@ -59,6 +75,26 @@ export function checkCommand(command: string) {
   if (trimmed.length > 2000) return "Command is too long.";
   const blocked = blockedCommands.find(({ pattern }) => pattern.test(trimmed));
   return blocked ? `Command blocked: ${blocked.reason}.` : null;
+}
+
+const reviewerCommands = [
+  /^npx\s+(--no-install\s+)?tsc(\s+(--noEmit|-p\s+\S+|--pretty(\s+false)?))*$/,
+  /^npx\s+(--no-install\s+)?eslint(\s+[\w./@*-]+)*$/,
+  /^npm\s+run\s+lint$/,
+  /^curl\s+(-[a-zA-Z]+\s+)*(--max-time\s+\d+\s+)?["']?(http:\/\/)?localhost:3000[\w./?=&%-]*["']?(\s*\|\s*head(\s+-[cn]\s*\d+)?)?$/,
+  /^(ls|cat|head|tail|wc|grep|find)\b[^><;&|`$]*(\|\s*(head|tail|wc|grep|sort)\b[^><;&|`$]*)*$/,
+];
+
+export function checkReviewerCommand(command: string) {
+  const blocked = checkCommand(command);
+  if (blocked) return blocked;
+  const trimmed = command.trim();
+  if (/\bfind\b.*\s-(exec|delete|fprint)/.test(trimmed)) {
+    return "Command blocked: the reviewer can only run read-only commands.";
+  }
+  return reviewerCommands.some((pattern) => pattern.test(trimmed))
+    ? null
+    : "Command blocked: the reviewer can only run read-only checks (npx tsc --noEmit, npx eslint, npm run lint, curl localhost:3000, ls, cat, grep, head, find).";
 }
 
 export function countLines(content: string) {

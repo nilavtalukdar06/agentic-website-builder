@@ -124,6 +124,7 @@ export async function debitCredits(
         exactCalls: input.cost.exactCalls,
         estimatedCalls: input.cost.estimatedCalls,
         generationIds: input.cost.generationIds,
+        agents: input.cost.agents,
         ...input.usage,
       },
     },

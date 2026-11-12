@@ -27,25 +27,66 @@ export const readFilesInput = z.object({
   paths: z.array(z.string().min(1)).min(1).max(MAX_FILES_PER_CALL),
 });
 
-export const agentTools = {
-  terminal: tool({
-    description:
-      "Run a shell command in the project folder of the sandbox and get its output and exit code.",
-    inputSchema: terminalInput,
-  }),
-  createOrUpdateFiles: tool({
-    description:
-      "Create or overwrite files in the project. Send complete file contents.",
-    inputSchema: writeFilesInput,
-  }),
-  readFiles: tool({
-    description: "Read files from the project.",
-    inputSchema: readFilesInput,
-  }),
+export const loadSkillInput = z.object({
+  name: z.string().min(1).describe("The skill's name from the skill list."),
+});
+
+const terminal = tool({
+  description:
+    "Run a shell command in the project folder of the sandbox and get its output and exit code.",
+  inputSchema: terminalInput,
+});
+
+const readOnlyTerminal = tool({
+  description:
+    "Run a read-only check in the project folder: npx tsc --noEmit, npx eslint, npm run lint, curl localhost:3000, ls, cat, grep, head or find. Anything that changes files is blocked.",
+  inputSchema: terminalInput,
+});
+
+const createOrUpdateFiles = tool({
+  description:
+    "Create or overwrite files in the project. Send complete file contents.",
+  inputSchema: writeFilesInput,
+});
+
+const readFiles = tool({
+  description:
+    "Read files from the project, including AGENTS.md and the installed skills in .agents/skills.",
+  inputSchema: readFilesInput,
+});
+
+const loadSkill = tool({
+  description:
+    "Load an installed skill: returns its SKILL.md instructions and the list of its other files.",
+  inputSchema: loadSkillInput,
+});
+
+export const builderTools = {
+  terminal,
+  createOrUpdateFiles,
+  readFiles,
+  loadSkill,
 };
 
-export type AgentToolName = keyof typeof agentTools;
+export const designerTools = { readFiles, loadSkill };
+
+export const reviewerTools = {
+  terminal: readOnlyTerminal,
+  readFiles,
+  loadSkill,
+};
+
+export const researcherTools = { readFiles };
+
+export const agentToolNames = [
+  "terminal",
+  "createOrUpdateFiles",
+  "readFiles",
+  "loadSkill",
+] as const;
+
+export type AgentToolName = (typeof agentToolNames)[number];
 
 export function isAgentTool(name: string): name is AgentToolName {
-  return Object.hasOwn(agentTools, name);
+  return (agentToolNames as readonly string[]).includes(name);
 }

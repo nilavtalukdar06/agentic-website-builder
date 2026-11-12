@@ -4,8 +4,12 @@ import { describe, expect, test, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("e2b", () => ({ Sandbox: {} }));
 
-const { ensureDevOrigins, pickSnapshotPaths, snapshotListCommand } =
-  await import("./sandbox");
+const {
+  ensureAgentInstructions,
+  ensureDevOrigins,
+  pickSnapshotPaths,
+  snapshotListCommand,
+} = await import("./sandbox");
 
 describe("snapshotListCommand", () => {
   test("prunes build and dependency folders and skips lock and env files", () => {
@@ -14,6 +18,9 @@ describe("snapshotListCommand", () => {
     expect(command).toContain("-name '.next'");
     expect(command).toContain("! -name 'package-lock.json'");
     expect(command).toContain("! -name '.env*'");
+    expect(command).toContain("-name '.agents'");
+    expect(command).toContain("-name '.claude'");
+    expect(command).toContain("! -name 'skills-lock.json'");
     expect(command).toMatch(/-size -\d+c -print$/);
   });
 });
@@ -77,5 +84,42 @@ describe("ensureDevOrigins", () => {
     const sandbox = fakeSandbox(new Error("not found"));
     await expect(ensureDevOrigins(sandbox as never)).resolves.toBe(false);
     expect(sandbox.files.write).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureAgentInstructions", () => {
+  function fakeSandbox(source: string | Error) {
+    return {
+      files: {
+        read: vi.fn(() =>
+          source instanceof Error
+            ? Promise.reject(source)
+            : Promise.resolve(source),
+        ),
+        write: vi.fn().mockResolvedValue({}),
+      },
+    };
+  }
+
+  test("adds the rules to an older project's AGENTS.md", async () => {
+    const sandbox = fakeSandbox("<!-- BEGIN:nextjs-agent-rules -->\n");
+    await expect(ensureAgentInstructions(sandbox as never)).resolves.toBe(true);
+    expect(sandbox.files.write).toHaveBeenCalledWith(
+      "/home/user/app/AGENTS.md",
+      expect.stringMatching(/^# Instructions for AI coding agents/),
+    );
+  });
+
+  test("does nothing when the rules are there", async () => {
+    const sandbox = fakeSandbox("## Always start here\n");
+    await expect(ensureAgentInstructions(sandbox as never)).resolves.toBe(
+      false,
+    );
+    expect(sandbox.files.write).not.toHaveBeenCalled();
+  });
+
+  test("creates AGENTS.md when it is missing", async () => {
+    const sandbox = fakeSandbox(new Error("not found"));
+    await expect(ensureAgentInstructions(sandbox as never)).resolves.toBe(true);
   });
 });

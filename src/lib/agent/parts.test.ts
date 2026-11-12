@@ -51,6 +51,67 @@ describe("agentPartsSchema", () => {
     expect(agentPartsSchema.parse(parts)).toEqual(parts);
   });
 
+  test("parses the multi-agent parts and agent tags", () => {
+    const parts = [
+      {
+        type: "agent",
+        name: "researcher",
+        state: "done",
+        summary: "Acme sells anvils.",
+        skills: [],
+        searches: 2,
+      },
+      {
+        type: "agent",
+        name: "designer",
+        state: "skipped",
+        skills: ["frontend-design"],
+        searches: 0,
+      },
+      {
+        type: "task",
+        title: "First version",
+        items: [
+          {
+            kind: "file",
+            verb: "created",
+            path: "app/page.tsx",
+            lines: 3,
+            agent: "builder",
+          },
+        ],
+      },
+      {
+        type: "tool",
+        callId: "c1",
+        name: "terminal",
+        command: "npx tsc --noEmit",
+        output: "",
+        exitCode: 0,
+        agent: "reviewer",
+      },
+      {
+        type: "sources",
+        sources: [{ title: "Acme", url: "https://acme.test" }],
+      },
+    ];
+    expect(agentPartsSchema.parse(parts)).toEqual(parts);
+  });
+
+  test("rejects unknown agent names", () => {
+    expect(() =>
+      agentPartsSchema.parse([
+        {
+          type: "agent",
+          name: "hacker",
+          state: "done",
+          skills: [],
+          searches: 0,
+        },
+      ]),
+    ).toThrow();
+  });
+
   test("rejects unknown parts", () => {
     expect(() => agentPartsSchema.parse([{ type: "nope" }])).toThrow();
   });

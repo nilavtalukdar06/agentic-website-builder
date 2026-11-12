@@ -116,6 +116,13 @@ export const privacySections: ArticleSection[] = [
             Attached images reach it through links that expire after an hour.
           </li>
           <li>
+            <Strong>Parallel</Strong>, the web search provider, through Vercel
+            AI Gateway: when a request needs outside facts (a real business, a
+            site you name, current information), the agent sends search queries
+            based on your prompt. Your account details and project code are not
+            sent.
+          </li>
+          <li>
             <Strong>E2B</Strong>: runs the sandbox where your project is built
             and previewed. Your project code runs there.
           </li>

@@ -1,16 +1,22 @@
 import "server-only";
-import type { ModelMessage, ToolResultPart } from "ai";
-import { NonRetriableError, RetryAfterError } from "inngest";
-import type { AgentPart, TaskItem } from "@/lib/agent/parts";
+import type { ModelMessage } from "ai";
+import { NonRetriableError } from "inngest";
+import type { AgentName, AgentPart, TaskItem } from "@/lib/agent/parts";
 import { findAgentModel, lookupGenerationCost } from "@/server/ai/gateway";
 import { getCreditBalance } from "@/server/billing/balance";
 import { creditRate } from "@/server/billing/credit-rate";
-import { addUsage, creditsForCost, emptyUsage } from "@/server/billing/pricing";
+import {
+  addUsage,
+  creditsForCost,
+  emptyUsage,
+  type TokenUsage,
+} from "@/server/billing/pricing";
 import { type BilledCall, resolveRunCost } from "@/server/billing/run-cost";
 import { db } from "@/server/db";
 import { APP_DIR } from "@/server/sandbox/guards";
 import {
   connectSandbox,
+  ensureAgentInstructions,
   ensureDevOrigins,
   getOrCreateSandbox,
   PREVIEW_PORT,
@@ -18,40 +24,62 @@ import {
   type SnapshotFiles,
   snapshotSandbox,
 } from "@/server/sandbox/sandbox";
+import { agentSpecs } from "../agent/agents";
+import { FIX_PASS_MAX_TURNS } from "../agent/agents/builder";
+import { hasFindings } from "../agent/agents/reviewer";
 import {
+  type Brief,
+  briefsMessage,
+  capBrief,
   cleanTitle,
-  compactHistory,
-  extractSummary,
   historyToMessages,
-  toolCallsFrom,
 } from "../agent/conversation";
-import { executeTool } from "../agent/execute-tool";
-import { generateVersionTitle, runModelTurn } from "../agent/model";
-import { classifyModelError, MODEL_UNAVAILABLE } from "../agent/model-errors";
+import {
+  type AgentRun,
+  type Budget,
+  publishAgentState,
+  runAgentLoop,
+} from "../agent/loop";
+import { classifyAgents, generateVersionTitle } from "../agent/model";
+import { MODEL_UNAVAILABLE } from "../agent/model-errors";
 import {
   debitCredits,
   recordAssistantError,
   saveRunResult,
 } from "../agent/persist";
+import { routeAgents, shouldReview } from "../agent/router";
+import { uniqueSources } from "../agent/search";
+import { listInstalledSkills } from "../agent/skills";
 import { inngest } from "../client";
 import { agentRun } from "../events";
 import { createPublisher } from "../publisher";
-
-export const MAX_TURNS = 60;
 
 const OUT_OF_CREDITS =
   "You're out of credits. Top up on the Usage & credits page to keep building.";
 const STOPPED_FOR_CREDITS =
   "I stopped early because your credits ran out. Top up to continue from here.";
-const OUTPUT_LIMIT_NOTE =
-  "(Your previous reply hit the output limit and was discarded. Take smaller steps: write at most a few files per createOrUpdateFiles call and keep replies short.)";
 const FAILED =
   "Something went wrong while building, so this run wasn't charged. Try sending your message again.";
+
+const label = (name: AgentName) =>
+  `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+
+function exhausted(budget: Budget) {
+  return budget.balance - creditsForCost(budget.spentUsd, creditRate) <= 0;
+}
+
+function spend(budget: Budget, run: AgentRun): Budget {
+  return {
+    ...budget,
+    spentUsd: budget.spentUsd + run.spentUsd,
+    searches: budget.searches + run.searches.length,
+  };
+}
 
 export const runAgent = inngest.createFunction(
   {
     id: "run-agent",
-    name: "Run coding agent",
+    name: "Run coding agents",
     triggers: [agentRun],
     concurrency: [
       { key: "event.data.userId", limit: 2 },
@@ -81,7 +109,12 @@ export const runAgent = inngest.createFunction(
         }),
         db.message.findFirst({
           where: { id: messageId, projectId, role: "USER" },
-          select: { createdAt: true, content: true, model: true },
+          select: {
+            createdAt: true,
+            content: true,
+            model: true,
+            _count: { select: { attachments: true } },
+          },
         }),
       ]);
       if (!project || !trigger) {
@@ -121,6 +154,7 @@ export const runAgent = inngest.createFunction(
         projectName: project.name,
         sandboxId: project.sandboxId,
         prompt: trigger.content,
+        attachments: trigger._count.attachments,
         history,
         balance,
         hasVersion: latest !== null,
@@ -153,6 +187,8 @@ export const runAgent = inngest.createFunction(
         return (latest?.files ?? undefined) as SnapshotFiles | undefined;
       });
       await ensureDevOrigins(result.sandbox);
+      await ensureAgentInstructions(result.sandbox);
+      const skills = await listInstalledSkills(result.sandbox);
       const previewUrl = previewUrlFor(result.sandbox);
       await db.project.update({
         where: { id: projectId },
@@ -165,119 +201,234 @@ export const runAgent = inngest.createFunction(
           : "Created sandbox from the Next.js template";
       const task: TaskItem = { kind: "sandbox", label };
       await createPublisher(projectId)("task", task);
-      return { sandboxId: result.sandbox.sandboxId, previewUrl, task };
+      return {
+        sandboxId: result.sandbox.sandboxId,
+        previewUrl,
+        task,
+        skills,
+      };
     });
 
     const model = setup.model;
-    let messages = historyToMessages(setup.history, setup.files, {
+    const routed = await step.run("route", async () => {
+      let call: BilledCall | null = null;
+      let usage: TokenUsage = emptyUsage;
+      const route = await routeAgents(
+        {
+          prompt: setup.prompt,
+          hasVersion: setup.hasVersion,
+          attachments: setup.attachments,
+          files: setup.files,
+        },
+        async (prompt) => {
+          const result = await classifyAgents(model, prompt);
+          call = {
+            generationIds: result.generationIds,
+            estimatedUsd: result.estimatedUsd,
+            agent: "router",
+            model: model.id,
+          };
+          usage = result.usage;
+          return result.choice;
+        },
+      );
+      return { route, call: call as BilledCall | null, usage };
+    });
+
+    let usage = routed.usage;
+    const calls: BilledCall[] = routed.call ? [routed.call] : [];
+    let budget: Budget = {
+      balance: setup.balance,
+      spentUsd: routed.call?.estimatedUsd ?? 0,
+      searches: 0,
+    };
+    const runs: AgentRun[] = [];
+    const agentParts: AgentPart[] = [];
+
+    const loopArgs = {
+      step,
+      projectId,
+      sandboxId: sandbox.sandboxId,
+      model,
+      installedSkills: sandbox.skills,
+    };
+    const visionHistory = historyToMessages(setup.history, setup.files, {
       vision: model.vision,
     });
-    let usage = emptyUsage;
-    let estimatedUsd = 0;
-    const calls: BilledCall[] = [];
-    const written = new Set<string>();
-    const tasks: TaskItem[] = [sandbox.task];
-    const toolParts: AgentPart[] = [];
-    const reasoning: string[] = [];
-    let reasoningMs = 0;
-    let summary: string | null = null;
-    let outOfCredits = false;
+    const textHistory = historyToMessages(setup.history, setup.files, {
+      vision: false,
+    });
 
-    for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const usdBefore = estimatedUsd;
-      const result = await step.run(`model-${turn}`, async () => {
-        const publish = createPublisher(projectId);
-        if (turn > 0) await publish("status", { state: "thinking" });
-        const output = await runModelTurn({
-          messages: compactHistory(messages),
-          turn,
-          model,
-          publish,
-        }).catch((error: unknown) => {
-          const failure = classifyModelError(error);
-          if (failure.kind === "rate-limit") {
-            throw new RetryAfterError(
-              "The AI model is rate limited.",
-              `${failure.retryAfterSeconds}s`,
-              { cause: error },
-            );
-          }
-          if (failure.kind === "unavailable") {
-            throw new NonRetriableError(MODEL_UNAVAILABLE, { cause: error });
-          }
-          if (failure.kind === "invalid") {
-            throw new NonRetriableError("The model rejected the request.", {
-              cause: error,
-            });
-          }
-          throw error;
-        });
-        await publish("credits", {
-          used: creditsForCost(usdBefore + output.estimatedUsd, creditRate),
-        });
-        return output;
-      });
-
-      usage = addUsage(usage, result.usage);
-      estimatedUsd += result.estimatedUsd;
-      calls.push({
-        generationIds: result.generationIds,
-        estimatedUsd: result.estimatedUsd,
-      });
-      if (result.finishReason === "length") {
-        messages = [...messages, { role: "user", content: OUTPUT_LIMIT_NOTE }];
-        continue;
-      }
-      const turnMessages = result.messages as ModelMessage[];
-      const toolCalls = toolCallsFrom(turnMessages);
-      messages = [...messages, ...turnMessages];
-      if (result.reasoning.trim()) reasoning.push(result.reasoning.trim());
-      reasoningMs += result.reasoningMs;
-
-      if (toolCalls.length === 0) {
-        summary = extractSummary(result.text) ?? (result.text.trim() || null);
-        break;
-      }
-
-      const toolResults: ToolResultPart[] = [];
-      for (const [index, call] of toolCalls.entries()) {
-        const writtenPaths = [...written];
-        const outcome = await step.run(`tool-${turn}-${index}`, async () =>
-          executeTool(call, {
-            sandbox: await connectSandbox(sandbox.sandboxId),
-            publish: createPublisher(projectId),
-            writtenPaths,
-          }),
-        );
-        for (const path of outcome.writtenPaths) written.add(path);
-        tasks.push(...outcome.tasks);
-        if (outcome.terminal) {
-          toolParts.push({
-            type: "tool",
-            callId: call.toolCallId,
-            name: call.toolName,
-            ...outcome.terminal,
+    const readers = routed.route.agents.filter(
+      (name): name is "researcher" | "designer" =>
+        name === "researcher" || name === "designer",
+    );
+    const snapshot = budget;
+    const readerResults = await Promise.all(
+      readers.map(async (name): Promise<Brief & { run: AgentRun | null }> => {
+        try {
+          const run = await runAgentLoop({
+            ...loopArgs,
+            spec: agentSpecs[name],
+            messages: name === "designer" ? visionHistory : textHistory,
+            budget: snapshot,
           });
+          const brief = run.finished ? run.output : null;
+          await publishAgentState(step, projectId, `${name}-done`, {
+            name,
+            state: brief ? "done" : "skipped",
+            summary: brief ? capBrief(brief) : `${label(name)} didn't finish.`,
+          });
+          return { agent: name, text: brief, failed: !brief, run };
+        } catch (error) {
+          console.warn(`[run-agent] ${name} failed, continuing`, error);
+          await publishAgentState(step, projectId, `${name}-skipped`, {
+            name,
+            state: "skipped",
+            summary: `${label(name)} failed, so the builder worked without it.`,
+          });
+          return { agent: name, text: null, failed: true, run: null };
         }
-        toolResults.push({
-          type: "tool-result",
-          toolCallId: call.toolCallId,
-          toolName: call.toolName,
-          output: { type: "text", value: outcome.output },
-        });
+      }),
+    );
+    for (const result of readerResults) {
+      if (result.run) {
+        runs.push(result.run);
+        budget = spend(budget, result.run);
       }
-      messages = [...messages, { role: "tool", content: toolResults }];
+      agentParts.push({
+        type: "agent",
+        name: result.agent as AgentName,
+        state: result.text ? "done" : "skipped",
+        summary: result.text
+          ? capBrief(result.text)
+          : `${label(result.agent as AgentName)} failed, so the builder worked without it.`,
+        skills: result.run?.progress.loadedSkills ?? [],
+        searches: result.run?.searches.length ?? 0,
+      });
+    }
 
-      if (setup.balance - creditsForCost(estimatedUsd, creditRate) <= 0) {
-        outOfCredits = true;
-        break;
+    let summary: string | null = null;
+    let outOfCredits = exhausted(budget);
+    let written: string[] = [];
+
+    if (!outOfCredits) {
+      const briefs = briefsMessage(
+        readerResults.map(({ agent, text, failed }) => ({
+          agent,
+          text,
+          failed,
+        })),
+      );
+      const build = await runAgentLoop({
+        ...loopArgs,
+        spec: agentSpecs.builder,
+        messages: briefs ? [...visionHistory, briefs] : visionHistory,
+        budget,
+        expectWrites: true,
+      });
+      runs.push(build);
+      budget = spend(budget, build);
+      outOfCredits = build.outOfCredits;
+      written = build.written;
+      if (!build.finished && !outOfCredits) {
+        throw new NonRetriableError(
+          `The agent reached its ${agentSpecs.builder.maxTurns}-step limit without finishing.`,
+        );
+      }
+      summary = build.output;
+      const builderPart: AgentPart = {
+        type: "agent",
+        name: "builder",
+        state: "done",
+        summary: `${written.length} file${written.length === 1 ? "" : "s"} changed`,
+        skills: build.progress.loadedSkills,
+        searches: 0,
+      };
+      await publishAgentState(step, projectId, "builder-done", {
+        name: "builder",
+        state: "done",
+        summary: builderPart.summary,
+      });
+      agentParts.push(builderPart);
+
+      if (
+        !outOfCredits &&
+        shouldReview({ hasVersion: setup.hasVersion, written: written.length })
+      ) {
+        const review = await runAgentLoop({
+          ...loopArgs,
+          spec: agentSpecs.reviewer,
+          messages: [
+            ...textHistory,
+            {
+              role: "user",
+              content: `The builder has finished this request. Files it changed: ${written.join(", ")}.\n\nBuilder's summary:\n${capBrief(summary ?? "")}\n\nReview the work now.`,
+            },
+          ],
+          budget,
+        });
+        runs.push(review);
+        budget = spend(budget, review);
+        outOfCredits = review.outOfCredits;
+        const findings = review.finished ? review.output : null;
+        const needsFix = hasFindings(findings);
+        const reviewSummary = needsFix
+          ? capBrief(findings ?? "")
+          : review.finished
+            ? "No problems found."
+            : "The review didn't finish.";
+        await publishAgentState(step, projectId, "reviewer-done", {
+          name: "reviewer",
+          state: "done",
+          summary: reviewSummary,
+        });
+        agentParts.push({
+          type: "agent",
+          name: "reviewer",
+          state: "done",
+          summary: reviewSummary,
+          skills: review.progress.loadedSkills,
+          searches: 0,
+        });
+
+        if (needsFix && !outOfCredits && !exhausted(budget)) {
+          const fixPrompt: ModelMessage = {
+            role: "user",
+            content: `The reviewer checked your work and found these problems. Fix them, check that the page compiles, then reply with a new summary of the whole request in the task_summary tags.\n\n<findings>\n${capBrief(findings ?? "")}\n</findings>`,
+          };
+          const fix = await runAgentLoop({
+            ...loopArgs,
+            spec: agentSpecs.builder,
+            messages: [...build.messages, fixPrompt],
+            budget,
+            stepPrefix: "builder-fix",
+            maxTurns: FIX_PASS_MAX_TURNS,
+            written,
+            progress: build.progress,
+          });
+          runs.push(fix);
+          budget = spend(budget, fix);
+          outOfCredits = fix.outOfCredits;
+          written = fix.written;
+          if (fix.finished && fix.output) summary = fix.output;
+          await publishAgentState(step, projectId, "builder-fix-done", {
+            name: "builder",
+            state: "done",
+            summary: "Fixed the reviewer's findings",
+          });
+          const builderIndex = agentParts.indexOf(builderPart);
+          agentParts[builderIndex] = {
+            ...builderPart,
+            summary: `${written.length} file${written.length === 1 ? "" : "s"} changed, one fix pass`,
+          };
+        }
       }
     }
 
-    if (!summary && !outOfCredits) {
-      throw new NonRetriableError(
-        `The agent reached its ${MAX_TURNS}-step limit without finishing.`,
-      );
+    for (const run of runs) {
+      usage = addUsage(usage, run.usage);
+      calls.push(...run.calls);
     }
 
     const replyText = outOfCredits
@@ -286,33 +437,27 @@ export const runAgent = inngest.createFunction(
 
     const title = await step.run("title", async () => {
       const fallback = setup.hasVersion ? "Updated the site" : "First version";
-      if (outOfCredits) {
-        return {
-          text: fallback,
-          usage: emptyUsage,
-          estimatedUsd: 0,
-          generationIds: [],
-        };
-      }
+      const empty = {
+        text: fallback,
+        usage: emptyUsage,
+        estimatedUsd: 0,
+        generationIds: [] as string[],
+      };
+      if (outOfCredits) return empty;
       const generated = await generateVersionTitle(
         model,
         setup.prompt,
         replyText,
       ).catch(() => null);
-      if (!generated) {
-        return {
-          text: fallback,
-          usage: emptyUsage,
-          estimatedUsd: 0,
-          generationIds: [],
-        };
-      }
+      if (!generated) return empty;
       return { ...generated, text: cleanTitle(generated.text, fallback) };
     });
     usage = addUsage(usage, title.usage);
     calls.push({
       generationIds: title.generationIds,
       estimatedUsd: title.estimatedUsd,
+      agent: "builder",
+      model: model.id,
     });
 
     const cost = await step.run("cost", () =>
@@ -320,6 +465,9 @@ export const runAgent = inngest.createFunction(
     );
     const credits = creditsForCost(cost.costUsd, creditRate);
 
+    const reasoning = runs.flatMap((run) => run.reasoning);
+    const reasoningMs = runs.reduce((sum, run) => sum + run.reasoningMs, 0);
+    const sources = uniqueSources(runs.flatMap((run) => run.searches));
     const parts: AgentPart[] = [
       ...(reasoning.length > 0
         ? [
@@ -330,8 +478,14 @@ export const runAgent = inngest.createFunction(
             },
           ]
         : []),
-      { type: "task", title: title.text, items: tasks },
-      ...toolParts,
+      ...agentParts,
+      {
+        type: "task",
+        title: title.text,
+        items: [sandbox.task, ...runs.flatMap((run) => run.tasks)],
+      },
+      ...runs.flatMap((run) => run.toolParts),
+      ...(sources.length > 0 ? [{ type: "sources" as const, sources }] : []),
       { type: "text", text: replyText },
     ];
 
@@ -382,11 +536,14 @@ export const runAgent = inngest.createFunction(
       status: outOfCredits
         ? ("stopped-for-credits" as const)
         : ("done" as const),
+      agents: routed.route.agents,
+      route: routed.route.decidedBy,
       version: saved.versionNumber,
       files: saved.fileCount,
-      filesChanged: written.size,
+      filesChanged: written.length,
       credits,
       costUsd: cost.costUsd,
+      agentCosts: cost.agents,
       model: model.id,
       previewUrl: sandbox.previewUrl,
     };

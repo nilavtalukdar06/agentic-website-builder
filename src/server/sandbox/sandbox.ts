@@ -1,6 +1,7 @@
 import "server-only";
 import { Sandbox } from "e2b";
 import { env } from "@/config/env";
+import { withAgentRules } from "./agent-rules";
 import { withDevOrigins } from "./dev-origins";
 import { APP_DIR } from "./guards";
 
@@ -10,7 +11,13 @@ export const PREVIEW_PORT = 3000;
 const SNAPSHOT_MAX_FILES = 400;
 const SNAPSHOT_MAX_FILE_BYTES = 200_000;
 const SNAPSHOT_MAX_TOTAL_BYTES = 4_000_000;
-const SNAPSHOT_EXCLUDED_DIRS = ["node_modules", ".next", ".git"];
+const SNAPSHOT_EXCLUDED_DIRS = [
+  "node_modules",
+  ".next",
+  ".git",
+  ".agents",
+  ".claude",
+];
 const SNAPSHOT_EXCLUDED_FILES = [
   "package-lock.json",
   "pnpm-lock.yaml",
@@ -18,6 +25,7 @@ const SNAPSHOT_EXCLUDED_FILES = [
   "bun.lock",
   "bun.lockb",
   "next-env.d.ts",
+  "skills-lock.json",
   "*.tsbuildinfo",
   ".env*",
 ];
@@ -33,6 +41,17 @@ export async function ensureDevOrigins(sandbox: Pick<Sandbox, "files">) {
   const source = await sandbox.files.read(path).catch(() => null);
   if (source === null) return false;
   const patched = withDevOrigins(source);
+  if (patched === null) return false;
+  return sandbox.files.write(path, patched).then(
+    () => true,
+    () => false,
+  );
+}
+
+export async function ensureAgentInstructions(sandbox: Pick<Sandbox, "files">) {
+  const path = `${APP_DIR}/AGENTS.md`;
+  const source = await sandbox.files.read(path).catch(() => null);
+  const patched = withAgentRules(source);
   if (patched === null) return false;
   return sandbox.files.write(path, patched).then(
     () => true,

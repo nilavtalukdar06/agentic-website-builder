@@ -1,5 +1,12 @@
 import "server-only";
-import { generateText, type ModelMessage, streamText } from "ai";
+import {
+  generateText,
+  type ModelMessage,
+  Output,
+  streamText,
+  type ToolSet,
+} from "ai";
+import type { AgentName } from "@/lib/agent/parts";
 import type { AgentModel } from "@/lib/ai/models";
 import { gateway } from "@/server/ai/gateway";
 import {
@@ -10,9 +17,10 @@ import {
 import { attachmentUrl } from "@/server/storage/attachments";
 import type { Publish } from "../publisher";
 import { resolveAttachments } from "./conversation";
+import { ROUTER_PROMPT } from "./prompts/router";
 import { TITLE_PROMPT } from "./prompts/summary";
-import { SYSTEM_PROMPT } from "./prompts/system";
-import { agentTools } from "./tools";
+import { type RouteChoice, routeChoiceSchema } from "./router";
+import { SEARCH_TOOL, type SearchRecord, searchRecord } from "./search";
 
 const FLUSH_MS = 150;
 export const MAX_OUTPUT_TOKENS = 32_000;
@@ -31,6 +39,7 @@ export type ModelTurn = ModelCall & {
   text: string;
   reasoning: string;
   reasoningMs: number;
+  searches: SearchRecord[];
 };
 
 function generationIdOf(metadata: unknown) {
@@ -71,18 +80,31 @@ export async function runModelTurn({
   turn,
   model,
   publish,
+  agent,
+  instructions,
+  tools,
+  activeTools,
+  toolChoice,
 }: {
   messages: ModelMessage[];
   turn: number;
   model: AgentModel;
   publish: Publish;
+  agent: AgentName;
+  instructions: string;
+  tools: ToolSet;
+  activeTools?: string[];
+  toolChoice?: "none";
 }): Promise<ModelTurn> {
   const generationIds: string[] = [];
+  const searches: SearchRecord[] = [];
   const result = streamText({
     model: gateway(model.id),
-    instructions: SYSTEM_PROMPT,
+    instructions,
     messages: await resolveAttachments(messages, attachmentUrl),
-    tools: agentTools,
+    tools,
+    activeTools,
+    toolChoice,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     maxRetries: 2,
     providerOptions,
@@ -93,9 +115,11 @@ export async function runModelTurn({
   });
 
   const reasoning = createDeltaBuffer((delta) =>
-    publish("reasoning", { turn, delta }),
+    publish("reasoning", { turn, delta, agent }),
   );
-  const text = createDeltaBuffer((delta) => publish("text", { turn, delta }));
+  const text = createDeltaBuffer((delta) =>
+    publish("text", { turn, delta, agent }),
+  );
   let reasoningStart: number | null = null;
   let reasoningEnd: number | null = null;
   let announcedBuild = false;
@@ -107,9 +131,17 @@ export async function runModelTurn({
       await reasoning.push(part.text);
     } else if (part.type === "text-delta") {
       await text.push(part.text);
-    } else if (part.type === "tool-input-start" && !announcedBuild) {
+    } else if (
+      part.type === "tool-input-start" &&
+      agent === "builder" &&
+      !announcedBuild
+    ) {
       announcedBuild = true;
       await publish("status", { state: "building" });
+    } else if (part.type === "tool-result" && part.toolName === SEARCH_TOOL) {
+      const record = searchRecord(part.input, part.output);
+      searches.push(record);
+      await publish("search", { agent, ...record });
     } else if (part.type === "error") {
       throw part.error instanceof Error
         ? part.error
@@ -140,6 +172,28 @@ export async function runModelTurn({
     usage,
     estimatedUsd: costOf(usage, model),
     generationIds,
+    searches,
+  };
+}
+
+export async function classifyAgents(
+  model: AgentModel,
+  prompt: string,
+): Promise<ModelCall & { choice: RouteChoice }> {
+  const result = await generateText({
+    model: gateway(model.id),
+    instructions: ROUTER_PROMPT,
+    prompt,
+    output: Output.object({ schema: routeChoiceSchema }),
+    maxRetries: 2,
+  });
+  const usage = toTokenUsage(result.totalUsage);
+  const generationId = generationIdOf(result.providerMetadata);
+  return {
+    choice: result.output,
+    usage,
+    estimatedUsd: costOf(usage, model),
+    generationIds: generationId ? [generationId] : [],
   };
 }
 

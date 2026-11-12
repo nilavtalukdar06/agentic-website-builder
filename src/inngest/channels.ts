@@ -1,6 +1,11 @@
 import { realtime } from "inngest";
 import { z } from "zod";
-import { fileVerbs, taskItemSchema } from "@/lib/agent/parts";
+import {
+  agentNameSchema,
+  fileVerbs,
+  sourceSchema,
+  taskItemSchema,
+} from "@/lib/agent/parts";
 
 export const agentStatuses = [
   "thinking",
@@ -19,6 +24,8 @@ export const projectTopics = [
   "tool",
   "credits",
   "preview",
+  "agent",
+  "search",
 ] as const;
 
 export const projectChannel = realtime.channel({
@@ -30,8 +37,20 @@ export const projectChannel = realtime.channel({
         message: z.string().optional(),
       }),
     },
-    reasoning: { schema: z.object({ turn: z.number(), delta: z.string() }) },
-    text: { schema: z.object({ turn: z.number(), delta: z.string() }) },
+    reasoning: {
+      schema: z.object({
+        turn: z.number(),
+        delta: z.string(),
+        agent: agentNameSchema.optional(),
+      }),
+    },
+    text: {
+      schema: z.object({
+        turn: z.number(),
+        delta: z.string(),
+        agent: agentNameSchema.optional(),
+      }),
+    },
     task: { schema: taskItemSchema },
     file: {
       schema: z.object({
@@ -39,6 +58,7 @@ export const projectChannel = realtime.channel({
         path: z.string(),
         verb: z.enum(fileVerbs),
         lines: z.number().int().nonnegative().optional(),
+        agent: agentNameSchema.optional(),
       }),
     },
     tool: {
@@ -49,9 +69,24 @@ export const projectChannel = realtime.channel({
         command: z.string().optional(),
         chunk: z.string().optional(),
         exitCode: z.number().int().nullable().optional(),
+        agent: agentNameSchema.optional(),
       }),
     },
     credits: { schema: z.object({ used: z.number().int().nonnegative() }) },
     preview: { schema: z.object({ url: z.url() }) },
+    agent: {
+      schema: z.object({
+        name: agentNameSchema,
+        state: z.enum(["started", "done", "skipped"]),
+        summary: z.string().optional(),
+      }),
+    },
+    search: {
+      schema: z.object({
+        agent: agentNameSchema,
+        query: z.string(),
+        sources: z.array(sourceSchema),
+      }),
+    },
   },
 });

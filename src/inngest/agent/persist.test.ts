@@ -40,6 +40,10 @@ const cost = {
   exactCalls: 2,
   estimatedCalls: 0,
   generationIds: ["gen_1", "gen_2"],
+  agents: [
+    { name: "researcher", model: "m", usd: 0.02, searches: 1 },
+    { name: "builder", model: "m", usd: 0.4, searches: 0 },
+  ],
 };
 
 describe("saveRunResult", () => {
@@ -133,6 +137,10 @@ describe("debitCredits", () => {
           exactCalls: 2,
           estimatedCalls: 0,
           generationIds: ["gen_1", "gen_2"],
+          agents: [
+            { name: "researcher", model: "m", usd: 0.02, searches: 1 },
+            { name: "builder", model: "m", usd: 0.4, searches: 0 },
+          ],
           ...usage,
         },
       },
