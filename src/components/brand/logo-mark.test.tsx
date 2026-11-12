@@ -5,15 +5,24 @@ import { Logo } from "./logo";
 import { LogoMark } from "./logo-mark";
 
 describe("LogoMark", () => {
-  test("draws two currentColor strokes with the second at 50% opacity", () => {
-    const { container } = render(<LogoMark size={40} />);
-    const svg = container.querySelector("svg")!;
-    expect(svg).toHaveAttribute("stroke", "currentColor");
-    expect(svg).toHaveAttribute("width", "40");
-    expect(svg).toHaveAttribute("aria-hidden", "true");
-    const paths = svg.querySelectorAll("path");
-    expect(paths).toHaveLength(2);
-    expect(paths[0]).toHaveAttribute("opacity", "0.5");
+  test("draws one gradient V with a gradient unique to each instance", () => {
+    const { container } = render(
+      <>
+        <LogoMark size={40} />
+        <LogoMark size={40} />
+      </>,
+    );
+    const [first, second] = container.querySelectorAll("svg");
+    expect(first).toHaveAttribute("width", "40");
+    expect(first).toHaveAttribute("aria-hidden", "true");
+    expect(first.querySelectorAll("path")).toHaveLength(1);
+    const firstId = first.querySelector("linearGradient")!.id;
+    const secondId = second.querySelector("linearGradient")!.id;
+    expect(firstId).not.toBe(secondId);
+    expect(first.querySelector("path")).toHaveAttribute(
+      "stroke",
+      `url(#${firstId})`,
+    );
   });
 
   test("is exposed as an image when titled", () => {

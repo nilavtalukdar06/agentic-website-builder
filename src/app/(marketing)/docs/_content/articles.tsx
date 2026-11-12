@@ -346,6 +346,10 @@ export const docArticles: DocArticle[] = [
           <P>
             Home shows your six most recently edited projects, and the sidebar
             keeps the last four one click away. Select any of them to open it.
+            Cmd+B (Ctrl+B on Windows), or a click on the sidebar&apos;s right
+            edge, collapses it to icons; select the logo to expand it again.
+            Light, dark or system appearance is under Appearance in your account
+            menu at the bottom of the sidebar.
           </P>
         ),
       },
@@ -377,9 +381,9 @@ export const docArticles: DocArticle[] = [
         title: "Keyboard shortcuts",
         body: (
           <P>
-            Press <Code>⌘K</Code> (or <Code>Ctrl K</Code>) anywhere in the app
-            to open the command menu. Search your projects, start a new one or
-            jump to a page.
+            Press <Code>⌘K</Code> (or <Code>Ctrl K</Code>) anywhere in the app,
+            or choose Search in the sidebar, to open the command menu. Search
+            your projects, start a new one or jump to a page.
           </P>
         ),
       },
@@ -409,7 +413,7 @@ export const docArticles: DocArticle[] = [
           <>
             <P>
               Vibe is pay as you go. There is no subscription, and your balance
-              is always visible in the sidebar.
+              is always visible in the sidebar while it is expanded.
             </P>
             <UL>
               <li>

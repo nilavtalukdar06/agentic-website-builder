@@ -1,7 +1,8 @@
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 import {
-  logoPrimaryStroke,
-  logoSecondaryStroke,
+  logoGradient,
+  logoPath,
   logoStrokeWidth,
   logoViewBox,
 } from "./logo-paths";
@@ -17,6 +18,8 @@ export function LogoMark({
   className,
   ...props
 }: LogoMarkProps) {
+  const gradientId = `logo-gradient-${useId().replace(/:/g, "")}`;
+
   return (
     <svg
       data-slot="logo-mark"
@@ -24,17 +27,37 @@ export function LogoMark({
       width={size}
       height={size}
       fill="none"
-      stroke="currentColor"
-      strokeWidth={logoStrokeWidth}
-      strokeLinecap="round"
       role={title ? "img" : undefined}
       aria-hidden={title ? undefined : true}
       className={cn("shrink-0", className)}
       {...props}
     >
       {title ? <title>{title}</title> : null}
-      <path d={logoSecondaryStroke} opacity={0.5} />
-      <path d={logoPrimaryStroke} />
+      <defs>
+        <linearGradient
+          id={gradientId}
+          gradientUnits="userSpaceOnUse"
+          x1={logoGradient.x1}
+          y1={logoGradient.y1}
+          x2={logoGradient.x2}
+          y2={logoGradient.y2}
+        >
+          {logoGradient.stops.map((stop) => (
+            <stop
+              key={stop.offset}
+              offset={stop.offset}
+              stopColor={stop.color}
+            />
+          ))}
+        </linearGradient>
+      </defs>
+      <path
+        d={logoPath}
+        stroke={`url(#${gradientId})`}
+        strokeWidth={logoStrokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

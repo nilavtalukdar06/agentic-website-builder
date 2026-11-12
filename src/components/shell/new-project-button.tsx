@@ -27,12 +27,13 @@ export function NewProjectButton(
   return (
     <Button
       variant="outline"
-      className="w-full"
+      aria-label="New project"
+      className="w-full group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0!"
       onClick={startNewProject}
       {...props}
     >
       <CirclePlusIcon data-icon="inline-start" />
-      New project
+      <span className="group-data-[collapsible=icon]:hidden">New project</span>
     </Button>
   );
 }

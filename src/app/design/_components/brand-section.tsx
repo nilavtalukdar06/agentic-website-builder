@@ -30,7 +30,7 @@ export function BrandSection() {
   return (
     <DesignSection
       id="brand"
-      description="Two rounded strokes form the V; the second sits at 50% so the mark reads as motion. It inherits currentColor and follows the theme."
+      description="One rounded V filled with an orange to pink to violet gradient, the same colours as the Home and sign-in gradient. It looks the same in both themes, so it works on any background."
     >
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label="Lockup · light" scope="light">

@@ -1,8 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronsUpDownIcon, CreditCardIcon, LogOutIcon } from "lucide-react";
+import {
+  ChevronsUpDownIcon,
+  CreditCardIcon,
+  LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+  SunMoonIcon,
+} from "lucide-react";
 import { useSignOut } from "@/components/auth/use-sign-out";
+import { useTheme } from "@/components/theme/theme-provider";
+import { parseTheme } from "@/components/theme/theme-config";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -10,7 +20,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
@@ -24,8 +39,15 @@ export type ShellUser = {
   image?: string | null;
 };
 
+const appearanceOptions = [
+  { value: "light", label: "Light", icon: SunIcon },
+  { value: "dark", label: "Dark", icon: MoonIcon },
+  { value: "system", label: "System", icon: MonitorIcon },
+] as const;
+
 export function UserMenu({ user }: { user: ShellUser }) {
   const { signOut, pending } = useSignOut();
+  const { theme, setTheme } = useTheme();
 
   return (
     <DropdownMenu>
@@ -38,7 +60,7 @@ export function UserMenu({ user }: { user: ShellUser }) {
           />
         }
       >
-        <Avatar className="size-8">
+        <Avatar className="size-8 group-data-[collapsible=icon]:size-7.5">
           {user.image ? <AvatarImage src={user.image} alt="" /> : null}
           <AvatarFallback>{initials(user.name)}</AvatarFallback>
         </Avatar>
@@ -67,6 +89,28 @@ export function UserMenu({ user }: { user: ShellUser }) {
             <CreditCardIcon />
             Usage & credits
           </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <SunMoonIcon />
+              Appearance
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup
+                value={theme}
+                onValueChange={(value) => setTheme(parseTheme(value))}
+              >
+                {appearanceOptions.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.value}
+                    value={option.value}
+                  >
+                    <option.icon />
+                    {option.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuItem
             disabled={pending}
             closeOnClick={false}

@@ -371,9 +371,10 @@ describe("RecentProjects", () => {
     );
     expect(screen.getByText("On GitHub")).toBeInTheDocument();
     expect(screen.getAllByText("Edited just now")).toHaveLength(2);
-    expect(
-      screen.getByRole("link", { name: "See all projects" }),
-    ).toHaveAttribute("href", "/projects");
+    expect(screen.getByRole("link", { name: "Browse all" })).toHaveAttribute(
+      "href",
+      "/projects",
+    );
     expect(trpcHandlers["project.recent"]).toHaveBeenCalledWith({ limit: 6 });
   });
 

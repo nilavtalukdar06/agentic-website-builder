@@ -180,10 +180,10 @@ shadcn v4 semantic names, OKLCH values, flat style (no shadows), `--radius: 0.5r
 
 ### 1.2 Brand components (`src/components/brand/`)
 
-- `<LogoMark />`: inline SVG, two rounded strokes forming a V, second stroke at 50% opacity, `currentColor` so it follows the theme
+- `<LogoMark />`: inline SVG, one rounded V stroke filled with an orange → pink → violet gradient (Lovable-style colour mark, changed at the owner's request after Phase 5; the canvas's two grey strokes are retired). The same in both themes; gradient id unique per instance
 - `<Logo />`: mark + "vibe" wordmark (Geist 600, tight tracking)
 - `<AppIcon />`: dark and light rounded-square versions
-- `app/icon.svg` + `app/apple-icon.png` (favicon), `opengraph-image.tsx` via `next/og`
+- `app/icon.svg` (transparent gradient V) + `app/apple-icon.tsx` (gradient V on dark), `opengraph-image.tsx` via `next/og`, all from `logo-paths.ts`
 
 ### 1.3 `/design` page sections
 
@@ -335,8 +335,8 @@ model Payment {
 
 ## Phase 4 — App shell, Home, Projects
 
-- **Sidebar layout** (shadcn `Sidebar`): workspace switcher, New project (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
-- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects". _After Phase 5 the hero (heading, prompt, chips) sits in a rounded panel filled with the **aurora** gradient (`<Aurora />`, `src/components/brand/aurora.tsx`, tokens `--aurora-*` in `globals.css`), and the prompt placeholder is typed out and rotated through four example prompts by `useTypewriter` (`src/hooks/use-typewriter.ts`). Reduced motion shows whole phrases and no drift animation._
+- **Sidebar layout** (shadcn `Sidebar`, `variant="inset"`, `collapsible="icon"`: the logo sits at the top of the sidebar; ⌘B / Ctrl+B or the rail on its edge collapses it to centred icons with tooltips, and the logo expands it again (the owner removed the separate collapse button and the inset's outer padding); the app header with breadcrumbs and the theme toggle was removed, appearance (Light / Dark / System) lives in the account menu, and phones get a floating sidebar button; since the post-Phase 5 Lovable restyle: the main area is a rounded panel inset from the sidebar colour and scrolls inside itself, the page itself does not scroll; the workspace switcher was removed at the owner's request and a **Search** button, which opens the ⌘K command menu, took its place): New project (⌘K), Search (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
+- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects". _After Phase 5 the **aurora** gradient fills the whole page behind the header, hero (heading, prompt, chips) and the project cards. Its colours follow Lovable's light dashboard: only a faint light tint at the very top, strong blue by about a quarter of the way down, then violet, pink, magenta, rose and orange. It stays fixed to the viewport (`position: sticky` inside the scrolling main panel) while the page scrolls, so it never ends in a hard edge. The prompt is a solid card (28 px radius, no shadow, up to 768 px wide, 64 px minimum text height) with icon suggestion pills under it. Recent projects sit in a fully rounded panel (32 px corners, 24 px padding, 48 px margins at the sides and bottom on desktop, 12 px on phones) that rises out of the gradient at 85 % of the viewport, as on Lovable's dashboard: a pill switcher (Search → `/projects`, My projects, Templates marked Soon) and "Browse all" (replaces "See all projects"), cards 24 px apart. A blue glow sits under the prompt. The gradient (`<Aurora />`, `src/components/brand/aurora.tsx`, tokens `--aurora-*` in `globals.css`), and the prompt placeholder is typed out and rotated through four example prompts by `useTypewriter` (`src/hooks/use-typewriter.ts`). Reduced motion shows whole phrases and no drift animation._
   - Submit → `project.create` (name + slug generated from the prompt, see below) → `inngest.send("agent/run")` → navigate to `/p/[slug]`
 - **Projects page**: search, filter tabs (All / On GitHub / Not exported), sort, grid of **ProjectCard** (name, slug, description, edited time, "On GitHub" badge), empty state
   - nuqs: `?q=`, `?filter=all|github|local`, `?sort=edited|name|created`

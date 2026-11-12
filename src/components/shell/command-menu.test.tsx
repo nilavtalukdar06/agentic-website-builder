@@ -5,7 +5,18 @@ import {
   resetTrpcHandlers,
   trpcHandlers,
 } from "@/test/trpc";
-import { CommandMenu } from "./command-menu";
+import {
+  CommandMenu,
+  CommandMenuProvider,
+  useOpenCommandMenu,
+} from "./command-menu";
+
+const renderMenu = () =>
+  renderWithQueryClient(
+    <CommandMenuProvider>
+      <CommandMenu />
+    </CommandMenuProvider>,
+  );
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
 
@@ -35,7 +46,7 @@ describe("CommandMenu", () => {
       projects: [{ id: "1", name: "Gamma site", slug: "gamma" }],
       total: 1,
     });
-    renderWithQueryClient(<CommandMenu />);
+    renderMenu();
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.keyDown(document, { key: "k", metaKey: true });
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -45,11 +56,30 @@ describe("CommandMenu", () => {
     expect(router.push).toHaveBeenCalledWith("/p/gamma");
   });
 
+  test("the sidebar search button opens it", async () => {
+    trpcHandlers["project.list"] = vi
+      .fn()
+      .mockResolvedValue({ projects: [], total: 0 });
+    function Trigger() {
+      const open = useOpenCommandMenu();
+      return <button onClick={open}>Search</button>;
+    }
+    renderWithQueryClient(
+      <CommandMenuProvider>
+        <Trigger />
+        <CommandMenu />
+      </CommandMenuProvider>,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
   test("New project goes home", async () => {
     trpcHandlers["project.list"] = vi
       .fn()
       .mockResolvedValue({ projects: [], total: 0 });
-    renderWithQueryClient(<CommandMenu />);
+    renderMenu();
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     expect(await screen.findByText("No projects yet")).toBeInTheDocument();
     fireEvent.click(screen.getByText("New project"));

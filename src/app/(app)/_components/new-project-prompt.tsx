@@ -3,7 +3,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowUpIcon, PaperclipIcon } from "lucide-react";
+import {
+  ArrowUpIcon,
+  BriefcaseIcon,
+  CalendarDaysIcon,
+  LayoutDashboardIcon,
+  type LucideIcon,
+  PaperclipIcon,
+  RocketIcon,
+  UtensilsIcon,
+} from "lucide-react";
 import {
   PromptInput,
   PromptInputAttachment,
@@ -39,30 +48,39 @@ import { useTRPC } from "@/trpc/client";
 export const promptSuggestions = [
   {
     label: "SaaS landing page",
+    icon: RocketIcon,
     prompt:
       "A SaaS landing page with a hero, feature grid, pricing table and FAQ.",
   },
   {
     label: "Developer portfolio",
+    icon: BriefcaseIcon,
     prompt:
       "A developer portfolio with an about section, project cards and a contact form.",
   },
   {
     label: "Restaurant menu",
+    icon: UtensilsIcon,
     prompt:
       "A restaurant menu with categories, dietary tags and a table booking form.",
   },
   {
     label: "Admin dashboard",
+    icon: LayoutDashboardIcon,
     prompt:
       "An admin dashboard with a sidebar, stat cards, a chart and a data table.",
   },
   {
     label: "Event page",
+    icon: CalendarDaysIcon,
     prompt:
       "An event page with a schedule, speakers, tracks and a registration CTA.",
   },
-] as const;
+] as const satisfies readonly {
+  label: string;
+  icon: LucideIcon;
+  prompt: string;
+}[];
 
 export const promptPlaceholders = [
   "Ask Vibe to build a landing page for my coffee roastery…",
@@ -129,7 +147,7 @@ function PromptComposer() {
   return (
     <div className="flex w-full flex-col items-center gap-5">
       <PromptInput
-        className="w-full"
+        className="w-full [&>[data-slot=input-group]]:rounded-[1.75rem] [&>[data-slot=input-group]]:bg-card! [&>[data-slot=input-group]]:px-2 [&>[data-slot=input-group]]:ring-0! [&>[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:border-input! [&>[data-slot=input-group]]:has-[[data-slot=input-group-control]:focus-visible]:ring-0!"
         accept={ATTACHMENT_ACCEPT}
         multiple
         maxFiles={MAX_ATTACHMENTS}
@@ -192,7 +210,7 @@ function PromptComposer() {
             id={PROMPT_INPUT_ID}
             aria-label="Describe the website to build"
             placeholder={placeholder.text}
-            className="min-h-24"
+            className="min-h-16"
             maxLength={4000}
             autoFocus
             disabled={busy}
@@ -243,8 +261,9 @@ function PromptComposer() {
             suggestion={suggestion.prompt}
             onClick={applySuggestion}
             disabled={busy}
-            className="bg-background/70 backdrop-blur-md"
+            className="h-7 gap-1.5 border border-accent bg-background/50 px-3 font-normal backdrop-blur-md"
           >
+            <suggestion.icon data-icon="inline-start" aria-hidden />
             {suggestion.label}
           </Suggestion>
         ))}

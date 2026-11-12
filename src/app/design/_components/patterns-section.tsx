@@ -71,7 +71,6 @@ export function PatternsSection() {
             <AppSidebar
               collapsible="none"
               className="h-180 w-full"
-              workspaceName="Personal workspace"
               recent={<RecentProjectsMenu projects={sampleRecentProjects} />}
               credits={<CreditsCard {...sampleCredits} />}
               user={sampleUser}

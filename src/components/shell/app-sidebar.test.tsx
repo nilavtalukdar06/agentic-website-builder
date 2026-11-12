@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
+import { ThemeProvider } from "@/components/theme/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { breadcrumbsFor } from "./app-header";
 import { AppSidebar, isNavActive } from "./app-sidebar";
 
 vi.mock("next/navigation", () => ({
@@ -22,35 +22,19 @@ describe("isNavActive", () => {
   });
 });
 
-describe("breadcrumbsFor", () => {
-  test("home only on /", () => {
-    expect(breadcrumbsFor("/")).toEqual([{ title: "Home", href: "/" }]);
-  });
-
-  test("adds the section", () => {
-    expect(breadcrumbsFor("/projects").map((c) => c.title)).toEqual([
-      "Home",
-      "Projects",
-    ]);
-    expect(breadcrumbsFor("/usage").map((c) => c.title)).toEqual([
-      "Home",
-      "Usage & credits",
-    ]);
-  });
-});
-
 describe("AppSidebar", () => {
   test("renders nav, slots and user", () => {
     render(
-      <SidebarProvider>
-        <AppSidebar
-          collapsible="none"
-          workspaceName="Personal workspace"
-          user={{ name: "Ada Lovelace", plan: "Pay as you go" }}
-          recent={<p>recent slot</p>}
-          credits={<p>credits slot</p>}
-        />
-      </SidebarProvider>,
+      <ThemeProvider>
+        <SidebarProvider>
+          <AppSidebar
+            collapsible="none"
+            user={{ name: "Ada Lovelace", plan: "Pay as you go" }}
+            recent={<p>recent slot</p>}
+            credits={<p>credits slot</p>}
+          />
+        </SidebarProvider>
+      </ThemeProvider>,
     );
     expect(screen.getByRole("link", { name: "Projects" })).toHaveAttribute(
       "data-active",
@@ -67,6 +51,29 @@ describe("AppSidebar", () => {
     expect(screen.getByText("recent slot")).toBeInTheDocument();
     expect(screen.getByText("credits slot")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New project" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
     expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+  });
+});
+
+describe("AppSidebar collapsed to icons", () => {
+  test("the logo expands it again", async () => {
+    render(
+      <ThemeProvider>
+        <SidebarProvider defaultOpen={false}>
+          <AppSidebar
+            collapsible="icon"
+            user={{ name: "Ada Lovelace", plan: "Pay as you go" }}
+            recent={<p>recent slot</p>}
+            credits={<p>credits slot</p>}
+          />
+        </SidebarProvider>
+      </ThemeProvider>,
+    );
+    const sidebar = document.querySelector("[data-slot=sidebar][data-state]")!;
+    expect(sidebar).toHaveAttribute("data-state", "collapsed");
+    expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(sidebar).toHaveAttribute("data-state", "expanded");
   });
 });

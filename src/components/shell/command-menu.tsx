@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { CirclePlusIcon, FolderIcon, RotateCwIcon } from "lucide-react";
 import {
   Command,
@@ -82,10 +82,40 @@ function CommandProjects({ onSelect }: { onSelect: (href: string) => void }) {
   );
 }
 
+type CommandMenuState = {
+  open: boolean;
+  setOpen: (open: boolean | ((open: boolean) => boolean)) => void;
+};
+
+const CommandMenuContext = createContext<CommandMenuState | null>(null);
+
+export function CommandMenuProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <CommandMenuContext value={{ open, setOpen }}>
+      {children}
+    </CommandMenuContext>
+  );
+}
+
+export function useOpenCommandMenu() {
+  const context = useContext(CommandMenuContext);
+  return () => context?.setOpen(true);
+}
+
 export function CommandMenu() {
   const router = useRouter();
   const startNewProject = useStartNewProject();
-  const [open, setOpen] = useState(false);
+  const context = useContext(CommandMenuContext);
+  if (!context) {
+    throw new Error("CommandMenu must be rendered inside CommandMenuProvider");
+  }
+  const { open, setOpen } = context;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -96,7 +126,7 @@ export function CommandMenu() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [setOpen]);
 
   const run = (action: () => void) => {
     setOpen(false);

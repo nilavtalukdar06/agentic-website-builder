@@ -31,7 +31,6 @@ test("home shows the shell, prompt and empty recent projects", async ({
     page.getByRole("heading", { name: "What should we build today?" }),
   ).toBeVisible();
   await expect(page.getByText("No projects yet").first()).toBeVisible();
-  await expect(page.getByText("Personal workspace")).toBeVisible();
   await expect(page.getByText("E2E Builder")).toBeVisible();
   await expect(page.getByRole("link", { name: "Top up" })).toBeVisible();
   await expect(
@@ -133,6 +132,13 @@ test("sidebar lists recent projects and ⌘K opens one", async ({ page }) => {
   await expect(sidebarLink).toHaveAttribute("href", `/p/gamma-${suffix}`);
 
   const palette = page.getByRole("dialog");
+  await page
+    .locator("[data-sidebar='sidebar']")
+    .getByRole("button", { name: "Search" })
+    .click();
+  await expect(palette).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(palette).toBeHidden();
   await expect(async () => {
     if (!(await palette.isVisible())) {
       await page.keyboard.press("Control+k");
@@ -152,17 +158,31 @@ test("someone else's or a missing project is not found", async ({ page }) => {
   ).toHaveAttribute("content", /noindex/);
 });
 
-test("Templates is disabled and breadcrumbs follow the page", async ({
+test("Templates is disabled, the sidebar collapses to icons and Appearance sets the theme", async ({
   page,
 }) => {
   await page.goto("/projects");
-  await expect(
-    page.getByRole("navigation", { name: "breadcrumb" }).getByText("Projects"),
-  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Templates" })).toHaveAttribute(
     "aria-disabled",
     "true",
   );
+  await page.keyboard.press("ControlOrMeta+b");
+  await expect(
+    page.locator("[data-slot=sidebar][data-state=collapsed]"),
+  ).toHaveAttribute("data-collapsible", "icon");
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(
+    page.locator("[data-slot=sidebar][data-state=expanded]"),
+  ).toBeAttached();
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Appearance" }).click();
+  await page.getByRole("menuitemradio", { name: "Light" }).click();
+  await expect(page.locator("html")).toHaveClass(/theme-light/);
+  await expect(
+    page.getByRole("menuitemradio", { name: "Light" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("menuitemradio", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveClass(/(^|\s)dark(\s|$)/);
 });
 
 test("home and projects are server-rendered with the user's data", async ({
