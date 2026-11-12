@@ -67,6 +67,9 @@ function makeCtx(
   };
 }
 
+const unwrap = (output: string) =>
+  output.replace(/^<untrusted[^>]*>\n/, "").replace(/\n<\/untrusted>$/, "");
+
 const call = (toolName: string, input: unknown) => ({
   toolCallId: "c1",
   toolName,
@@ -94,12 +97,15 @@ describe("executeTool", () => {
       ctx,
     );
     expect(sandbox.commands.run).toHaveBeenCalledWith(
-      "npm install framer-motion",
+      "npm install framer-motion --ignore-scripts",
       expect.objectContaining({ cwd: "/home/user/app" }),
     );
-    expect(result.output).toBe("Exit code: 0\nok");
+    expect(result.output).toBe(
+      'Exit code: 0\n<untrusted source="terminal">\nok\n</untrusted>',
+    );
+    expect(result.progress.installs).toBe(1);
     expect(result.terminal).toEqual({
-      command: "npm install framer-motion",
+      command: "npm install framer-motion --ignore-scripts",
       output: "ok",
       exitCode: 0,
     });
@@ -110,7 +116,7 @@ describe("executeTool", () => {
       phase: "call",
       callId: "c1",
       name: "terminal",
-      command: "npm install framer-motion",
+      command: "npm install framer-motion --ignore-scripts",
       agent: "builder",
     });
   });
@@ -124,7 +130,9 @@ describe("executeTool", () => {
       call("terminal", { command: "npx tsc --noEmit" }),
       ctx,
     );
-    expect(result.output).toBe("Exit code: 2\nType error");
+    expect(result.output).toBe(
+      'Exit code: 2\n<untrusted source="terminal">\nType error\n</untrusted>',
+    );
     expect(result.tasks).toEqual([]);
   });
 
@@ -228,7 +236,7 @@ describe("executeTool", () => {
       call("readFiles", { paths: ["app/page.tsx", "nope.ts"] }),
       ctx,
     );
-    expect(JSON.parse(result.output)).toEqual([
+    expect(JSON.parse(unwrap(result.output))).toEqual([
       { path: "app/page.tsx", content: "content" },
       { path: "nope.ts", error: "missing" },
     ]);
@@ -322,7 +330,7 @@ describe("skills before writing", () => {
       call("readFiles", { paths: [".agents/skills/shadcn/rules/forms.md"] }),
       ctx,
     );
-    expect(JSON.parse(read.output)[0]).toHaveProperty("content");
+    expect(JSON.parse(unwrap(read.output))[0]).toHaveProperty("content");
     const result = await executeTool(
       call("createOrUpdateFiles", {
         files: [{ path: ".agents/skills/shadcn/SKILL.md", content: "x" }],
@@ -358,5 +366,249 @@ describe("agent tool sets", () => {
     expect(sandbox.commands.run).not.toHaveBeenCalled();
     await executeTool(call("terminal", { command: "npx tsc --noEmit" }), ctx);
     expect(sandbox.commands.run).toHaveBeenCalledOnce();
+  });
+});
+
+describe("guardrails in the executor", () => {
+  const secret = "sk-proj-VerySecretValue123";
+
+  async function withSecret(extra: Record<string, unknown> = {}) {
+    const { createRedactor } = await import("@/server/secrets/redact");
+    const made = makeCtx();
+    return {
+      ...made,
+      ctx: {
+        ...made.ctx,
+        redactor: createRedactor([{ name: "OPENAI_API_KEY", value: secret }]),
+        envs: { OPENAI_API_KEY: secret },
+        ...extra,
+      },
+    };
+  }
+
+  test("rejects writes that contain a stored secret, a key pattern or malware", async () => {
+    const { ctx, sandbox } = await withSecret();
+    const result = await executeTool(
+      call("createOrUpdateFiles", {
+        files: [
+          { path: "lib/ai.ts", content: `const key = "${secret}";` },
+          {
+            path: "lib/db.ts",
+            content:
+              'const url = "postgresql://owner:npg_RealPass9876@ep-x-1.us-east-2.aws.neon.tech/db";',
+          },
+          { path: "lib/x.ts", content: "eval(atob('YWxlcnQoMSk='))" },
+          { path: "app/page.tsx", content: "export default function P() {}" },
+        ],
+      }),
+      ctx,
+    );
+    expect(result.output).toContain(
+      "Skipped lib/ai.ts: it contains the value of OPENAI_API_KEY",
+    );
+    expect(result.output).toContain(
+      "Skipped lib/db.ts: it contains what looks like a secret",
+    );
+    expect(result.output).toContain(
+      "Skipped lib/x.ts: it runs remote or encoded code",
+    );
+    expect(result.writtenPaths).toEqual(["app/page.tsx"]);
+    expect(result.guard).toMatchObject({
+      verdict: "block",
+      categories: ["malware"],
+    });
+    expect(sandbox.files.write).toHaveBeenCalledTimes(1);
+  });
+
+  test("redacts secrets from command output and the live stream, and passes envs", async () => {
+    const { ctx, sandbox, publish } = await withSecret();
+    sandbox.commands.run.mockImplementation(async (_cmd, options) => {
+      await options.onStdout(`token=${secret}`);
+      return {
+        stdout: `token=${secret} b64=${Buffer.from(secret).toString("base64")}`,
+        stderr: "",
+        exitCode: 0,
+      };
+    });
+    const result = await executeTool(
+      call("terminal", { command: "node scripts/check.mjs" }),
+      ctx,
+    );
+    const everything = JSON.stringify([result, publish.mock.calls]);
+    expect(everything).not.toContain(secret);
+    expect(everything).not.toContain(Buffer.from(secret).toString("base64"));
+    expect(result.output).toContain("[secret OPENAI_API_KEY]");
+    expect(sandbox.commands.run.mock.calls[0][1]).toMatchObject({
+      envs: { OPENAI_API_KEY: secret },
+    });
+  });
+
+  test("redacts secrets from file reads", async () => {
+    const { ctx, sandbox } = await withSecret();
+    sandbox.files.read.mockResolvedValue(`KEY=${secret}`);
+    const result = await executeTool(
+      call("readFiles", { paths: ["notes.txt"] }),
+      ctx,
+    );
+    expect(result.output).not.toContain(secret);
+  });
+
+  test("askUser returns a pending question", async () => {
+    const { ctx } = makeCtx([], {
+      tools: [...builderToolNames, "askUser"],
+    });
+    const result = await executeTool(
+      call("askUser", {
+        kind: "choice",
+        question: "Call Gemini directly or through Vercel AI Gateway?",
+        options: ["Gemini API directly", "Vercel AI Gateway"],
+      }),
+      ctx,
+    );
+    expect(result.pending).toEqual({
+      payload: {
+        kind: "choice",
+        question: "Call Gemini directly or through Vercel AI Gateway?",
+        options: ["Gemini API directly", "Vercel AI Gateway"],
+      },
+      resume: false,
+    });
+  });
+
+  test("askUser explains what a malformed question needs", async () => {
+    const { ctx } = makeCtx([], { tools: [...builderToolNames, "askUser"] });
+    const result = await executeTool(
+      call("askUser", { kind: "secret", name: "lower" }),
+      ctx,
+    );
+    expect(result.pending).toBeUndefined();
+    expect(result.output).toMatch(/^Not asked: a secret question needs name/);
+  });
+
+  test("askUser respects restricted mode and the question cap", async () => {
+    const made = makeCtx([], { tools: [...builderToolNames, "askUser"] });
+    const secretAsk = call("askUser", {
+      kind: "secret",
+      name: "OPENAI_API_KEY",
+      label: "OpenAI API key",
+      reason: "Chat feature",
+    });
+    const restricted = await executeTool(secretAsk, {
+      ...made.ctx,
+      restricted: true,
+    });
+    expect(restricted.output).toMatch(/can't be requested/);
+    const capped = await executeTool(secretAsk, {
+      ...made.ctx,
+      questionsLeft: 0,
+    });
+    expect(capped.output).toMatch(/used all 5 questions/);
+  });
+
+  test("unknown packages are vetted with npq and need a confirmation", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockImplementation(async (command: string) => {
+      if (command.includes("npq")) {
+        throw new FakeExitError(
+          JSON.stringify({
+            status: "findings",
+            summary: { errors: 1, warnings: 0 },
+            packages: [
+              {
+                requested: "left-pad@*",
+                findings: [
+                  {
+                    severity: "error",
+                    marshall: "deprecation",
+                    message: "Deprecated",
+                  },
+                ],
+              },
+            ],
+          }),
+          "",
+          1,
+        );
+      }
+      return { stdout: "added", stderr: "", exitCode: 0 };
+    });
+    const result = await executeTool(
+      call("terminal", { command: "npm install left-pad" }),
+      ctx,
+    );
+    expect(result.pending).toMatchObject({
+      resume: true,
+      packages: ["left-pad"],
+      payload: { kind: "confirm", risk: "medium", action: "Install left-pad" },
+    });
+    expect((result.pending?.payload as { summary: string }).summary).toContain(
+      "left-pad: error (deprecation) Deprecated",
+    );
+    expect(sandbox.commands.run).toHaveBeenCalledTimes(1);
+
+    const approved = await executeTool(
+      call("terminal", { command: "npm install left-pad" }),
+      { ...ctx, approved: true },
+    );
+    expect(approved.pending).toBeUndefined();
+    expect(sandbox.commands.run).toHaveBeenLastCalledWith(
+      "npm install left-pad --ignore-scripts",
+      expect.anything(),
+    );
+  });
+
+  test("destructive database commands need a high-risk confirmation", async () => {
+    const { ctx, sandbox } = makeCtx();
+    const result = await executeTool(
+      call("terminal", { command: "npx prisma migrate reset --force" }),
+      ctx,
+    );
+    expect(result.pending?.payload).toMatchObject({
+      kind: "confirm",
+      risk: "high",
+    });
+    expect(sandbox.commands.run).not.toHaveBeenCalled();
+  });
+
+  test("deleting more than 10 files needs a confirmation", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockResolvedValueOnce({
+      stdout: "14\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await executeTool(
+      call("terminal", { command: "rm -r components/sections" }),
+      ctx,
+    );
+    expect(result.pending?.payload).toMatchObject({
+      kind: "confirm",
+      risk: "high",
+      action: "Delete 14 files: rm -r components/sections",
+    });
+  });
+
+  test("refuses git dependencies and caps installs per run", async () => {
+    const { ctx } = makeCtx();
+    const git = await executeTool(
+      call("terminal", { command: "npm install github:evil/pkg" }),
+      ctx,
+    );
+    expect(git.output).toMatch(/^Command blocked: .*npm registry/);
+    const capped = await executeTool(
+      call("terminal", { command: "npm install zod" }),
+      { ...ctx, progress: { ...ready, installs: 20 } },
+    );
+    expect(capped.output).toMatch(/limit is 20/);
+  });
+
+  test("a confirmation over the question cap is refused instead", async () => {
+    const { ctx } = makeCtx();
+    const result = await executeTool(
+      call("terminal", { command: "npx prisma migrate reset --force" }),
+      { ...ctx, questionsLeft: 0 },
+    );
+    expect(result.pending).toBeUndefined();
+    expect(result.output).toMatch(/^Not run: this needs the user's approval/);
   });
 });

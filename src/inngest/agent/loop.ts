@@ -11,13 +11,31 @@ import {
   type TokenUsage,
 } from "@/server/billing/pricing";
 import { type BilledCall, estimateCallUsd } from "@/server/billing/run-cost";
-import { connectSandbox } from "@/server/sandbox/sandbox";
+import {
+  describeAnswer,
+  INPUT_TIMEOUT,
+  inputRequestId,
+} from "@/server/inputs/requests";
 import type { inngest } from "../client";
+import { agentInputProvided } from "../events";
 import { createPublisher } from "../publisher";
 import type { AgentSpec } from "./agents/types";
 import { compactHistory, toolCallsFrom } from "./conversation";
-import { executeTool, type SkillProgress } from "./execute-tool";
+import {
+  MAX_QUESTIONS_PER_RUN,
+  type SkillProgress,
+  type ToolOutcome,
+} from "./execute-tool";
 import { runModelTurn } from "./model";
+import {
+  loadRedactor,
+  openInput,
+  replayOf,
+  resolveInput,
+  type RunContext,
+  runToolStep,
+  takeCheckpoint,
+} from "./runtime";
 import { classifyModelError, MODEL_UNAVAILABLE } from "./model-errors";
 import { type InstalledSkill, allowedInstalled, skillIndex } from "./skills";
 import { MAX_SEARCHES_PER_RUN, SEARCH_TOOL, type SearchRecord } from "./search";
@@ -33,6 +51,37 @@ export const NO_WRITES_NOTE =
   "(You haven't written any files yet, so nothing has changed: the project is exactly as before. If the request needs code changes, make them now with createOrUpdateFiles, check the page compiles, then reply with the summary. If it truly needs no change, say so in the summary.)";
 const CONTINUE_NOTE =
   "(Continue. When you have what you need, reply with your final answer in the tags your instructions describe.)";
+
+export const HANDOFF_NOTE =
+  "(This run has used most of its room, so a fresh run takes over from here with the same files. Don't call any tools. Reply now with a short handoff note for yourself: what is done, what is left to do, in order, and anything you learned that matters (commands that failed, decisions you made). Don't write the task_summary yet.)";
+
+export const CHECKPOINT_EVERY_TURNS = 5;
+export const RUN_STEP_BUDGET = 850;
+export const RUN_STATE_BUDGET_BYTES = 24 * 1024 * 1024;
+
+export function nearRunBudget(run: Pick<RunContext, "steps" | "stateBytes">) {
+  return (
+    run.steps >= RUN_STEP_BUDGET || run.stateBytes >= RUN_STATE_BUDGET_BYTES
+  );
+}
+
+function trackSteps(step: Step, run: RunContext): Step {
+  const count = (value: unknown) => {
+    run.steps += 1;
+    run.stateBytes +=
+      value === undefined || value === null ? 0 : JSON.stringify(value).length;
+    return value;
+  };
+  return {
+    ...step,
+    run: (async (id: string, fn: () => unknown) =>
+      count(await step.run(id, fn))) as unknown as Step["run"],
+    waitForEvent: (async (id: string, options: never) =>
+      count(
+        await step.waitForEvent(id, options),
+      )) as unknown as Step["waitForEvent"],
+  };
+}
 
 export type Budget = { balance: number; spentUsd: number; searches: number };
 
@@ -52,7 +101,44 @@ export type AgentRun = {
   searches: SearchRecord[];
   progress: SkillProgress;
   spentUsd: number;
+  paused: { requestId: string } | null;
+  handoff: string | null;
 };
+
+export function createRunContext(
+  input: Partial<RunContext> & { sandboxId: string; previewUrl?: string },
+): RunContext {
+  return {
+    runId: input.runId ?? "local",
+    chainId: input.chainId ?? input.runId ?? "local",
+    userId: input.userId ?? "",
+    messageId: input.messageId ?? "",
+    restricted: input.restricted ?? false,
+    sandbox: input.sandbox ?? {
+      id: input.sandboxId,
+      previewUrl: input.previewUrl ?? "",
+    },
+    pendingWrites: input.pendingWrites ?? new Map(),
+    questions: input.questions ?? 0,
+    steps: input.steps ?? 0,
+    stateBytes: input.stateBytes ?? 0,
+  };
+}
+
+function writtenContents(input: unknown) {
+  const files = (input as { files?: unknown })?.files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((file: { path?: unknown; content?: unknown }) =>
+    typeof file?.path === "string" && typeof file?.content === "string"
+      ? [
+          {
+            path: file.path.trim().replace(/^\.\/+/, ""),
+            content: file.content,
+          },
+        ]
+      : [],
+  );
+}
 
 export function failModelTurn(error: unknown): never {
   const failure = classifyModelError(error);
@@ -75,10 +161,11 @@ export function failModelTurn(error: unknown): never {
 }
 
 export async function runAgentLoop({
-  step,
+  step: rawStep,
   spec,
   projectId,
   sandboxId,
+  run: givenRun,
   model,
   messages: initialMessages,
   installedSkills,
@@ -92,7 +179,8 @@ export async function runAgentLoop({
   step: Step;
   spec: AgentSpec;
   projectId: string;
-  sandboxId: string;
+  sandboxId?: string;
+  run?: RunContext;
   model: AgentModel;
   messages: ModelMessage[];
   installedSkills: InstalledSkill[];
@@ -130,24 +218,48 @@ export async function runAgentLoop({
   let output: string | null = null;
   let finished = false;
   let outOfCredits = false;
+  let paused: { requestId: string } | null = null;
+  let handoff: string | null = null;
+  const run = givenRun ?? createRunContext({ sandboxId: sandboxId ?? "" });
+  const step = trackSteps(rawStep, run);
+  const writer = toolNames.includes("createOrUpdateFiles");
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    if (
+      writer &&
+      turn > 0 &&
+      turn % CHECKPOINT_EVERY_TURNS === 0 &&
+      run.pendingWrites.size > 0
+    ) {
+      const saved = await step.run(`${stepPrefix}-checkpoint-${turn}`, () =>
+        takeCheckpoint({ projectId, run }),
+      );
+      if (saved) run.pendingWrites.clear();
+    }
     const usdBefore = budget.spentUsd + spentUsd;
     const searchesLeft = searchCount < MAX_SEARCHES_PER_RUN;
     if (!searchesLeft && toolNames.includes(SEARCH_TOOL) && !capNoted) {
       capNoted = true;
       messages = [...messages, { role: "user", content: SEARCH_CAP_NOTE }];
     }
-    const wrapUp = spec.name !== "builder" && turn === maxTurns - 1;
-    if (wrapUp) {
+    const handingOff = writer && turn > 0 && nearRunBudget(run);
+    const wrapUp =
+      handingOff || (spec.name !== "builder" && turn === maxTurns - 1);
+    if (handingOff) {
+      messages = [...messages, { role: "user", content: HANDOFF_NOTE }];
+    } else if (wrapUp) {
       messages = [...messages, { role: "user", content: WRAP_UP_NOTE }];
     }
     const activeTools = searchesLeft
       ? undefined
       : toolNames.filter((name) => name !== SEARCH_TOOL);
 
-    const result = await step.run(`${stepPrefix}-model-${turn}`, async () => {
-      const publish = createPublisher(projectId);
+    const modelStep = handingOff
+      ? `${stepPrefix}-handoff-${turn}`
+      : `${stepPrefix}-model-${turn}`;
+    const result = await step.run(modelStep, async () => {
+      const redactor = await loadRedactor(projectId);
+      const publish = createPublisher(projectId, redactor);
       if (turn === 0 && stepPrefix === spec.name) {
         await publish("agent", { name: spec.name, state: "started" });
       }
@@ -162,6 +274,7 @@ export async function runAgentLoop({
         tools: spec.tools,
         activeTools,
         toolChoice: wrapUp ? "none" : undefined,
+        redactor,
       }).catch(failModelTurn);
       await publish("credits", {
         used: creditsForCost(
@@ -189,6 +302,17 @@ export async function runAgentLoop({
     spentUsd += estimateCallUsd(call);
     searchCount += result.searches.length;
     searches.push(...result.searches);
+
+    if (handingOff) {
+      messages = [
+        ...messages,
+        ...(result.messages as ModelMessage[]).filter(
+          (message) => message.role === "assistant",
+        ),
+      ];
+      handoff = result.text.trim() || "No handoff note was written.";
+      break;
+    }
 
     if (result.finishReason === "length") {
       messages = [...messages, { role: "user", content: OUTPUT_LIMIT_NOTE }];
@@ -226,23 +350,142 @@ export async function runAgentLoop({
 
     const toolResults: ToolResultPart[] = [];
     for (const [index, toolCall] of toolCalls.entries()) {
+      if (paused) {
+        toolResults.push({
+          type: "tool-result",
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+          output: {
+            type: "text",
+            value: "Not run: the request paused for the user's answer.",
+          },
+        });
+        continue;
+      }
       const writtenPaths = [...written];
       const before = progress;
-      const outcome = await step.run(
+      const base = {
+        writtenPaths,
+        agent: spec.name,
+        tools: toolNames,
+        skills,
+        progress: before,
+        questionsLeft: MAX_QUESTIONS_PER_RUN - run.questions,
+      };
+      const replay = replayOf(run);
+      const stepped = await step.run(
         `${stepPrefix}-tool-${turn}-${index}`,
-        async () =>
-          executeTool(toolCall, {
-            sandbox: await connectSandbox(sandboxId),
-            publish: createPublisher(projectId),
-            writtenPaths,
-            agent: spec.name,
-            tools: toolNames,
-            skills,
-            progress: before,
-          }),
+        () => runToolStep({ call: toolCall, projectId, run, base, replay }),
       );
+      if (stepped.sandbox) run.sandbox = stepped.sandbox;
+      let outcome: ToolOutcome = stepped;
+
+      if (stepped.pending) {
+        const pending = stepped.pending;
+        const requestId = inputRequestId(run.runId, stepPrefix, turn, index);
+        toolParts.push({
+          type: "input-request",
+          requestId,
+          agent: spec.name,
+          payload: pending.payload,
+        });
+        const opened = await step.run(
+          `${stepPrefix}-ask-${turn}-${index}`,
+          () =>
+            openInput({
+              id: requestId,
+              projectId,
+              agent: spec.name,
+              pending,
+              run,
+            }),
+        );
+        if (opened.checkpointed) run.pendingWrites.clear();
+        let answer = opened.immediate;
+        if (!answer) {
+          run.questions += 1;
+          const event = await step.waitForEvent(
+            `${stepPrefix}-wait-${turn}-${index}`,
+            {
+              event: agentInputProvided,
+              timeout: INPUT_TIMEOUT,
+              if: `async.data.requestId == "${requestId}"`,
+            },
+          );
+          const resolved = await step.run(
+            `${stepPrefix}-answer-${turn}-${index}`,
+            () =>
+              resolveInput({
+                id: requestId,
+                projectId,
+                payload: pending.payload,
+                timedOut: !event,
+                run,
+              }),
+          );
+          if (resolved.paused) {
+            paused = { requestId };
+            toolResults.push({
+              type: "tool-result",
+              toolCallId: toolCall.toolCallId,
+              toolName: toolCall.toolName,
+              output: { type: "text", value: "Waiting for the user's answer." },
+            });
+            continue;
+          }
+          if (resolved.sandbox) run.sandbox = resolved.sandbox;
+          answer = resolved.answer;
+        }
+        toolParts.push({
+          type: "input-answer",
+          requestId,
+          kind: pending.payload.kind,
+          answer: !answer.ok
+            ? "dismissed"
+            : pending.payload.kind === "secret"
+              ? "set"
+              : (answer.answer ?? ""),
+        });
+        const approved =
+          pending.resume &&
+          pending.payload.kind === "confirm" &&
+          answer.ok &&
+          answer.answer === "approved";
+        if (approved) {
+          const rerun = await step.run(
+            `${stepPrefix}-tool-${turn}-${index}-approved`,
+            () =>
+              runToolStep({
+                call: toolCall,
+                projectId,
+                run,
+                base,
+                approved: true,
+                replay: replayOf(run),
+              }),
+          );
+          if (rerun.sandbox) run.sandbox = rerun.sandbox;
+          outcome = {
+            ...rerun,
+            output: `${describeAnswer(pending.payload, answer)}\n${rerun.output}`,
+          };
+        } else {
+          outcome = {
+            ...stepped,
+            output: describeAnswer(pending.payload, answer),
+          };
+        }
+      }
+
       progress = outcome.progress;
       for (const path of outcome.writtenPaths) written.add(path);
+      if (toolCall.toolName === "createOrUpdateFiles") {
+        const changed = new Set(outcome.writtenPaths);
+        for (const file of writtenContents(toolCall.input)) {
+          if (changed.has(file.path))
+            run.pendingWrites.set(file.path, file.content);
+        }
+      }
       tasks.push(...outcome.tasks);
       if (outcome.terminal) {
         toolParts.push({
@@ -261,6 +504,7 @@ export async function runAgentLoop({
       });
     }
     messages = [...messages, { role: "tool", content: toolResults }];
+    if (paused) break;
 
     if (
       budget.balance - creditsForCost(budget.spentUsd + spentUsd, creditRate) <=
@@ -287,6 +531,8 @@ export async function runAgentLoop({
     searches,
     progress,
     spentUsd,
+    paused,
+    handoff,
   };
 }
 

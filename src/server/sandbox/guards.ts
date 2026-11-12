@@ -63,6 +63,12 @@ const blockedCommands: { pattern: RegExp; reason: string }[] = [
   },
   {
     pattern:
+      /(^|[;&|(]\s*)(printenv|env|set|export\s+-p|declare\s+-[a-z]*x[a-z]*|compgen\s+-e)\s*($|[;&|)>])|\/proc\/[^\s]*\/environ|\bnode\b[^;&|]*\s(-e|-p|--eval|--print)\b[^;&|]*\bprocess\.env\b(?!\.)/,
+    reason:
+      "listing environment variables is not allowed; read one named variable in code with process.env.NAME",
+  },
+  {
+    pattern:
       /(\b(rm|mv|cp|tee|touch|chmod|ln|truncate)\b|\bsed\s+-i|>)[^;&|]*(\.agents|\.claude|skills-lock\.json)\b|\bskills\s+(add|remove|update|init)\b/,
     reason:
       "the installed skills in .agents/ and .claude/ are read-only; read them, don't change them",
@@ -95,6 +101,57 @@ export function checkReviewerCommand(command: string) {
   return reviewerCommands.some((pattern) => pattern.test(trimmed))
     ? null
     : "Command blocked: the reviewer can only run read-only checks (npx tsc --noEmit, npx eslint, npm run lint, curl localhost:3000, ls, cat, grep, head, find).";
+}
+
+const destructivePatterns: { pattern: RegExp; summary: string }[] = [
+  {
+    pattern: /\bprisma\s+migrate\s+reset\b/,
+    summary: "Reset the database: every table and row is deleted.",
+  },
+  {
+    pattern: /\bdb\s+push\b[^;&|]*--force-reset\b/,
+    summary:
+      "Force-reset the database before pushing the schema: all data is deleted.",
+  },
+  {
+    pattern: /--accept-data-loss\b/,
+    summary:
+      "Apply a schema change that drops columns or tables with their data.",
+  },
+  {
+    pattern: /\b(DROP\s+(TABLE|DATABASE|SCHEMA|COLUMN)|TRUNCATE)\b/i,
+    summary: "Run SQL that drops or empties tables.",
+  },
+  {
+    pattern: /\bDELETE\s+FROM\s+[\w."]+\s*(;|$|["'`)])/i,
+    summary:
+      "Run a DELETE without a WHERE clause: every row in the table is deleted.",
+  },
+];
+
+export function destructiveAction(command: string) {
+  return (
+    destructivePatterns.find(({ pattern }) => pattern.test(command))?.summary ??
+    null
+  );
+}
+
+export function removalTargets(command: string) {
+  const match = /(?:^|[;&|]\s*)rm\s+((?:-[a-zA-Z]+\s+)*)(.+?)(?=$|[;&|])/.exec(
+    command.trim(),
+  );
+  if (!match) return null;
+  const targets = match[2]
+    .split(/\s+/)
+    .filter((token) => token && !token.startsWith("-"));
+  return targets.length > 0 ? targets : null;
+}
+
+export function countFilesCommand(targets: readonly string[]) {
+  const quoted = targets
+    .map((target) => `'${target.replace(/'/g, `'\\''`)}'`)
+    .join(" ");
+  return `find ${quoted} -type f 2>/dev/null | wc -l`;
 }
 
 export function countLines(content: string) {

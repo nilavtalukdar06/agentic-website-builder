@@ -1,21 +1,40 @@
 import { CommandExitError, type Sandbox } from "e2b";
 import {
   type AgentName,
+  type InputPayload,
+  inputPayloadSchema,
   packagesFromInstall,
   type TaskItem,
 } from "@/lib/agent/parts";
+import { isSandboxGone } from "@/server/sandbox/errors";
+import { noRedaction, type Redactor } from "@/server/secrets/redact";
 import {
   APP_DIR,
   checkCommand,
   checkReviewerCommand,
+  countFilesCommand,
   countLines,
+  destructiveAction,
   GuardError,
+  removalTargets,
   resolveAppPath,
   truncateOutput,
 } from "@/server/sandbox/guards";
 import type { Publish } from "../publisher";
+import {
+  MAX_INSTALLS_PER_RUN,
+  npqCommand,
+  parseNpqReport,
+  planInstall,
+  summarizeNpq,
+  unknownDependencies,
+} from "./guardrails/packages";
+import { detectSecrets } from "./guardrails/secret-patterns";
+import { codeTripwire } from "./guardrails/tripwire";
+import { wrapUntrusted } from "./guardrails/untrusted";
 import { MAX_SKILL_CHARS, parseSkill, SKILLS_DIR } from "./skills";
 import {
+  askUserInput,
   isAgentTool,
   loadSkillInput,
   readFilesInput,
@@ -40,7 +59,27 @@ export type TerminalRecord = {
   exitCode: number | null;
 };
 
-export type SkillProgress = { readAgentsMd: boolean; loadedSkills: string[] };
+export const MAX_QUESTIONS_PER_RUN = 5;
+export const MAX_FILES_BEFORE_CONFIRM = 10;
+
+export type SkillProgress = {
+  readAgentsMd: boolean;
+  loadedSkills: string[];
+  installs?: number;
+};
+
+export type PendingInput = {
+  payload: InputPayload;
+  resume: boolean;
+  packages?: string[];
+};
+
+export type GuardHit = {
+  stage: "tool";
+  verdict: "block";
+  categories: string[];
+  text: string;
+};
 
 export const emptyProgress: SkillProgress = {
   readAgentsMd: false,
@@ -53,6 +92,8 @@ export type ToolOutcome = {
   writtenPaths: string[];
   terminal: TerminalRecord | null;
   progress: SkillProgress;
+  pending?: PendingInput | null;
+  guard?: GuardHit | null;
 };
 
 export type ToolContext = {
@@ -63,6 +104,12 @@ export type ToolContext = {
   tools: readonly string[];
   skills: { allowed: readonly string[]; installed: readonly string[] };
   progress: SkillProgress;
+  redactor?: Redactor;
+  envs?: Record<string, string>;
+  approved?: boolean;
+  approvedPackages?: readonly string[];
+  restricted?: boolean;
+  questionsLeft?: number;
 };
 
 export function skillGate(
@@ -98,21 +145,145 @@ function outcome(
   };
 }
 
+function confirmOutcome(
+  ctx: ToolContext,
+  payload: Extract<InputPayload, { kind: "confirm" }>,
+  packages?: string[],
+) {
+  if ((ctx.questionsLeft ?? MAX_QUESTIONS_PER_RUN) <= 0) {
+    return outcome(
+      ctx,
+      `Not run: this needs the user's approval (${payload.action}), but you have used all ${MAX_QUESTIONS_PER_RUN} questions for this request. Find another way, or explain in your summary that the user has to approve it.`,
+    );
+  }
+  return outcome(ctx, `Waiting for the user to approve: ${payload.action}`, {
+    pending: { payload, resume: true, packages },
+  });
+}
+
+function shortCommand(command: string) {
+  return command.length > 160 ? `${command.slice(0, 159)}…` : command;
+}
+
+async function vetPackages(ctx: ToolContext, names: string[]) {
+  const result = await ctx.sandbox.commands
+    .run(npqCommand(names), {
+      cwd: APP_DIR,
+      timeoutMs: 120_000,
+      envs: { MARSHALL_DISABLE_SNYK: "1", NPQ_DISABLE_AUTO_CONTINUE: "true" },
+    })
+    .then((res) => res.stdout)
+    .catch((error: unknown) =>
+      error instanceof CommandExitError ? error.stdout : "",
+    );
+  return summarizeNpq(names, parseNpqReport(result));
+}
+
+async function preflight(
+  command: string,
+  ctx: ToolContext,
+): Promise<{ command: string; installs: number } | ToolOutcome> {
+  const destructive = destructiveAction(command);
+  if (destructive && !ctx.approved) {
+    return confirmOutcome(ctx, {
+      kind: "confirm",
+      action: `Run: ${shortCommand(command)}`,
+      risk: "high",
+      summary: destructive,
+    });
+  }
+
+  const targets = removalTargets(command);
+  if (targets && !ctx.approved) {
+    const counted = await ctx.sandbox.commands
+      .run(countFilesCommand(targets), { cwd: APP_DIR, timeoutMs: 30_000 })
+      .then((res) => Number.parseInt(res.stdout.trim(), 10))
+      .catch(() => 0);
+    if (counted > MAX_FILES_BEFORE_CONFIRM) {
+      return confirmOutcome(ctx, {
+        kind: "confirm",
+        action: `Delete ${counted} files: ${shortCommand(command)}`,
+        risk: "high",
+        summary: `This removes ${counted} files from the project (${targets.join(", ")}). They come back only by restoring an earlier version.`,
+      });
+    }
+  }
+
+  const approvedPackages = ctx.approvedPackages ?? [];
+  const plan = planInstall(command, approvedPackages);
+  if (plan.action === "none") return { command, installs: 0 };
+  if (plan.action === "refuse") {
+    return outcome(ctx, `Command blocked: ${plan.reason}.`, {
+      terminal: { command, output: plan.reason, exitCode: null },
+    });
+  }
+  const used = ctx.progress.installs ?? 0;
+  if (used + plan.installs > MAX_INSTALLS_PER_RUN) {
+    const message = `Command blocked: this request already installed ${used} packages and the limit is ${MAX_INSTALLS_PER_RUN}. Use what is installed.`;
+    return outcome(ctx, message, {
+      terminal: { command, output: message, exitCode: null },
+    });
+  }
+  let unknown = plan.unknown;
+  if (plan.bare) {
+    const manifest = await ctx.sandbox.files
+      .read(`${APP_DIR}/package.json`)
+      .catch(() => "{}");
+    const deps = unknownDependencies(manifest, approvedPackages);
+    if (deps.refused) {
+      const message = `Command blocked: package.json has a dependency that isn't from the npm registry (${deps.refused}). Use a registry package instead.`;
+      return outcome(ctx, message, {
+        terminal: { command, output: message, exitCode: null },
+      });
+    }
+    unknown = [...new Set([...unknown, ...deps.unknown])].sort();
+  }
+  if (unknown.length > 0 && !ctx.approved) {
+    return confirmOutcome(
+      ctx,
+      {
+        kind: "confirm",
+        action: `Install ${unknown.join(", ")}`,
+        risk: "medium",
+        summary: await vetPackages(ctx, unknown),
+      },
+      unknown,
+    );
+  }
+  return {
+    command:
+      unknown.length > 0 && !/--ignore-scripts\b/.test(plan.command)
+        ? plan.command.replace(
+            /((?:npm|pnpm|yarn|bun)\s+(?:install|i|add|ci)\b[^;&|]*)/,
+            "$1 --ignore-scripts",
+          )
+        : plan.command,
+    installs: plan.installs,
+  };
+}
+
 async function runTerminal(call: ToolCall, ctx: ToolContext) {
   const parsed = terminalInput.safeParse(call.input);
   if (!parsed.success) {
     return outcome(ctx, `Invalid input: ${parsed.error.message}`);
   }
-  const { command } = parsed.data;
+  const requested = parsed.data.command;
   const blocked =
     ctx.agent === "reviewer"
-      ? checkReviewerCommand(command)
-      : checkCommand(command);
+      ? checkReviewerCommand(requested)
+      : checkCommand(requested);
   if (blocked) {
     return outcome(ctx, blocked, {
-      terminal: { command, output: blocked, exitCode: null },
+      terminal: { command: requested, output: blocked, exitCode: null },
     });
   }
+  const checked =
+    ctx.agent === "reviewer"
+      ? { command: requested, installs: 0 }
+      : await preflight(requested, ctx);
+  if ("output" in checked) return checked;
+  const { command } = checked;
+  const redactor = ctx.redactor ?? noRedaction;
 
   await ctx.publish("tool", {
     phase: "call",
@@ -126,7 +297,7 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
       phase: "output",
       callId: call.toolCallId,
       name: "terminal",
-      chunk,
+      chunk: redactor.redact(chunk),
       agent: ctx.agent,
     });
 
@@ -139,6 +310,9 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
       timeoutMs: COMMAND_TIMEOUT_MS,
       onStdout: stream,
       onStderr: stream,
+      ...(ctx.envs && Object.keys(ctx.envs).length > 0
+        ? { envs: ctx.envs }
+        : {}),
     });
     stdout = result.stdout;
     stderr = result.stderr;
@@ -148,13 +322,18 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
       stdout = error.stdout;
       stderr = error.stderr;
       exitCode = error.exitCode;
+    } else if (isSandboxGone(error)) {
+      throw error;
     } else {
       stderr = error instanceof Error ? error.message : String(error);
     }
   }
 
   const output = truncateOutput(
-    [stdout, stderr].filter((part) => part.trim()).join("\n") || "(no output)",
+    redactor.redact(
+      [stdout, stderr].filter((part) => part.trim()).join("\n") ||
+        "(no output)",
+    ),
   );
   await ctx.publish("tool", {
     phase: "result",
@@ -172,10 +351,55 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
     await ctx.publish("task", task);
   }
 
-  return outcome(ctx, `Exit code: ${exitCode ?? "unknown"}\n${output}`, {
-    tasks,
-    terminal: { command, output, exitCode },
-  });
+  return outcome(
+    ctx,
+    `Exit code: ${exitCode ?? "unknown"}\n${wrapUntrusted("terminal", output)}`,
+    {
+      tasks,
+      terminal: { command, output, exitCode },
+      progress:
+        checked.installs > 0
+          ? {
+              ...ctx.progress,
+              installs: (ctx.progress.installs ?? 0) + checked.installs,
+            }
+          : ctx.progress,
+    },
+  );
+}
+
+async function writeContentCheck(
+  path: string,
+  content: string,
+  ctx: ToolContext,
+) {
+  const named = (ctx.redactor ?? noRedaction).contains(content);
+  if (named) {
+    return {
+      message: `Skipped ${path}: it contains the value of ${named}. Never write secret values into files; read it in code with process.env.${named}.`,
+      guard: null,
+    };
+  }
+  const found = await detectSecrets(content);
+  if (found.length > 0) {
+    return {
+      message: `Skipped ${path}: it contains what looks like a secret (${found[0].ruleId}). Never write keys, passwords or tokens into files; read them with process.env.NAME and ask for missing ones with askUser (kind secret).`,
+      guard: null,
+    };
+  }
+  const tripped = codeTripwire(content);
+  if (tripped) {
+    return {
+      message: `Skipped ${path}: ${tripped}. That is not allowed in a Vibe project.`,
+      guard: {
+        stage: "tool" as const,
+        verdict: "block" as const,
+        categories: ["malware"],
+        text: content,
+      },
+    };
+  }
+  return null;
 }
 
 async function writeFiles(call: ToolCall, ctx: ToolContext) {
@@ -187,6 +411,7 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
   if (gate) return outcome(ctx, gate);
 
   const known = new Set(ctx.writtenPaths);
+  let guard: GuardHit | null = null;
   const results: string[] = [];
   const tasks: TaskItem[] = [];
   const writtenPaths: string[] = [];
@@ -204,6 +429,16 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
       results.push(
         `Skipped ${target.relative}: this run already changed ${MAX_FILES_PER_RUN} files.`,
       );
+      continue;
+    }
+    const rejected = await writeContentCheck(
+      target.relative,
+      file.content,
+      ctx,
+    );
+    if (rejected) {
+      results.push(rejected.message);
+      guard ??= rejected.guard;
       continue;
     }
 
@@ -239,7 +474,7 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
     results.push(`${existed ? "Updated" : "Created"} ${target.relative}`);
   }
 
-  return outcome(ctx, results.join("\n"), { tasks, writtenPaths });
+  return outcome(ctx, results.join("\n"), { tasks, writtenPaths, guard });
 }
 
 async function readFiles(call: ToolCall, ctx: ToolContext) {
@@ -265,7 +500,10 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
         }
         return {
           path: target.relative,
-          content: truncateOutput(content, limit),
+          content: truncateOutput(
+            (ctx.redactor ?? noRedaction).redact(content),
+            limit,
+          ),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -276,7 +514,7 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
   const readAgentsMd = contents.some(
     (entry) => entry.path === "AGENTS.md" && "content" in entry,
   );
-  return outcome(ctx, JSON.stringify(contents), {
+  return outcome(ctx, wrapUntrusted("files", JSON.stringify(contents)), {
     progress: readAgentsMd
       ? { ...ctx.progress, readAgentsMd: true }
       : ctx.progress,
@@ -327,8 +565,55 @@ async function loadSkill(call: ToolCall, ctx: ToolContext) {
   const loadedSkills = ctx.progress.loadedSkills.includes(name)
     ? ctx.progress.loadedSkills
     : [...ctx.progress.loadedSkills, name];
-  return outcome(ctx, `# Skill: ${name}\n\n${body}${fileList}`, {
-    progress: { ...ctx.progress, loadedSkills },
+  return outcome(
+    ctx,
+    wrapUntrusted(`skill:${name}`, `# Skill: ${name}\n\n${body}${fileList}`),
+    {
+      progress: { ...ctx.progress, loadedSkills },
+    },
+  );
+}
+
+function askUser(call: ToolCall, ctx: ToolContext) {
+  const parsed = askUserInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  const { kind, ...fields } = parsed.data;
+  const payload = inputPayloadSchema.safeParse({
+    kind,
+    ...Object.fromEntries(
+      Object.entries(fields).filter(
+        ([, value]) => value !== undefined && value !== "",
+      ),
+    ),
+  });
+  if (!payload.success) {
+    const needs = {
+      choice: "question and 2 to 6 options",
+      text: "question",
+      secret: "name (like OPENAI_API_KEY), label and reason",
+      confirm: "action, risk and summary",
+    }[kind];
+    return outcome(
+      ctx,
+      `Not asked: a ${kind} question needs ${needs}. ${payload.error.issues[0]?.message ?? ""}`.trim(),
+    );
+  }
+  if (payload.data.kind === "secret" && ctx.restricted) {
+    return outcome(
+      ctx,
+      "Not asked: secrets can't be requested for this request. Build without the key and explain in your summary what the user needs to add.",
+    );
+  }
+  if ((ctx.questionsLeft ?? MAX_QUESTIONS_PER_RUN) <= 0) {
+    return outcome(
+      ctx,
+      `Not asked: you have used all ${MAX_QUESTIONS_PER_RUN} questions for this request. Decide yourself with a sensible default and mention it in your summary.`,
+    );
+  }
+  return outcome(ctx, "Waiting for the user's answer.", {
+    pending: { payload: payload.data, resume: false },
   });
 }
 
@@ -342,5 +627,6 @@ export async function executeTool(
   if (call.toolName === "terminal") return runTerminal(call, ctx);
   if (call.toolName === "createOrUpdateFiles") return writeFiles(call, ctx);
   if (call.toolName === "loadSkill") return loadSkill(call, ctx);
+  if (call.toolName === "askUser") return askUser(call, ctx);
   return readFiles(call, ctx);
 }

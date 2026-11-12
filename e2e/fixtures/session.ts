@@ -59,6 +59,18 @@ export async function createTestSession(name: string) {
         INSERT INTO "Message" (id, "projectId", role, content, parts, "createdAt")
         VALUES (${randomUUID()}, ${message.projectId}, ${message.role}, ${message.content}, ${message.parts === undefined ? null : JSON.stringify(message.parts)}::jsonb, ${(message.createdAt ?? new Date()).toISOString()})`;
     },
+    addInputRequest: async (request: {
+      projectId: string;
+      kind: "CHOICE" | "TEXT" | "SECRET" | "CONFIRM";
+      payload: unknown;
+      status?: "PENDING" | "PAUSED" | "ANSWERED";
+    }) => {
+      const id = `input_e2e_${randomUUID()}`;
+      await sql`
+        INSERT INTO "InputRequest" (id, "projectId", "userId", "runId", "chainId", "messageId", agent, kind, payload, status, "questionHash")
+        VALUES (${id}, ${request.projectId}, ${userId}, 'e2e-run', 'e2e-run', 'e2e-message', 'builder', ${request.kind}::"InputKind", ${JSON.stringify(request.payload)}::jsonb, ${request.status ?? "PAUSED"}::"InputStatus", ${randomUUID()})`;
+      return id;
+    },
     cookie: {
       name: "better-auth.session_token",
       value: await sign(token, process.env.BETTER_AUTH_SECRET!),

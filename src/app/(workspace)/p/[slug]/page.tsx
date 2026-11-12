@@ -7,6 +7,8 @@ import {
   BotIcon,
   CircleAlertIcon,
   ExternalLinkIcon,
+  KeyRoundIcon,
+  MessageCircleQuestionMarkIcon,
   RefreshCwIcon,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
@@ -89,6 +91,36 @@ function AgentState({ project }: { project: Project }) {
           </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (agent.status === "paused") {
+    return (
+      <Empty className="border" data-testid="agent-paused">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            {agent.question.kind === "secret" ? (
+              <KeyRoundIcon />
+            ) : (
+              <MessageCircleQuestionMarkIcon />
+            )}
+          </EmptyMedia>
+          <EmptyTitle>Waiting for your answer</EmptyTitle>
+          <EmptyDescription>
+            The agent paused to ask: {agent.question.question}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent className="flex-row justify-center">
+          <Link
+            href={`/p/${project.slug}`}
+            className={buttonVariants({ variant: "secondary" })}
+          >
+            <RefreshCwIcon />
+            Refresh
+          </Link>
+          {backLink}
+        </EmptyContent>
+      </Empty>
     );
   }
 

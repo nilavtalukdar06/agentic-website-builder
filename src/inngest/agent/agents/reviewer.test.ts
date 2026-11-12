@@ -10,6 +10,7 @@ describe("agent specs", () => {
     expect(reviewer.skills).toHaveLength(5);
     expect(reviewer.maxTurns).toBe(8);
     expect(builder.skills).toHaveLength(5);
+    expect(builder.maxTurns).toBe(Number.POSITIVE_INFINITY);
   });
 
   test("read-only roles can't write files", () => {

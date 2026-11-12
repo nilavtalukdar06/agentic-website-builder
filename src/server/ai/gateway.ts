@@ -6,16 +6,40 @@ import { type AgentModel, toAgentModels } from "@/lib/ai/models";
 export const gateway = createGateway({ apiKey: env.AI_GATEWAY_API_KEY });
 
 const CATALOG_TTL_MS = 60 * 60_000;
-let catalog: { at: number; models: AgentModel[] } | null = null;
+type GatewayEntries = Awaited<
+  ReturnType<typeof gateway.getAvailableModels>
+>["models"];
+
+let catalog: {
+  at: number;
+  models: AgentModel[];
+  entries: GatewayEntries;
+} | null = null;
+
+async function loadCatalog() {
+  if (catalog && Date.now() - catalog.at < CATALOG_TTL_MS) return catalog;
+  const { models } = await gateway.getAvailableModels();
+  catalog = { at: Date.now(), models: toAgentModels(models), entries: models };
+  return catalog;
+}
 
 export async function getAgentModels() {
-  if (catalog && Date.now() - catalog.at < CATALOG_TTL_MS) {
-    return catalog.models;
-  }
-  const { models } = await gateway.getAvailableModels();
-  const agentModels = toAgentModels(models);
-  catalog = { at: Date.now(), models: agentModels };
-  return agentModels;
+  return (await loadCatalog()).models;
+}
+
+export async function findGuardModel(): Promise<AgentModel> {
+  const id = env.AI_GUARD_MODEL;
+  const fallback: AgentModel = {
+    id,
+    name: id,
+    provider: id.split("/")[0],
+    providerLabel: id.split("/")[0],
+    vision: false,
+    pricing: null,
+  };
+  const loaded = await loadCatalog().catch(() => null);
+  if (!loaded) return fallback;
+  return toAgentModels(loaded.entries, [{ id, vision: false }])[0] ?? fallback;
 }
 
 export function pickDefaultModel(models: AgentModel[]) {

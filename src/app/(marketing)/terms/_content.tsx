@@ -87,6 +87,18 @@ export const termsSections: ArticleSection[] = [
           how you use it, including checking that it doesn&apos;t infringe
           anyone&apos;s rights.
         </P>
+        <P>
+          <Strong>Keys and databases you connect.</Strong> When you give the
+          agent an API key, token or database connection string, you are
+          responsible for it: that you are allowed to use it, the costs it runs
+          up with its provider, and the data in the database. We store it
+          encrypted and keep it from the AI, but the code in your project runs
+          with it, and preview links are not private, so anyone with a preview
+          link can use the app and its access. Use keys with spending limits and
+          a separate database branch with test data. The agent asks before
+          destructive actions such as resetting a database; you are responsible
+          for what you approve.
+        </P>
       </>
     ),
   },
@@ -115,13 +127,20 @@ export const termsSections: ArticleSection[] = [
             access to Vibe;
           </li>
           <li>
-            put secrets, personal data of other people, or regulated data
-            (health, payment card or similar) in prompts or projects.
+            put personal data of other people or regulated data (health, payment
+            card or similar) in prompts or projects, or paste secrets into
+            prompts (add them through the secure field instead);
+          </li>
+          <li>
+            get around Vibe&apos;s safety checks, for example by hiding
+            instructions for the agent in files, pages or packages.
           </li>
         </UL>
         <P>
-          We may stop a run, remove content or suspend an account that breaks
-          these rules.
+          Vibe checks prompts, replies and generated code automatically and may
+          refuse a request that looks harmful; refused requests are not charged.
+          We may also stop a run, remove content or suspend an account that
+          breaks these rules.
         </P>
       </>
     ),

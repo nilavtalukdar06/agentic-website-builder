@@ -1,9 +1,12 @@
 // @vitest-environment node
 import { describe, expect, test, vi } from "vitest";
 import {
+  checkpointId,
   debitCredits,
   debitId,
+  loadRestoreFiles,
   recordAssistantError,
+  saveCheckpoint,
   replyId,
   saveRunResult,
   versionId,
@@ -71,8 +74,14 @@ describe("saveRunResult", () => {
         title: "Built the hero",
         files: input.files,
         creditCost: 42,
+        runId: "r1",
       },
     });
+    expect(tx.version.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: "p1", status: "READY" },
+      }),
+    );
     expect(tx.message.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: replyId("r1") } }),
     );
@@ -182,5 +191,117 @@ describe("recordAssistantError", () => {
       },
       update: {},
     });
+  });
+});
+
+describe("checkpoints", () => {
+  test("upserts one draft per run chain", async () => {
+    const db = { version: { upsert: vi.fn().mockResolvedValue({}) } };
+    await saveCheckpoint(db as never, {
+      projectId: "p1",
+      chainId: "r0",
+      runId: "r1",
+      files: { "app/page.tsx": "x" },
+    });
+    expect(db.version.upsert).toHaveBeenCalledWith({
+      where: { id: checkpointId("r0") },
+      create: expect.objectContaining({
+        id: "checkpoint_r0",
+        status: "DRAFT",
+        number: null,
+        creditCost: 0,
+        runId: "r1",
+      }),
+      update: {
+        runId: "r1",
+        files: { "app/page.tsx": "x" },
+        title: "Checkpoint",
+      },
+    });
+  });
+
+  test("restores the chain's draft first, then the latest ready version", async () => {
+    const db = {
+      version: {
+        findFirst: vi
+          .fn()
+          .mockResolvedValueOnce({ files: { draft: "1" } })
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ files: { ready: "1" } }),
+      },
+    };
+    await expect(
+      loadRestoreFiles(db as never, { projectId: "p1", chainId: "r0" }),
+    ).resolves.toEqual({ draft: "1" });
+    await expect(
+      loadRestoreFiles(db as never, { projectId: "p1", chainId: "r0" }),
+    ).resolves.toEqual({ ready: "1" });
+    expect(db.version.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { projectId: "p1", status: "READY" } }),
+    );
+  });
+
+  test("saving the real version deletes the chain's draft", async () => {
+    const { db, tx } = makeDb();
+    (tx.version as Record<string, unknown>).deleteMany = vi
+      .fn()
+      .mockResolvedValue({ count: 1 });
+    await saveRunResult(db as never, {
+      projectId: "p1",
+      runId: "r2",
+      title: "t",
+      content: "c",
+      parts: [],
+      files: {},
+      creditCost: 1,
+      previewUrl: "https://x.e2b.app",
+      chainId: "r0",
+    });
+    expect(
+      (tx.version as unknown as { deleteMany: ReturnType<typeof vi.fn> })
+        .deleteMany,
+    ).toHaveBeenCalledWith({ where: { id: "checkpoint_r0", projectId: "p1" } });
+  });
+});
+
+describe("paused debits", () => {
+  test("charge the work done and mark the run paused", async () => {
+    const db = { creditLedger: { upsert: vi.fn().mockResolvedValue({}) } };
+    await debitCredits(db as never, {
+      userId: "u1",
+      projectId: "p1",
+      runId: "r1",
+      credits: 3,
+      firstVersion: true,
+      usage: {
+        inputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 1,
+      },
+      model: "m",
+      cost: {
+        costUsd: 0.03,
+        exactCalls: 1,
+        estimatedCalls: 0,
+        generationIds: [],
+        agents: [],
+      },
+      versionNumber: null,
+      paused: true,
+      guard: { input: "allow" },
+    });
+    expect(db.creditLedger.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          delta: -3,
+          meta: expect.objectContaining({
+            paused: true,
+            version: null,
+            guard: { input: "allow" },
+          }),
+        }),
+      }),
+    );
   });
 });

@@ -40,8 +40,23 @@ export const privacySections: ArticleSection[] = [
             <Strong>Your projects.</Strong> Project names and slugs, your
             prompts and chat messages, the AI model you chose for each message,
             the images you attach as references, the files the agent writes,
-            saved versions, the preview address, and the linked GitHub
-            repository after you export.
+            saved versions, the preview address, the linked GitHub repository
+            after you export, and your answers to the questions the agent asks
+            while it works.
+          </li>
+          <li>
+            <Strong>Secrets you give the agent.</Strong> API keys, tokens and
+            database connection strings you add to a project. We store them
+            encrypted, never send them to an AI model, and only place them in
+            your project&apos;s sandbox while it runs. We also keep a log of
+            each secret&apos;s name, what changed (set, replaced or deleted) and
+            when, never the value.
+          </li>
+          <li>
+            <Strong>Safety checks.</Strong> When a prompt, a reply or the
+            agent&apos;s code is blocked or flagged, we record the time, the
+            kind of check, the result and a one-way fingerprint (hash) of the
+            text, not the text itself.
           </li>
           <li>
             <Strong>Voice input.</Strong> If you use the microphone button, your
@@ -114,6 +129,9 @@ export const privacySections: ArticleSection[] = [
             DeepSeek, Alibaba or Mistral): your prompts, attached images and the
             relevant project context are sent to that model to write your code.
             Attached images reach it through links that expire after an hour.
+            Your prompts and the agent&apos;s final replies are also checked by
+            a safety model (OpenAI&apos;s gpt-oss-safeguard, through Vercel AI
+            Gateway) to stop harmful requests such as phishing pages.
           </li>
           <li>
             <Strong>Parallel</Strong>, the web search provider, through Vercel
@@ -124,7 +142,8 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             <Strong>E2B</Strong>: runs the sandbox where your project is built
-            and previewed. Your project code runs there.
+            and previewed. Your project code runs there, and the secrets you add
+            are placed in its environment while it runs.
           </li>
           <li>
             <Strong>Inngest</Strong>: runs the background jobs that drive the
@@ -141,8 +160,12 @@ export const privacySections: ArticleSection[] = [
         </P>
         <P>
           Don&apos;t put secrets or other people&apos;s personal data in
-          prompts: they are sent to the providers above, and sandbox preview
-          addresses are not secret.
+          prompts: prompts are sent to the providers above. If a prompt looks
+          like it contains a key, Vibe removes it before any AI model sees it
+          and asks you to add it as a secret instead. Sandbox preview addresses
+          are not private: anyone with the link can use the preview, including
+          any database or API access you gave the project, so connect a database
+          with test data rather than production data.
         </P>
       </>
     ),
@@ -174,6 +197,14 @@ export const privacySections: ArticleSection[] = [
           accounting or legal reasons.
         </li>
         <li>Sessions: until they expire or you sign out.</li>
+        <li>
+          Secrets: until you delete them, or the project or your account is
+          deleted. The audit log of secret names is deleted with the project.
+        </li>
+        <li>
+          Safety-check records (fingerprints only): for as long as your account
+          exists.
+        </li>
         <li>Uptime check records: 30 days.</li>
         <li>
           When you ask us to delete your account we remove your account,
@@ -211,10 +242,12 @@ export const privacySections: ArticleSection[] = [
     title: "8. Security",
     body: (
       <P>
-        We use encrypted connections, keep access keys on the server only, check
-        project ownership on every request, and limit what each provider
-        receives. No system is perfectly secure, so we can&apos;t guarantee
-        absolute security. If a breach affects you we will tell you promptly.
+        We use encrypted connections, keep access keys on the server only,
+        encrypt the secrets you add (AES-256-GCM) and remove them from
+        everything the AI sees, check project ownership on every request, and
+        limit what each provider receives. No system is perfectly secure, so we
+        can&apos;t guarantee absolute security. If a breach affects you we will
+        tell you promptly.
       </P>
     ),
   },

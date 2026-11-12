@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { agentPartsSchema, packagesFromInstall } from "./parts";
+import {
+  agentPartsSchema,
+  inputPayloadSchema,
+  inputQuestion,
+  packagesFromInstall,
+} from "./parts";
 
 describe("packagesFromInstall", () => {
   test.each([
@@ -114,5 +119,71 @@ describe("agentPartsSchema", () => {
 
   test("rejects unknown parts", () => {
     expect(() => agentPartsSchema.parse([{ type: "nope" }])).toThrow();
+  });
+});
+
+describe("input parts", () => {
+  test("parses input requests and answers", () => {
+    const parsed = agentPartsSchema.safeParse([
+      {
+        type: "input-request",
+        requestId: "i1",
+        agent: "builder",
+        payload: {
+          kind: "secret",
+          name: "OPENAI_API_KEY",
+          label: "OpenAI API key",
+          url: "https://platform.openai.com/api-keys",
+          reason: "AI chat",
+        },
+      },
+      { type: "input-answer", requestId: "i1", kind: "secret", answer: "set" },
+    ]);
+    expect(parsed.success).toBe(true);
+  });
+
+  test("validates each kind's shape", () => {
+    expect(
+      inputPayloadSchema.safeParse({
+        kind: "choice",
+        question: "Q",
+        options: ["a"],
+      }).success,
+    ).toBe(false);
+    expect(
+      inputPayloadSchema.safeParse({
+        kind: "secret",
+        name: "lower_case",
+        label: "x",
+        reason: "y",
+      }).success,
+    ).toBe(false);
+    expect(
+      inputPayloadSchema.safeParse({
+        kind: "confirm",
+        action: "Install x",
+        risk: "extreme",
+        summary: "s",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("describes the question for each kind", () => {
+    expect(
+      inputQuestion({
+        kind: "secret",
+        name: "A_KEY",
+        label: "A key",
+        reason: "r",
+      }),
+    ).toBe("A key (A_KEY)");
+    expect(
+      inputQuestion({
+        kind: "confirm",
+        action: "Delete 12 files",
+        risk: "high",
+        summary: "s",
+      }),
+    ).toBe("Delete 12 files");
   });
 });

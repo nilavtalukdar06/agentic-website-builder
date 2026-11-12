@@ -9,6 +9,8 @@ export const TRANSACTION_OPTIONS = { maxWait: 15_000, timeout: 30_000 };
 export const replyId = (runId: string) => `run_${runId}_reply`;
 export const versionId = (runId: string) => `run_${runId}_version`;
 export const debitId = (runId: string) => `run_${runId}_debit`;
+export const checkpointId = (chainId: string) => `checkpoint_${chainId}`;
+export const READY = { status: "READY" } as const;
 
 type Db = Pick<
   PrismaClient,
@@ -37,6 +39,76 @@ export async function recordAssistantError(
   });
 }
 
+export async function saveCheckpoint(
+  db: Pick<PrismaClient, "version">,
+  input: {
+    projectId: string;
+    chainId: string;
+    runId: string;
+    files: SnapshotFiles;
+  },
+) {
+  const data = {
+    runId: input.runId,
+    files: input.files,
+    title: "Checkpoint",
+  };
+  await db.version.upsert({
+    where: { id: checkpointId(input.chainId) },
+    create: {
+      id: checkpointId(input.chainId),
+      projectId: input.projectId,
+      status: "DRAFT",
+      number: null,
+      creditCost: 0,
+      ...data,
+    },
+    update: data,
+  });
+}
+
+export async function loadRestoreFiles(
+  db: Pick<PrismaClient, "version">,
+  { projectId, chainId }: { projectId: string; chainId?: string | null },
+) {
+  const draft = chainId
+    ? await db.version.findFirst({
+        where: { id: checkpointId(chainId), projectId },
+        select: { files: true },
+      })
+    : null;
+  const latest =
+    draft ??
+    (await db.version.findFirst({
+      where: { projectId, ...READY },
+      orderBy: { number: "desc" },
+      select: { files: true },
+    }));
+  return (latest?.files ?? undefined) as SnapshotFiles | undefined;
+}
+
+export async function recordPausedReply(
+  db: Pick<PrismaClient, "message">,
+  input: {
+    projectId: string;
+    runId: string;
+    content: string;
+    parts: AgentPart[];
+  },
+) {
+  return db.message.upsert({
+    where: { id: replyId(input.runId) },
+    create: {
+      id: replyId(input.runId),
+      projectId: input.projectId,
+      role: "ASSISTANT",
+      content: input.content,
+      parts: input.parts,
+    },
+    update: {},
+  });
+}
+
 export async function saveRunResult(
   db: Db,
   input: {
@@ -48,6 +120,7 @@ export async function saveRunResult(
     files: SnapshotFiles;
     creditCost: number;
     previewUrl: string;
+    chainId?: string;
   },
 ) {
   return db.$transaction(async (tx) => {
@@ -55,10 +128,12 @@ export async function saveRunResult(
       where: { id: versionId(input.runId) },
       select: { number: true },
     });
-    if (existing) return { versionNumber: existing.number };
+    if (existing?.number != null) {
+      return { versionNumber: existing.number };
+    }
 
     const latest = await tx.version.findFirst({
-      where: { projectId: input.projectId },
+      where: { projectId: input.projectId, ...READY },
       orderBy: { number: "desc" },
       select: { number: true },
     });
@@ -72,8 +147,14 @@ export async function saveRunResult(
         title: input.title,
         files: input.files,
         creditCost: input.creditCost,
+        runId: input.runId,
       },
     });
+    if (input.chainId) {
+      await tx.version.deleteMany({
+        where: { id: checkpointId(input.chainId), projectId: input.projectId },
+      });
+    }
     await tx.message.upsert({
       where: { id: replyId(input.runId) },
       create: {
@@ -104,7 +185,10 @@ export async function debitCredits(
     usage: TokenUsage;
     model: string;
     cost: RunCost;
-    versionNumber: number;
+    versionNumber: number | null;
+    paused?: boolean;
+    handoff?: boolean;
+    guard?: { input: string; output?: string };
   },
 ) {
   if (input.credits <= 0) return null;
@@ -125,6 +209,9 @@ export async function debitCredits(
         estimatedCalls: input.cost.estimatedCalls,
         generationIds: input.cost.generationIds,
         agents: input.cost.agents,
+        ...(input.paused ? { paused: true } : {}),
+        ...(input.handoff ? { handoff: true } : {}),
+        ...(input.guard ? { guard: input.guard } : {}),
         ...input.usage,
       },
     },

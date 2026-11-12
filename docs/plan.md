@@ -51,9 +51,9 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | LLM                  | Vercel AI Gateway via the AI SDK                                                               | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway     |
 | Agent skills         | `skills` CLI at template build (Phase 5b)                                                      | `skills` (dev/build only, MIT); five skills in every sandbox, own `loadSkill` tool                                                      |
 | Web search           | AI Gateway search tools (Phase 5b)                                                             | `ai` (`gateway.tools.parallelSearch`); works with every model, billed per search through the gateway                                    |
-| Guardrails           | Own layers + AI SDK middleware + `openai/gpt-oss-safeguard-20b` through the gateway (Phase 5c) | `secretlint` and `npq` to evaluate; no new vendor                                                                                       |
+| Guardrails           | Own layers + AI SDK middleware + `openai/gpt-oss-safeguard-20b` through the gateway (Phase 5c) | `@secretlint/core` + preset (in-process), `npq` 3.27.4 in the sandbox template; no new vendor                                           |
 | Human in the loop    | Inngest `step.waitForEvent` + `askUser` tool (Phase 5c)                                        | no new package; cards in Phase 6                                                                                                        |
-| Project secrets      | AES-256-GCM, server-side only (Phase 5c)                                                       | Node `crypto` or Better Auth's encryption helper                                                                                        |
+| Project secrets      | AES-256-GCM, server-side only (Phase 5c)                                                       | Node `crypto` (Better Auth's helper is XChaCha20 without additional data)                                                               |
 | Generated-app DB     | Prisma 7.10.1 + Neon, the user's own database URL (Phase 5d)                                   | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless` (all pinned; `latest` is still an 8.0 release candidate) |
 | Skill discovery      | Firecrawl search, server-side (Phase 5e)                                                       | `firecrawl` (Node SDK); `FIRECRAWL_API_KEY`                                                                                             |
 | Memory               | Supermemory behind a `MemoryProvider` (Phase 5e)                                               | `supermemory` (v5 SDK); `SUPERMEMORY_API_KEY`                                                                                           |
@@ -108,6 +108,8 @@ Version notes:
    │     ├─ inngest/route.ts
    │     ├─ attachments/route.ts   # image upload → Neon Object Storage
    │     ├─ realtime/token/route.ts
+   │     ├─ inputs/[id]/route.ts      # (Phase 5c) answer an askUser request
+   │     ├─ projects/[projectId]/secrets/route.ts   # (Phase 5c) set or replace a project secret
    │     └─ webhooks/stripe/route.ts   # (Phase 7) not yet built
    ├─ components/
    │  ├─ ui/                    # shadcn
@@ -122,10 +124,11 @@ Version notes:
    │  ├─ github/                # (Phase 8) export service, not yet built
    │  ├─ ai/                    # AI Gateway client, model catalogue, generation cost
    │  ├─ storage/               # Neon Object Storage (attachments)
-   │  ├─ secrets/               # (Phase 5c) encrypt, store, inject project secrets
+   │  ├─ secrets/               # (Phase 5c) encrypt, validate, store, redact, inject project secrets
+   │  ├─ inputs/                # (Phase 5c) askUser requests, answers, continuation events
    │  ├─ skills/                # (Phase 5e) scout, vet, install
    │  ├─ memory/                # (Phase 5e) MemoryProvider + Supermemory
-   │  └─ sandbox/               # E2B helpers, path and command guards, `AGENTS.md` rules (`agent-rules.ts`)
+   │  └─ sandbox/               # E2B helpers, path and command guards, `AGENTS.md` rules (`agent-rules.ts`), recovery (`recover.ts`)
    ├─ inngest/
    │  ├─ client.ts
    │  ├─ events.ts              # typed `agent/run` event
@@ -138,8 +141,8 @@ Version notes:
    │     ├─ agents/             # (Phase 5b) researcher, designer, builder, reviewer specs
    │     ├─ skills.ts           # (Phase 5b) skill index, frontmatter parsing
    │     ├─ search.ts           # (Phase 5b) web search records and sources
-   │     ├─ guardrails/         # (Phase 5c) input, output and tool-call guards
-   │     └─ input.ts            # (Phase 5c) `askUser`, waiting for the answer
+   │     ├─ guardrails/         # (Phase 5c) secret patterns, classifier, stream middleware, package policy, tripwire, file scan
+   │     └─ runtime.ts          # (Phase 5c) tool steps with secrets and recovery, opening and resolving `askUser` requests, checkpoints
    ├─ trpc/                     # client.tsx, server.tsx, query-client.ts
    ├─ lib/search-params/        # nuqs parsers (shared server/client)
    └─ styles/globals.css        # design tokens
@@ -369,11 +372,11 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 - Function `run-agent` (event `agent/run`):
   1. `step.run("load-project")`: ownership check, history up to the triggering message, latest Version file list, credit balance. Balance ≤ 0 → assistant error message ("out of credits"), no model call, no charge
   2. `step.run("sandbox")`: connect or create (restoring the latest Version), make sure `next.config.ts` still has `allowedDevOrigins` (`ensureDevOrigins`, also re-run in `persist` before the snapshot), save `sandboxId` + `previewUrl`
-  3. Loop, max **30 turns**: `step.run("model-N")` streams one model turn (`streamText` through AI Gateway with the user's chosen model, §5.4); each tool call then runs in its own `step.run("tool-N-M")`. Tools:
+  3. Loop, **no turn limit** for the Builder (owner's decision, 13 November 2026; it was 30, then 60): `step.run("model-N")` streams one model turn (`streamText` through AI Gateway with the user's chosen model, §5.4); each tool call then runs in its own `step.run("tool-N-M")`. Tools:
      - `terminal`: `sandbox.commands.run(cmd)` in `/home/user/app`, stdout/stderr streamed, 3-minute timeout, output truncated for the model
      - `createOrUpdateFiles`: `sandbox.files.write(...)`, records created/edited paths and line counts
      - `readFiles`: `sandbox.files.read(path)`
-  4. Router: stop when a turn has no tool calls (the reply holds `<task_summary>`). Hitting the turn cap without a summary is a failure. If the running cost reaches the balance, stop early and keep what was built
+  4. Router: stop when a turn has no tool calls (the reply holds `<task_summary>`). The Builder works until it finishes, asks the user (Phase 5c) or the running cost reaches the balance (then it stops early and keeps what was built). A long job is **handed over** to a fresh run before it reaches Inngest's per-run limits (about 1,000 steps and 32 MiB of state): at 850 steps or 24 MiB the Builder writes a handoff note (no tools), the run saves a checkpoint, debits the work so far (`meta.handoff`) and sends `agent/run` with `resume.handoff` (note, files changed, skill progress, installs); the next run restores the checkpoint, skips the router, the guard and the read-only agents, and continues. No chat message is written between segments
   5. `step.run("title")`: a short version title from the summary prompt
   6. `step.run("persist")`: warm the preview (`curl localhost:3000`), snapshot files, then one transaction: Version (next number, title, files, `creditCost`), assistant Message with `parts`, `previewUrl`
   7. `step.run("meter")`: one `CreditLedger` debit (`GENERATION` for the first version, `EDIT` after), then `credits` / `preview` / `status: done` events
@@ -381,7 +384,7 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
   - Model errors are classified: **429** waits for the gateway's `Retry after` (`RetryAfterError`, capped at 5 minutes); **401/403/404** stop the run with "the selected model isn't available, pick another" (e.g. AI Gateway free-tier restrictions); other **400s** stop with the generic failure; anything else is retried. A failed title call falls back to a default title instead of failing a finished build
   - All writes use ids derived from the Inngest run id (`run_<runId>_reply|version|debit`), so retried steps never duplicate a message, version or debit
 - Prompts in `inngest/agent/prompts/`: system prompt (Next.js 16 App Router, Base UI shadcn with `render` not `asChild`, Tailwind, the template's placeholder page, missing metadata and `ThemeProvider` (theme tokens, or `forcedTheme` for a fixed palette), the dev server is already running, no secrets, files only via tools) and a title prompt
-- Guardrails: 30 turns, 32 k output tokens per turn (a turn that hits it is discarded and the agent is told to take smaller steps), history compaction (only the last 3 turns keep full tool output and file contents), `readFiles` capped at 20 k characters per file and 60 k per call, 80 changed files per run (20 per call, 60 k characters per file), path guard (inside `/home/user/app`, no `node_modules` / `.next` / `.git` / `.env*`), command denylist (`sudo`, starting/stopping/building the dev server, `kill`, recursive deletes of `/`, `~`, `.` or `*`, `curl | sh`, `.env`), concurrency 2 runs per user and 1 per project
+- Guardrails: no Builder turn limit (the credit balance is the budget, §5.2.4), 32 k output tokens per turn (a turn that hits it is discarded and the agent is told to take smaller steps), history compaction (only the last 3 turns keep full tool output and file contents), `readFiles` capped at 20 k characters per file and 60 k per call, 80 changed files per run (20 per call, 60 k characters per file), path guard (inside `/home/user/app`, no `node_modules` / `.next` / `.git` / `.env*`), command denylist (`sudo`, starting/stopping/building the dev server, `kill`, recursive deletes of `/`, `~`, `.` or `*`, `curl | sh`, `.env`), concurrency 2 runs per user and 1 per project
 - **Metering** (decided at Phase 5 start): credits = `ceil(model cost in USD × CREDITS_PER_USD × CREDIT_MARKUP)`, with the cost reported by AI Gateway (§5.4). Failed runs are free
 
 ### 5.3 Realtime events (what the UI shows live)
@@ -437,7 +440,7 @@ One channel per project, `project:<projectId>`, typed with zod in `src/inngest/c
 **Status: built (12 November 2026).** The sandbox `AGENTS.md` rules and the system prompt line shipped first as a Phase 5 follow-up; the rest of this section is built as described, with these settled choices:
 
 - **One model per request.** The router and the Researcher use the **user's picked model** (owner's choice when building), so there is no `AI_ROUTER_MODEL` variable. The router stays cheap because the obvious cases are decided in code and the model call is one short structured answer.
-- **Builder turn cap is 60** (the Phase 5 code had already raised it from 30); the fix pass after a review has its own cap of 15.
+- **Builder turn cap was 60** (the Phase 5 code had already raised it from 30) and the fix pass had 15. _Removed on 13 November 2026 at the owner's request: runs hit 60 turns and failed without saving anything. The Builder (main pass and fix passes) now has no turn limit and hands long jobs to a fresh run (§5.2.4)._
 - **No fetch tool yet.** The Researcher reads a named site through `parallelSearch` with the domain in the objective and queries; `browserbaseFetch` / `deepseekFetch` stay to evaluate.
 - **The search cap is enforced between turns.** The search tool runs on the gateway inside one model call, so one turn can hold several searches; after 6 the tool is removed (`activeTools`) and the Researcher is told to write its brief. Its prompt asks for at most two searches per reply. The last turn can still overshoot (7 searches in the live test); the exact gateway cost bills what happened.
 
@@ -502,7 +505,7 @@ Today `run-agent` runs one coding loop. New: an **orchestrator** step chooses th
 - **Order and parallelism:** sequential by default, because all agents share one sandbox. Only **read-only** agents run in parallel (Researcher and Designer, as parallel step branches). Never two writers at once.
 - **Handoff:** compact briefs (about 1.5 k tokens at most), persisted as `agent` parts, not transcripts. This is the AI SDK subagent pattern: the parent sees a summary, not the subagent's whole context.
 - **Models:** every agent and the router use the user's picked model (owner's choice; vision matters for the Designer and Builder). The Researcher and Reviewer get the history without images.
-- **Metering:** one debit per message; ledger `meta.agents = [{ name, model, usd, searches }]` gives the breakdown (the router call is listed as `router`, the title call under `builder`). The Phase 5 balance stop applies across agents: read-only agents running in parallel each check against the balance left when they started, and the totals are merged after both finish (so a replay always takes the same path). Turn caps: Researcher 6, Designer 4, Builder 60, Reviewer 8 (6 in the first live test left no turn for the report after loading three skills, checking types and fetching the page), fix pass 15; each role runs at most once per message, plus one Builder fix pass. A read-only agent's last turn runs with `toolChoice: "none"` and a note to answer now; read-only agents must answer inside their tag (`<brief>`, `<findings>`), otherwise they get a "continue" note or, on the last turn, count as not finished (only the Builder falls back to its plain reply). Their prompts ask for several tool calls per reply. The main Builder pass that finishes without writing any file is sent back once to make the change (a live run claimed a finished page with zero writes).
+- **Metering:** one debit per message; ledger `meta.agents = [{ name, model, usd, searches }]` gives the breakdown (the router call is listed as `router`, the title call under `builder`). The Phase 5 balance stop applies across agents: read-only agents running in parallel each check against the balance left when they started, and the totals are merged after both finish (so a replay always takes the same path). Turn caps: Researcher 6, Designer 4, Reviewer 8 (6 in the first live test left no turn for the report after loading three skills, checking types and fetching the page); the Builder and its fix passes have none (§5.2.4), and its prompt asks for several tool calls per reply and to keep going until the request is done; each role runs at most once per message, plus one Builder fix pass. A read-only agent's last turn runs with `toolChoice: "none"` and a note to answer now; read-only agents must answer inside their tag (`<brief>`, `<findings>`), otherwise they get a "continue" note or, on the last turn, count as not finished (only the Builder falls back to its plain reply). Their prompts ask for several tool calls per reply. The main Builder pass that finishes without writing any file is sent back once to make the change (a live run claimed a finished page with zero writes).
 - **Reviewer:** its terminal only runs `npx tsc --noEmit`, `npx eslint`, `npm run lint`, `curl localhost:3000`, `ls`, `cat`, `grep`, `head`, `tail`, `wc` and `find` (no redirection, chaining or `-exec`/`-delete`). It returns `<findings>`; anything other than "none" gets the Builder one fix pass that continues the Builder's own conversation. A review that hits its turn cap without findings counts as no findings, so a good build is not thrown away.
 - **Failure isolation:** a failed Researcher or Designer degrades (the Builder proceeds without the brief and says so). A failed Builder or Reviewer follows the Phase 5 rules (error reply, no charge).
 - **Loop choice:** keep our durable per-step loop on Inngest. The AI SDK `ToolLoopAgent` as a subagent runs a whole loop inside one tool call (no per-step durability or retries), so it is used only where a single structured answer is needed (the router).
@@ -543,6 +546,18 @@ The chat shows one `Task` group per agent ("Researcher · 3 sources", "Designer 
 ## Phase 5c — Guardrails, human in the loop and project secrets (between Phase 5b and Phase 5d)
 
 **Goal:** make agents safe to give more power. Every input and output passes checks, the agent can stop and ask the user (a choice, a confirmation or a secret), and secrets the user provides never enter the model's context. Added at the owner's request after Phase 5b. It is the foundation for Phase 5d (full-stack projects) and Phase 5e (skill discovery and memory): once agents can search the web, install packages and skills, hold API keys and run against a user's database, one hostile instruction costs far more than a bad web page.
+
+**Status: built (13 November 2026).** Backend only, as planned: the answer cards and the secrets settings UI are Phase 6, and `/p/[slug]` shows a "Waiting for your answer" state with the open question. Settled while building:
+
+- **Secret detection:** `@secretlint/core` 13.1.0 with `@secretlint/secretlint-rule-preset-recommend` runs in-process (1.4 MB, strict provider rules), plus own patterns for what the preset misses (Google `AIza…` keys, AWS access key ids, generic `sk-…` keys, `postgres://user:password@` URLs, private-key blocks). Placeholder values (`localhost`, `user:password@`, `${…}`) are ignored so example code isn't flagged.
+- **Classifier:** `openai/gpt-oss-safeguard-20b` (`AI_GUARD_MODEL`), answering as plain JSON that is parsed leniently, so it doesn't depend on structured-output support. It runs on the user's message (in parallel with the router) and on the final reply, billed as agent `guard`. Verified live on 13 November 2026: allow for the coffee-shop page, block (phishing) for the fake bank login, block (prompt-injection) for "ignore previous instructions"; 1.1–2.9 s, about $0.00005 per check. `review` continues with **restricted tools**: no Researcher, no `askUser` secrets, every install needs approval.
+- **Output text:** `wrapLanguageModel` middleware redacts stored secret values with a **sliding window** (it holds back the longest encoding of any secret, so a value split across chunks is caught, while text still streams) instead of buffering each whole block; pattern redaction runs on the final reply before it is saved.
+- **Executor:** writes are rejected for a stored value (plain, base64, URL-encoded), a secret pattern or the code tripwire; command output, file reads, skill bodies and live tool chunks are redacted and wrapped in `<untrusted>`; `printenv`, bare `env` / `set`, `export -p`, `declare -x`, `/proc/*/environ` and `node -e … process.env` dumps are blocked; terminal commands get the secrets as `envs`.
+- **Packages:** a vetted allowlist installs with `--ignore-scripts` (except `sharp`, `esbuild`, `prisma`, `@prisma/client`, `@prisma/engines`); git, tarball, URL and `file:` specs are refused; anything else (including unknown dependencies in `package.json` before a bare `npm install`, and unknown `npx` packages) runs `npq install … --json` in the sandbox (pinned 3.27.4 in the template, `npx --yes npq@3.27.4` fallback) and becomes a `confirm` (medium) with npq's findings. Approved packages and actions are remembered per project. 20 installs per run.
+- **Human in the loop:** `askUser` is a flat tool schema (portable across providers) validated per kind by the executor; Builder only in 5c. The wait is `step.waitForEvent(…, { if: 'async.data.requestId == "<id>"', timeout: "30m" })`: the plan's `match` compares a field of the triggering `agent/run` event, which has no request id. A timeout marks the request `PAUSED` only if it is still `PENDING`, so an answer that lands at the same moment still counts. The answer route moves `PENDING`→`ANSWERED` (sends `agent/input.provided`) or `PAUSED`→`ANSWERED` (sends a continuation `agent/run` with `resume`); a failed send reopens the question.
+- **Checkpoints:** a `Version` with `status: DRAFT`, `number: null` and id `checkpoint_<chainId>` (one per run chain, deleted when the chain saves its real version). Every "latest version" query filters `status: READY`.
+- **Recovery:** a tool step that finds the sandbox gone recreates it from the checkpoint, replays the run's file writes since then, re-injects secrets and egress rules, updates the project and retries once; the model is told that command changes since the checkpoint may be missing.
+- **Not yet verified live:** the full `agent:smoke` scenarios (each `askUser` kind, the 30-minute pause and continuation, a mid-run sandbox kill). They need the Inngest dev server, which wasn't started in this session; the script now has `--answer`, `--answer-paused`, `--secret NAME=VALUE` and `--kill-sandbox-after <s>` for them. E2B `updateNetwork` (egress allowlist) and the dev-server restart after a secret is added are covered by unit tests only.
 
 ### 5c.1 What can go wrong
 
@@ -593,7 +608,7 @@ The agent pauses and asks through one tool, `askUser`, which has no `execute` (l
 | `secret`  | A secret name, label, where to get it, why it is needed             | `GOOGLE_GENERATIVE_AI_API_KEY`, a Neon connection string                           |
 | `confirm` | What will happen, a risk level (`low`, `medium`, `high`), a summary | Applying a migration, installing an unvetted package or skill, deleting many files |
 
-- **Mechanics:** the executor writes an `InputRequest` row (id, project, run, kind, payload, status), publishes it on the realtime `input` topic, and the run calls `step.waitForEvent("input-<id>", { event: inputProvided, timeout: "30 mins", match: "data.requestId" })` (Inngest v4: returns the event, or `null` on timeout; the wait uses no compute). The answer comes back through an authenticated route (`POST /api/inputs/[id]`: session and ownership checked, zod-validated per kind, `Cache-Control: no-store`, request bodies never logged) that sends `agent/input.provided { requestId, ok, answer? }`.
+- **Mechanics:** the executor writes an `InputRequest` row (id, project, run, kind, payload, status), publishes it on the realtime `input` topic, and the run calls `step.waitForEvent("<agent>-wait-<turn>-<i>", { event: agentInputProvided, timeout: "30m", if: 'async.data.requestId == "<id>"' })` (Inngest v4: returns the event, or `null` on timeout; the wait uses no compute). The answer comes back through an authenticated route (`POST /api/inputs/[id]`: session and ownership checked, zod-validated per kind, `Cache-Control: no-store`, request bodies never logged) that sends `agent/input.provided { requestId, ok, answer? }`.
 - **What the model sees:** a `choice` or `text` answer comes back as the tool result ("User chose: Gemini API directly"). A `secret` comes back as `{ name: "GOOGLE_GENERATIVE_AI_API_KEY", status: "set" }` and **nothing else**: the value goes to the secret store (§5c.5) and is not in the event, the step state, the message history, the ledger or the logs. A unit test asserts no secret value appears in any of those.
 - **Timeouts:** after 30 minutes the run ends as `paused` (not failed, not charged for the waiting; work done is charged as usual), the request stays open, and answering it later starts a continuation run that restores from a checkpoint (§5c.6).
 - **Limits:** at most 5 questions per run, never the same question twice (answers are kept per project and, in Phase 5e, in memory), and a `secret` is asked once per name per project.
@@ -630,7 +645,7 @@ A live run on 12 November failed with `SandboxNotFoundError` mid-run: the 30-min
 
 ### 5c.7 Realtime events and message parts (additions to §5.3 and §5b.6)
 
-Topics `input` (`{ requestId, kind, status }`) and `guard` (`{ stage, verdict }`). New persisted parts `input-request` and `input-answer` (the answer text for non-secrets, `set` for secrets), added to `src/lib/agent/parts.ts`.
+Topics `input` (`{ requestId, kind, status: open | answered | paused | cancelled }`) and `guard` (`{ stage, verdict }`), and a `paused` state in `status`. New persisted parts `input-request` (the question payload, never a value) and `input-answer` (the answer text for non-secrets, `set` for secrets, `dismissed`), added to `src/lib/agent/parts.ts`. `project.bySlug` reports `agent.status: "paused"` with the open question.
 
 ### 5c.8 Package decisions (recorded in `docs/decisions.md` when built)
 
@@ -831,15 +846,15 @@ A **Scout** role runs when the task touches a domain with no installed skill, or
 
 Each suite holds 4 to 8 goldens and at most 5 metrics (DeepEval's own advice: 2 or 3 generic, 1 or 2 custom).
 
-| Suite                  | Protects     | Cases                                                                                                        | Checks                                                                                                                                                                         |
-| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Builder core           | Phase 5, 5b  | New landing page, new portfolio, a small edit ("make the heading bigger"), a request to run a banned command | `TaskCompletionMetric`, `StepEfficiencyMetric`, `ToolCorrectnessMetric` (reads `AGENTS.md`, loads a skill, then writes); code: build passes, preview answers, at most 30 turns |
-| Design rules           | Phase 5, 5b  | The same prompts, judged on the written files                                                                | Code checks for `render` not `asChild`, metadata present, no theme-token text on a hard-coded light gradient; one `GEval` for the rest                                         |
-| Router and roles       | Phase 5b     | The four routing cases, a research prompt                                                                    | Code: the right specialists are chosen; `GEval` that a Researcher brief cites its sources                                                                                      |
-| Guardrails             | Phase 5c     | Prompt injection in a search result, a phishing clone request, a pasted secret                               | Code: verdict is `block` and the secret value is in no span, message or file; `ToolCorrectnessMetric` that no denied tool is called                                            |
-| Human in the loop      | Phase 5c, 5d | A database request with no URL, an AI feature with no provider                                               | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on `askUser` and the choice card                                                                                       |
-| Full-stack             | Phase 5d     | A site with a database, a site with an AI feature                                                            | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on the Prisma and process commands; `TaskCompletionMetric`                                                             |
-| Skill scout and memory | Phase 5e     | A tier-3 skill source, a skill that tells the agent to send the environment, a recalled decision             | Code: refused or rejected, recalled without asking again                                                                                                                       |
+| Suite                  | Protects     | Cases                                                                                                        | Checks                                                                                                                                                                                                    |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Builder core           | Phase 5, 5b  | New landing page, new portfolio, a small edit ("make the heading bigger"), a request to run a banned command | `TaskCompletionMetric`, `StepEfficiencyMetric`, `ToolCorrectnessMetric` (reads `AGENTS.md`, loads a skill, then writes); code: build passes, preview answers, turns used (no cap; tracked for efficiency) |
+| Design rules           | Phase 5, 5b  | The same prompts, judged on the written files                                                                | Code checks for `render` not `asChild`, metadata present, no theme-token text on a hard-coded light gradient; one `GEval` for the rest                                                                    |
+| Router and roles       | Phase 5b     | The four routing cases, a research prompt                                                                    | Code: the right specialists are chosen; `GEval` that a Researcher brief cites its sources                                                                                                                 |
+| Guardrails             | Phase 5c     | Prompt injection in a search result, a phishing clone request, a pasted secret                               | Code: verdict is `block` and the secret value is in no span, message or file; `ToolCorrectnessMetric` that no denied tool is called                                                                       |
+| Human in the loop      | Phase 5c, 5d | A database request with no URL, an AI feature with no provider                                               | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on `askUser` and the choice card                                                                                                                  |
+| Full-stack             | Phase 5d     | A site with a database, a site with an AI feature                                                            | `ToolCorrectnessMetric` and `ArgumentCorrectnessMetric` on the Prisma and process commands; `TaskCompletionMetric`                                                                                        |
+| Skill scout and memory | Phase 5e     | A tier-3 skill source, a skill that tells the agent to send the environment, a recalled decision             | Code: refused or rejected, recalled without asking again                                                                                                                                                  |
 
 Router, guardrail and scout cases are single calls with no sandbox, so they are cheap and run on every `bun run eval`. Sandbox suites run under `bun run eval:live`.
 
@@ -1003,6 +1018,10 @@ WELCOME_CREDITS=0       # granted once on first sign-in; 0 disables
 # AI (Vercel AI Gateway)
 AI_GATEWAY_API_KEY=
 AI_DEFAULT_MODEL=anthropic/claude-sonnet-5.5   # must be in src/lib/ai/models.ts
+AI_GUARD_MODEL=openai/gpt-oss-safeguard-20b    # policy classifier for input and output guardrails (Phase 5c)
+
+# Project secrets (Phase 5c)
+SECRETS_ENCRYPTION_KEY=  # 32 random bytes, base64 (openssl rand -base64 32): AES-256-GCM key, key version 1
 
 # Credits (Phase 5 metering)
 CREDITS_PER_USD=100
@@ -1031,10 +1050,6 @@ INNGEST_SIGNING_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
-# Phase 5c
-SECRETS_ENCRYPTION_KEY=  # 32 random bytes, base64: AES-256-GCM key for project secrets (versioned for rotation)
-AI_GUARD_MODEL=          # policy classifier, default openai/gpt-oss-safeguard-20b
-
 # Phase 5e
 FIRECRAWL_API_KEY=       # skill discovery and URL reading, server-side only
 FIRECRAWL_USD_PER_CREDIT=  # for metering, from the owner's plan
@@ -1057,8 +1072,8 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 6. **Private repos** on export: allowed from day one, or public only at first
 7. **Phase 5b knobs:** _router model resolved when built_: the user's picked model, no `AI_ROUTER_MODEL`. Still open: whether the Reviewer's fix pass should stay automatic or ask the user (automatic for now); the Reviewer's "5 or more files" threshold; skill update policy (pinned per template build by the committed lockfile today, or refresh on a schedule); whether users can add their own skills later; whether the Designer should ever run for tiny edits ("make it warmer"; today short edits skip it)
 8. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
-9. **Guardrails (Phase 5c):** the classifier's thresholds and whether a `block` is ever refunded or appealed; fail-closed scope when the classifier is down; whether to store hashes only or short redacted excerpts in `GuardEvent`; which packages are on the install allowlist
-10. **Secrets (Phase 5c):** how to make previews private for projects that hold a database URL (the Next HMR websocket cannot go through a route handler); whether to adopt E2B's header injection for HTTP API keys; a per-project secret or an account-level vault that projects opt into; rotation policy for `SECRETS_ENCRYPTION_KEY`
+9. **Guardrails (Phase 5c):** _partly resolved when built_: `GuardEvent` stores hashes only; the classifier fails open (deterministic checks only, `guard.input: "skipped"` in the ledger meta) except for projects that hold secrets, which fail closed; `review` continues with restricted tools; the initial install allowlist is in `src/inngest/agent/guardrails/packages.ts`. Still open: whether a `block` is ever appealed (blocks are never charged), which packages to add to the allowlist over time, and whether `review` should ask the user instead
+10. **Secrets (Phase 5c):** _encryption resolved when built_: Node `crypto` AES-256-GCM with project id and name as additional data, key version 1 from `SECRETS_ENCRYPTION_KEY`. Still open: how to make previews private for projects that hold a database URL (the Next HMR websocket cannot go through a route handler); whether to adopt E2B's header injection for HTTP API keys; a per-project secret or an account-level vault that projects opt into; rotation policy for `SECRETS_ENCRYPTION_KEY`
 11. **Full-stack (Phase 5d):** `@prisma/adapter-neon` or `@prisma/adapter-pg` per deployment target; when to move generated apps to Prisma 8 (still a release candidate); AgentKit or plain `inngest` for users who ask for agents; whether to pre-install `inngest-cli` and the Prisma CLI in the template; the egress allowlist per integration
 12. **Skills (Phase 5e):** the trusted-owner allowlist, whether T1 skills are pre-approved by default, the Firecrawl credit budget per run and per user, and whether the Researcher should move from gateway search to Firecrawl
 13. **Memory (Phase 5e):** Supermemory or our own pgvector table on Neon in the long run; the retention and backup-purge answers from Supermemory before launch; how much of "What Vibe remembers" ships in Phase 6
@@ -1076,7 +1091,7 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
 - [x] Phase 5b: five skills + `AGENTS.md` rules in every site, `loadSkill` enforced before writes, web search (Researcher), router and Researcher / Designer / Builder / Reviewer agents, per-agent metering
-- [ ] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery
+- [x] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery (backend; cards in Phase 6; full live `agent:smoke` scenarios still to run with the Inngest dev server)
 - [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role)
 - [ ] Phase 5e: skill discovery with Firecrawl, approved and pinned installs, memory with Supermemory
 - [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry) — package decisions recorded in `docs/decisions.md`, harness and `evals/` not yet built

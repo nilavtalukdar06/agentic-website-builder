@@ -4,7 +4,10 @@ import {
   APP_DIR,
   checkCommand,
   checkReviewerCommand,
+  countFilesCommand,
   countLines,
+  destructiveAction,
+  removalTargets,
   GuardError,
   resolveAppPath,
   truncateOutput,
@@ -160,5 +163,62 @@ describe("checkReviewerCommand", () => {
     "npx prettier --write .",
   ])("blocks %j", (command) => {
     expect(checkReviewerCommand(command)).toMatch(/^Command blocked/);
+  });
+});
+
+describe("environment and destructive commands", () => {
+  test.each([
+    "printenv",
+    "env",
+    "env | grep KEY",
+    "ls && set",
+    "export -p",
+    "declare -x",
+    "cat /proc/self/environ",
+    'node -e "console.log(process.env)"',
+    "node -p process.env",
+  ])("blocks env dump %j", (command) => {
+    expect(checkCommand(command)).toMatch(/environment variables/);
+  });
+
+  test.each([
+    "env NODE_ENV=production node script.js",
+    'grep -rn "process.env" app',
+    'node -e "console.log(process.env.PORT)"',
+  ])("allows %j", (command) => {
+    expect(checkCommand(command)).toBeNull();
+  });
+
+  test.each([
+    ["npx prisma migrate reset --force", /Reset the database/],
+    ["npx prisma db push --force-reset", /Force-reset/],
+    ["npx prisma db push --accept-data-loss", /drops columns/],
+    ['psql "$DATABASE_URL" -c "DROP TABLE users"', /drops or empties/],
+    ['psql -c "TRUNCATE orders"', /drops or empties/],
+    ['psql -c "DELETE FROM users;"', /without a WHERE/],
+  ])("needs approval for %j", (command, summary) => {
+    expect(destructiveAction(command)).toMatch(summary);
+  });
+
+  test.each([
+    "npx prisma migrate dev --name init",
+    'psql -c "DELETE FROM users WHERE id = 1"',
+    "npm run lint",
+  ])("does not flag %j", (command) => {
+    expect(destructiveAction(command)).toBeNull();
+  });
+
+  test("finds rm targets and builds a quoted count", () => {
+    expect(removalTargets("rm -rf components/ui lib")).toEqual([
+      "components/ui",
+      "lib",
+    ]);
+    expect(removalTargets("npm run lint && rm app/old.tsx")).toEqual([
+      "app/old.tsx",
+    ]);
+    expect(removalTargets("ls")).toBeNull();
+    expect(countFilesCommand(["a b", "it's"])).toBe(
+      "find 'a b' 'it'\\''s' -type f 2>/dev/null | wc -l",
+    );
   });
 });

@@ -70,6 +70,10 @@ export function connectSandbox(sandboxId: string) {
   });
 }
 
+export function extendSandbox(sandboxId: string, timeoutMs: number) {
+  return Sandbox.setTimeout(sandboxId, timeoutMs, connectionOpts);
+}
+
 export async function createSandbox(restore?: SnapshotFiles) {
   const sandbox = await Sandbox.create(env.E2B_TEMPLATE_ID, {
     ...connectionOpts,

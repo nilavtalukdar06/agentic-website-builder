@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SECRET_NAME_PATTERN } from "@/lib/secret-name";
 
 export const fileVerbs = ["created", "edited"] as const;
 
@@ -37,6 +38,47 @@ export const taskItemSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+export const inputKinds = ["choice", "text", "secret", "confirm"] as const;
+export type InputKindName = (typeof inputKinds)[number];
+export const riskLevels = ["low", "medium", "high"] as const;
+
+const question = z.string().trim().min(1).max(500);
+
+export const inputPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("choice"),
+    question,
+    options: z.array(z.string().trim().min(1).max(200)).min(2).max(6),
+    multiple: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("text"),
+    question,
+    hint: z.string().trim().max(300).optional(),
+  }),
+  z.object({
+    kind: z.literal("secret"),
+    name: z.string().regex(SECRET_NAME_PATTERN),
+    label: z.string().trim().min(1).max(120),
+    url: z.url().optional(),
+    reason: z.string().trim().min(1).max(500),
+  }),
+  z.object({
+    kind: z.literal("confirm"),
+    action: z.string().trim().min(1).max(200),
+    risk: z.enum(riskLevels),
+    summary: z.string().trim().min(1).max(2000),
+  }),
+]);
+
+export type InputPayload = z.infer<typeof inputPayloadSchema>;
+
+export function inputQuestion(payload: InputPayload) {
+  if (payload.kind === "secret") return `${payload.label} (${payload.name})`;
+  if (payload.kind === "confirm") return payload.action;
+  return payload.question;
+}
+
 export const agentPartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("reasoning"),
@@ -67,6 +109,18 @@ export const agentPartSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("sources"), sources: z.array(sourceSchema) }),
   z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("input-request"),
+    requestId: z.string(),
+    agent: agentNameSchema.optional(),
+    payload: inputPayloadSchema,
+  }),
+  z.object({
+    type: z.literal("input-answer"),
+    requestId: z.string(),
+    kind: z.enum(inputKinds),
+    answer: z.string(),
+  }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
 

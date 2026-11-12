@@ -20,6 +20,31 @@ enum LedgerReason {
   ADJUSTMENT
 }
 
+enum VersionStatus {
+  READY
+  DRAFT
+}
+
+enum InputKind {
+  CHOICE
+  TEXT
+  SECRET
+  CONFIRM
+}
+
+enum InputStatus {
+  PENDING
+  PAUSED
+  ANSWERED
+  CANCELLED
+}
+
+enum SecretAction {
+  SET
+  REPLACED
+  DELETED
+}
+
 enum PaymentStatus {
   PENDING
   SUCCEEDED
@@ -104,6 +129,9 @@ model Project {
   updatedAt   DateTime  @updatedAt
   messages    Message[]
   versions    Version[]
+  inputs      InputRequest[]
+  secrets     ProjectSecret[]
+  secretLog   SecretEvent[]
 
   @@index([userId, updatedAt])
 }
@@ -139,16 +167,83 @@ model Attachment {
 }
 
 model Version {
-  id         String   @id @default(cuid())
+  id         String        @id @default(cuid())
   projectId  String
-  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  number     Int
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number     Int?
+  status     VersionStatus @default(READY)
+  runId      String?
   title      String
   files      Json
   creditCost Int
-  createdAt  DateTime @default(now())
+  createdAt  DateTime      @default(now())
 
   @@unique([projectId, number])
+  @@index([projectId, status])
+}
+
+model InputRequest {
+  id           String      @id
+  projectId    String
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId       String
+  runId        String
+  chainId      String
+  messageId    String
+  agent        String
+  kind         InputKind
+  payload      Json
+  status       InputStatus @default(PENDING)
+  answer       Json?
+  questionHash String
+  createdAt    DateTime    @default(now())
+  answeredAt   DateTime?
+
+  @@index([projectId, status])
+  @@index([projectId, questionHash])
+}
+
+model ProjectSecret {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  ciphertext String
+  iv         String
+  tag        String
+  keyVersion Int
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lastUsedAt DateTime?
+
+  @@unique([projectId, name])
+}
+
+model SecretEvent {
+  id        String       @id @default(cuid())
+  projectId String
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  name      String
+  action    SecretAction
+  createdAt DateTime     @default(now())
+
+  @@index([projectId, createdAt])
+}
+
+model GuardEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  projectId  String?
+  runId      String?
+  stage      String
+  verdict    String
+  categories String[]
+  textHash   String
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([projectId, createdAt])
 }
 
 model CreditLedger {

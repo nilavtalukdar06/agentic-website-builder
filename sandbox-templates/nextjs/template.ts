@@ -7,6 +7,7 @@ const HOME_DIR = "/home/user";
 const APP_NAME = "app";
 const APP_DIR = `${HOME_DIR}/${APP_NAME}`;
 const SKILLS_CLI = "skills@1.8.1";
+export const NPQ_VERSION = "3.27.4";
 
 export const TEMPLATE_SKILLS = [
   {
@@ -34,6 +35,10 @@ export const template = Template()
   .fromNodeImage("24")
   .runCmd(
     `(id -u user >/dev/null 2>&1 || useradd -m -s /bin/bash user) && mkdir -p ${HOME_DIR} && chown -R user:user ${HOME_DIR}`,
+    { user: "root" },
+  )
+  .runCmd(
+    `npm install -g --ignore-scripts npq@${NPQ_VERSION} && npq --version | grep -q ${NPQ_VERSION}`,
     { user: "root" },
   )
   .setUser("user")

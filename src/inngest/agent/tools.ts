@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { inputKinds, riskLevels } from "@/lib/agent/parts";
 
 export const MAX_FILES_PER_CALL = 20;
 export const MAX_FILE_CHARS = 60_000;
@@ -29,6 +30,56 @@ export const readFilesInput = z.object({
 
 export const loadSkillInput = z.object({
   name: z.string().min(1).describe("The skill's name from the skill list."),
+});
+
+export const askUserInput = z.object({
+  kind: z
+    .enum(inputKinds)
+    .describe(
+      "choice: pick from options; text: a short free answer; secret: an API key or connection string, stored encrypted and never shown to you; confirm: approve or decline an action.",
+    ),
+  question: z
+    .string()
+    .optional()
+    .describe("For choice and text: the question, in one sentence."),
+  options: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "For choice: 2 to 6 short options. The user can also type their own.",
+    ),
+  multiple: z
+    .boolean()
+    .optional()
+    .describe("For choice: allow several options."),
+  hint: z.string().optional().describe("For text: an example answer."),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "For secret: the environment variable name, e.g. OPENAI_API_KEY.",
+    ),
+  label: z
+    .string()
+    .optional()
+    .describe("For secret: a short label, e.g. OpenAI API key."),
+  url: z
+    .string()
+    .optional()
+    .describe("For secret: where the user creates the key."),
+  reason: z.string().optional().describe("For secret: why the site needs it."),
+  action: z
+    .string()
+    .optional()
+    .describe("For confirm: what you are about to do."),
+  risk: z
+    .enum(riskLevels)
+    .optional()
+    .describe("For confirm: low, medium or high."),
+  summary: z
+    .string()
+    .optional()
+    .describe("For confirm: the consequences, in plain words."),
 });
 
 const terminal = tool({
@@ -61,11 +112,18 @@ const loadSkill = tool({
   inputSchema: loadSkillInput,
 });
 
+const askUser = tool({
+  description:
+    "Ask the user and wait for the answer: a choice, a short text, a secret (API key or database URL, which you never see: you get its name and status) or a confirmation. Ask only when you can't decide yourself, never twice for the same thing, at most 5 times per request.",
+  inputSchema: askUserInput,
+});
+
 export const builderTools = {
   terminal,
   createOrUpdateFiles,
   readFiles,
   loadSkill,
+  askUser,
 };
 
 export const designerTools = { readFiles, loadSkill };
@@ -83,6 +141,7 @@ export const agentToolNames = [
   "createOrUpdateFiles",
   "readFiles",
   "loadSkill",
+  "askUser",
 ] as const;
 
 export type AgentToolName = (typeof agentToolNames)[number];

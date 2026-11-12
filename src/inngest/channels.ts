@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   agentNameSchema,
   fileVerbs,
+  inputKinds,
   sourceSchema,
   taskItemSchema,
 } from "@/lib/agent/parts";
@@ -12,8 +13,11 @@ export const agentStatuses = [
   "building",
   "compiling",
   "done",
+  "paused",
   "error",
 ] as const;
+
+export const inputStates = ["open", "answered", "paused", "cancelled"] as const;
 
 export const projectTopics = [
   "status",
@@ -26,6 +30,8 @@ export const projectTopics = [
   "preview",
   "agent",
   "search",
+  "input",
+  "guard",
 ] as const;
 
 export const projectChannel = realtime.channel({
@@ -86,6 +92,19 @@ export const projectChannel = realtime.channel({
         agent: agentNameSchema,
         query: z.string(),
         sources: z.array(sourceSchema),
+      }),
+    },
+    input: {
+      schema: z.object({
+        requestId: z.string(),
+        kind: z.enum(inputKinds),
+        status: z.enum(inputStates),
+      }),
+    },
+    guard: {
+      schema: z.object({
+        stage: z.enum(["input", "output", "tool", "save"]),
+        verdict: z.string(),
       }),
     },
   },

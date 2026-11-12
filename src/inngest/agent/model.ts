@@ -5,6 +5,7 @@ import {
   Output,
   streamText,
   type ToolSet,
+  wrapLanguageModel,
 } from "ai";
 import type { AgentName } from "@/lib/agent/parts";
 import type { AgentModel } from "@/lib/ai/models";
@@ -14,7 +15,9 @@ import {
   type TokenUsage,
   toTokenUsage,
 } from "@/server/billing/pricing";
+import { noRedaction, type Redactor } from "@/server/secrets/redact";
 import { attachmentUrl } from "@/server/storage/attachments";
+import { secretRedactionMiddleware } from "./guardrails/middleware";
 import type { Publish } from "../publisher";
 import { resolveAttachments } from "./conversation";
 import { ROUTER_PROMPT } from "./prompts/router";
@@ -85,7 +88,9 @@ export async function runModelTurn({
   tools,
   activeTools,
   toolChoice,
+  redactor = noRedaction,
 }: {
+  redactor?: Redactor;
   messages: ModelMessage[];
   turn: number;
   model: AgentModel;
@@ -99,7 +104,12 @@ export async function runModelTurn({
   const generationIds: string[] = [];
   const searches: SearchRecord[] = [];
   const result = streamText({
-    model: gateway(model.id),
+    model: redactor.active
+      ? wrapLanguageModel({
+          model: gateway(model.id),
+          middleware: secretRedactionMiddleware(redactor),
+        })
+      : gateway(model.id),
     instructions,
     messages: await resolveAttachments(messages, attachmentUrl),
     tools,

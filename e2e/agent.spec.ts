@@ -25,6 +25,20 @@ test.describe("realtime token endpoint", () => {
     });
     expect(response.status()).toBe(401);
   });
+
+  test("answering a question and setting a secret reject signed-out callers", async ({
+    request,
+  }) => {
+    const answer = await request.post("/api/inputs/anything", {
+      data: { text: "x" },
+    });
+    expect(answer.status()).toBe(401);
+    expect(answer.headers()["cache-control"]).toBe("no-store");
+    const secret = await request.put("/api/projects/anything/secrets", {
+      data: { name: "OPENAI_API_KEY", value: "sk-test" },
+    });
+    expect(secret.status()).toBe(401);
+  });
 });
 
 test.describe("with a session", () => {
@@ -196,5 +210,94 @@ test.describe("with a session", () => {
     await expect(page.getByText("The agent stopped")).toBeVisible();
     await expect(page.getByText("You're out of credits.")).toBeVisible();
     await expect(page.getByRole("link", { name: "Refresh" })).toHaveCount(0);
+  });
+
+  test("questions can only be answered by their owner, with a valid body", async ({
+    page,
+  }) => {
+    const missing = await page.request.post(`/api/inputs/missing-${suffix}`, {
+      data: { text: "x" },
+    });
+    expect(missing.status()).toBe(404);
+
+    const projectId = await session.addProject({
+      slug: `ask-${suffix}`,
+      name: "Ask site",
+    });
+    const id = await session.addInputRequest({
+      projectId,
+      kind: "CHOICE",
+      status: "ANSWERED",
+      payload: {
+        request: {
+          kind: "choice",
+          question: "Which provider?",
+          options: ["Gemini", "Gateway"],
+        },
+      },
+    });
+    const answered = await page.request.post(`/api/inputs/${id}`, {
+      data: { selected: ["Gemini"] },
+    });
+    expect(answered.status()).toBe(409);
+
+    const secrets = await page.request.put(
+      `/api/projects/missing-${suffix}/secrets`,
+      { data: { name: "OPENAI_API_KEY", value: "sk-test" } },
+    );
+    expect(secrets.status()).toBe(404);
+    const invalid = await page.request.put(
+      `/api/projects/${projectId}/secrets`,
+      {
+        data: { name: "PATH", value: "x" },
+      },
+    );
+    expect(invalid.status()).toBe(400);
+  });
+
+  test("a paused run shows the question it is waiting on", async ({ page }) => {
+    const projectId = await session.addProject({
+      slug: `paused-${suffix}`,
+      name: "Paused site",
+    });
+    await session.addMessage({
+      projectId,
+      role: "USER",
+      content: "Add an AI chat to the site",
+      createdAt: new Date(Date.now() - 60_000),
+    });
+    await session.addMessage({
+      projectId,
+      role: "ASSISTANT",
+      content:
+        "I need your answer to continue. The question is waiting for you in this project.",
+      parts: [],
+    });
+    const id = await session.addInputRequest({
+      projectId,
+      kind: "SECRET",
+      payload: {
+        request: {
+          kind: "secret",
+          name: "OPENAI_API_KEY",
+          label: "OpenAI API key",
+          reason: "For the chat feature",
+        },
+      },
+    });
+
+    await page.goto(`/p/paused-${suffix}`);
+    await expect(page.getByText("Waiting for your answer")).toBeVisible();
+    await expect(
+      page.getByText(
+        "The agent paused to ask: OpenAI API key (OPENAI_API_KEY)",
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Refresh" })).toBeVisible();
+
+    const invalid = await page.request.post(`/api/inputs/${id}`, {
+      data: { value: "" },
+    });
+    expect(invalid.status()).toBe(400);
   });
 });

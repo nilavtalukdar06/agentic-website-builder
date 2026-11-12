@@ -13,19 +13,25 @@ import {
 } from "@/server/billing/pricing";
 import { type BilledCall, resolveRunCost } from "@/server/billing/run-cost";
 import { db } from "@/server/db";
-import { APP_DIR } from "@/server/sandbox/guards";
 import {
-  connectSandbox,
+  createInputRequest,
+  describeAnswer,
+  loadAnsweredInputs,
+} from "@/server/inputs/requests";
+import { APP_DIR } from "@/server/sandbox/guards";
+import { connectOrRecover, recoverSandbox } from "@/server/sandbox/recover";
+import {
   ensureAgentInstructions,
   ensureDevOrigins,
   getOrCreateSandbox,
   PREVIEW_PORT,
   previewUrlFor,
-  type SnapshotFiles,
   snapshotSandbox,
 } from "@/server/sandbox/sandbox";
+import { prepareSandboxSecrets } from "@/server/secrets/inject";
+import { createRedactor } from "@/server/secrets/redact";
+import { loadSecretValues, projectHoldsSecrets } from "@/server/secrets/store";
 import { agentSpecs } from "../agent/agents";
-import { FIX_PASS_MAX_TURNS } from "../agent/agents/builder";
 import { hasFindings } from "../agent/agents/reviewer";
 import {
   type Brief,
@@ -34,19 +40,38 @@ import {
   cleanTitle,
   historyToMessages,
 } from "../agent/conversation";
+import { classifyText } from "../agent/guardrails/classifier";
+import { recordGuardEvent } from "../agent/guardrails/events";
+import { scanFiles, scanFixPrompt } from "../agent/guardrails/scan";
+import {
+  detectSecrets,
+  redactMatches,
+  redactPatterns,
+} from "../agent/guardrails/secret-patterns";
 import {
   type AgentRun,
   type Budget,
+  createRunContext,
   publishAgentState,
   runAgentLoop,
 } from "../agent/loop";
 import { classifyAgents, generateVersionTitle } from "../agent/model";
+import { takeCheckpoint } from "../agent/runtime";
 import { MODEL_UNAVAILABLE } from "../agent/model-errors";
 import {
   debitCredits,
+  loadRestoreFiles,
+  READY,
   recordAssistantError,
+  recordPausedReply,
   saveRunResult,
 } from "../agent/persist";
+import {
+  BLOCKED,
+  GUARD_UNAVAILABLE,
+  SECRET_IN_PROMPT,
+  WAITING,
+} from "../agent/replies";
 import { routeAgents, shouldReview } from "../agent/router";
 import { uniqueSources } from "../agent/search";
 import { listInstalledSkills } from "../agent/skills";
@@ -60,6 +85,8 @@ const STOPPED_FOR_CREDITS =
   "I stopped early because your credits ran out. Top up to continue from here.";
 const FAILED =
   "Something went wrong while building, so this run wasn't charged. Try sending your message again.";
+const REPLY_BLOCKED =
+  "I finished the work, but my reply didn't pass the safety check, so it isn't shown. The files are saved in this version.";
 
 const label = (name: AgentName) =>
   `${name.charAt(0).toUpperCase()}${name.slice(1)}`;
@@ -75,6 +102,8 @@ function spend(budget: Budget, run: AgentRun): Budget {
     searches: budget.searches + run.searches.length,
   };
 }
+
+type GuardMeta = { input: string; output?: string };
 
 export const runAgent = inngest.createFunction(
   {
@@ -94,12 +123,17 @@ export const runAgent = inngest.createFunction(
       await step.run("record-failure", async () => {
         console.error(`[run-agent] ${runId} failed`, error);
         await recordAssistantError(db, { projectId, runId, message });
+        await db.inputRequest.updateMany({
+          where: { runId, status: { in: ["PENDING", "PAUSED"] } },
+          data: { status: "CANCELLED" },
+        });
         await createPublisher(projectId)("status", { state: "error", message });
       });
     },
   },
   async ({ event, step, runId }) => {
-    const { projectId, userId, messageId } = event.data;
+    const { projectId, userId, messageId, resume } = event.data;
+    const chainId = resume?.chainId ?? runId;
 
     const setup = await step.run("load-project", async () => {
       const [project, trigger] = await Promise.all([
@@ -120,45 +154,66 @@ export const runAgent = inngest.createFunction(
       if (!project || !trigger) {
         throw new NonRetriableError("Project or message not found.");
       }
-      const [model, history, latest, { balance }] = await Promise.all([
-        findAgentModel(trigger.model).then(
-          async (found) => found ?? (await findAgentModel(null)),
-        ),
-        db.message.findMany({
-          where: { projectId, createdAt: { lte: trigger.createdAt } },
-          orderBy: { createdAt: "asc" },
-          select: {
-            role: true,
-            content: true,
-            attachments: {
-              orderBy: { createdAt: "asc" },
-              select: { key: true, contentType: true },
+      const [model, history, latest, { balance }, holdsSecrets, answered] =
+        await Promise.all([
+          findAgentModel(trigger.model).then(
+            async (found) => found ?? (await findAgentModel(null)),
+          ),
+          db.message.findMany({
+            where: { projectId, createdAt: { lte: trigger.createdAt } },
+            orderBy: { createdAt: "asc" },
+            select: {
+              role: true,
+              content: true,
+              attachments: {
+                orderBy: { createdAt: "asc" },
+                select: { key: true, contentType: true },
+              },
             },
-          },
-        }),
-        db.version.findFirst({
-          where: { projectId },
-          orderBy: { number: "desc" },
-          select: { number: true, files: true },
-        }),
-        getCreditBalance(db, userId),
-      ]);
+          }),
+          db.version.findFirst({
+            where: { projectId, ...READY },
+            orderBy: { number: "desc" },
+            select: { number: true, files: true },
+          }),
+          getCreditBalance(db, userId),
+          projectHoldsSecrets(db, projectId),
+          loadAnsweredInputs(db, projectId),
+        ]);
       if (balance > 0) {
         await createPublisher(projectId)("status", { state: "thinking" });
       }
       if (!model) {
         throw new NonRetriableError("No AI model is available.");
       }
+      const resumed = resume
+        ? answered.find((entry) => entry.id === resume.requestId)
+        : undefined;
       return {
         model,
         projectName: project.name,
         sandboxId: project.sandboxId,
         prompt: trigger.content,
         attachments: trigger._count.attachments,
-        history,
+        history: history.filter(
+          (message) =>
+            !(
+              resume &&
+              message.role === "ASSISTANT" &&
+              (message.content === WAITING ||
+                message.content === SECRET_IN_PROMPT)
+            ),
+        ),
         balance,
+        holdsSecrets,
         hasVersion: latest !== null,
-        files: Object.keys((latest?.files ?? {}) as SnapshotFiles),
+        files: Object.keys((latest?.files ?? {}) as Record<string, string>),
+        answered: answered
+          .filter((entry) => entry.id !== resume?.requestId)
+          .map((entry) => describeAnswer(entry.payload, entry.answer)),
+        resumed: resumed
+          ? describeAnswer(resumed.payload, resumed.answer)
+          : null,
       };
     });
 
@@ -177,17 +232,206 @@ export const runAgent = inngest.createFunction(
       return { status: "out-of-credits" as const };
     }
 
-    const sandbox = await step.run("sandbox", async () => {
-      const result = await getOrCreateSandbox(setup.sandboxId, async () => {
-        const latest = await db.version.findFirst({
-          where: { projectId },
-          orderBy: { number: "desc" },
-          select: { files: true },
+    if (!resume) {
+      const secretHit = await step.run("guard-input", async () => {
+        const matches = await detectSecrets(setup.prompt);
+        if (matches.length === 0) return null;
+        const redacted = redactMatches(setup.prompt, matches);
+        await db.message.update({
+          where: { id: messageId },
+          data: { content: redacted },
         });
-        return (latest?.files ?? undefined) as SnapshotFiles | undefined;
+        await db.project.updateMany({
+          where: { id: projectId, description: setup.prompt },
+          data: { description: redacted },
+        });
+        const name = matches[0].suggestedName;
+        const requestId = `input_${runId}_guard`;
+        const payload = {
+          kind: "secret" as const,
+          name,
+          label: name.replace(/_/g, " ").toLowerCase(),
+          reason:
+            "You pasted it in your message. Store it here instead and I'll use it without ever seeing it.",
+        };
+        await createInputRequest(db, {
+          id: requestId,
+          projectId,
+          userId,
+          runId,
+          chainId,
+          messageId,
+          agent: "builder",
+          payload,
+          status: "PAUSED",
+        });
+        await recordGuardEvent(db, {
+          userId,
+          projectId,
+          runId,
+          stage: "input",
+          verdict: "secret",
+          categories: ["secret"],
+          text: setup.prompt,
+        });
+        const parts: AgentPart[] = [
+          { type: "input-request", requestId, agent: "builder", payload },
+          { type: "text", text: SECRET_IN_PROMPT },
+        ];
+        await recordPausedReply(db, {
+          projectId,
+          runId,
+          content: SECRET_IN_PROMPT,
+          parts,
+        });
+        const publish = createPublisher(projectId);
+        await publish("guard", { stage: "input", verdict: "secret" });
+        await publish("input", {
+          requestId,
+          kind: "secret",
+          status: "paused",
+        });
+        await publish("status", { state: "paused", message: SECRET_IN_PROMPT });
+        return { requestId };
       });
+      if (secretHit) {
+        return { status: "secret-in-prompt" as const, ...secretHit };
+      }
+    }
+
+    const model = setup.model;
+    const [guard, routed] = await Promise.all([
+      resume
+        ? Promise.resolve({
+            verdict: "allow" as const,
+            categories: [] as string[],
+            skipped: false,
+            call: null as BilledCall | null,
+            usage: emptyUsage as TokenUsage,
+          })
+        : step.run("guard-classify", async () => {
+            try {
+              const result = await classifyText(setup.prompt, "input");
+              return {
+                verdict: result.verdict,
+                categories: result.categories,
+                skipped: false,
+                call: result.call as BilledCall | null,
+                usage: result.usage,
+              };
+            } catch (error) {
+              console.warn("[run-agent] guard classifier failed", error);
+              return {
+                verdict: "allow" as const,
+                categories: [] as string[],
+                skipped: true,
+                call: null as BilledCall | null,
+                usage: emptyUsage as TokenUsage,
+              };
+            }
+          }),
+      step.run("route", async () => {
+        if (resume) {
+          return {
+            route: {
+              agents: ["builder"] as AgentName[],
+              reason: "Continuing a request that is already underway.",
+              decidedBy: "rules" as const,
+            },
+            call: null as BilledCall | null,
+            usage: emptyUsage as TokenUsage,
+          };
+        }
+        let call: BilledCall | null = null;
+        let usage: TokenUsage = emptyUsage;
+        const route = await routeAgents(
+          {
+            prompt: setup.prompt,
+            hasVersion: setup.hasVersion,
+            attachments: setup.attachments,
+            files: setup.files,
+          },
+          async (prompt) => {
+            const result = await classifyAgents(model, prompt);
+            call = {
+              generationIds: result.generationIds,
+              estimatedUsd: result.estimatedUsd,
+              agent: "router",
+              model: model.id,
+            };
+            usage = result.usage;
+            return result.choice;
+          },
+        );
+        return { route, call: call as BilledCall | null, usage };
+      }),
+    ]);
+
+    const failClosed = guard.skipped && setup.holdsSecrets;
+    if (guard.verdict === "block" || failClosed) {
+      const message = failClosed ? GUARD_UNAVAILABLE : BLOCKED;
+      await step.run("guard-blocked", async () => {
+        if (!failClosed) {
+          await recordGuardEvent(db, {
+            userId,
+            projectId,
+            runId,
+            stage: "input",
+            verdict: "block",
+            categories: guard.categories,
+            text: setup.prompt,
+          });
+        }
+        await recordAssistantError(db, { projectId, runId, message });
+        const publish = createPublisher(projectId);
+        if (!failClosed) {
+          await publish("guard", { stage: "input", verdict: "block" });
+        }
+        await publish("status", { state: "error", message });
+      });
+      return {
+        status: failClosed
+          ? ("guard-unavailable" as const)
+          : ("blocked" as const),
+        categories: guard.categories,
+      };
+    }
+
+    const restricted = guard.verdict === "review";
+    if (restricted) {
+      await step.run("guard-review", async () => {
+        await recordGuardEvent(db, {
+          userId,
+          projectId,
+          runId,
+          stage: "input",
+          verdict: "review",
+          categories: guard.categories,
+          text: setup.prompt,
+        });
+        await createPublisher(projectId)("guard", {
+          stage: "input",
+          verdict: "review",
+        });
+      });
+    }
+    const guardMeta: GuardMeta = {
+      input: guard.skipped ? "skipped" : guard.verdict,
+    };
+
+    const sandbox = await step.run("sandbox", async () => {
+      const result = await getOrCreateSandbox(setup.sandboxId, () =>
+        loadRestoreFiles(db, {
+          projectId,
+          chainId: resume ? chainId : null,
+        }),
+      );
       await ensureDevOrigins(result.sandbox);
       await ensureAgentInstructions(result.sandbox);
+      const secrets = await loadSecretValues(db, projectId);
+      await prepareSandboxSecrets(result.sandbox, secrets, {
+        restart: result.created,
+      });
       const skills = await listInstalledSkills(result.sandbox);
       const previewUrl = previewUrlFor(result.sandbox);
       await db.project.update({
@@ -209,37 +453,23 @@ export const runAgent = inngest.createFunction(
       };
     });
 
-    const model = setup.model;
-    const routed = await step.run("route", async () => {
-      let call: BilledCall | null = null;
-      let usage: TokenUsage = emptyUsage;
-      const route = await routeAgents(
-        {
-          prompt: setup.prompt,
-          hasVersion: setup.hasVersion,
-          attachments: setup.attachments,
-          files: setup.files,
-        },
-        async (prompt) => {
-          const result = await classifyAgents(model, prompt);
-          call = {
-            generationIds: result.generationIds,
-            estimatedUsd: result.estimatedUsd,
-            agent: "router",
-            model: model.id,
-          };
-          usage = result.usage;
-          return result.choice;
-        },
-      );
-      return { route, call: call as BilledCall | null, usage };
+    const runContext = createRunContext({
+      runId,
+      chainId,
+      userId,
+      messageId,
+      restricted,
+      sandboxId: sandbox.sandboxId,
+      previewUrl: sandbox.previewUrl,
     });
 
-    let usage = routed.usage;
-    const calls: BilledCall[] = routed.call ? [routed.call] : [];
+    let usage = addUsage(routed.usage, guard.usage);
+    const calls: BilledCall[] = [routed.call, guard.call].filter(
+      (call): call is BilledCall => call !== null,
+    );
     let budget: Budget = {
       balance: setup.balance,
-      spentUsd: routed.call?.estimatedUsd ?? 0,
+      spentUsd: calls.reduce((sum, call) => sum + call.estimatedUsd, 0),
       searches: 0,
     };
     const runs: AgentRun[] = [];
@@ -248,20 +478,51 @@ export const runAgent = inngest.createFunction(
     const loopArgs = {
       step,
       projectId,
-      sandboxId: sandbox.sandboxId,
+      run: runContext,
       model,
       installedSkills: sandbox.skills,
     };
-    const visionHistory = historyToMessages(setup.history, setup.files, {
-      vision: model.vision,
-    });
-    const textHistory = historyToMessages(setup.history, setup.files, {
-      vision: false,
-    });
+    const notes: ModelMessage[] = [
+      ...(setup.answered.length > 0
+        ? [
+            {
+              role: "user" as const,
+              content: `(Answers the user already gave in this project. Don't ask these again.)\n${setup.answered.map((line) => `- ${line}`).join("\n")}`,
+            },
+          ]
+        : []),
+      ...(resume?.handoff
+        ? [
+            {
+              role: "user" as const,
+              content: `(Continuing this request in a fresh run: the previous run used up its room and handed over to you. The project files are exactly as it left them. Its handoff note:\n<handoff>\n${resume.handoff.note}\n</handoff>\nFiles changed so far: ${resume.handoff.written.join(", ") || "none"}.\nPick up from there and finish the whole request, then reply with the task_summary for the whole request.)`,
+            },
+          ]
+        : []),
+      ...(setup.resumed
+        ? [
+            {
+              role: "user" as const,
+              content: `(Continuing this request. You paused to ask the user a question. ${setup.resumed}\nThe project files are as you left them. Continue from where you stopped and finish the request.)`,
+            },
+          ]
+        : []),
+    ];
+    const visionHistory = [
+      ...historyToMessages(setup.history, setup.files, {
+        vision: model.vision,
+      }),
+      ...notes,
+    ];
+    const textHistory = [
+      ...historyToMessages(setup.history, setup.files, { vision: false }),
+      ...notes,
+    ];
 
     const readers = routed.route.agents.filter(
       (name): name is "researcher" | "designer" =>
-        name === "researcher" || name === "designer",
+        (name === "researcher" && !restricted && !resume) ||
+        (name === "designer" && !resume),
     );
     const snapshot = budget;
     const readerResults = await Promise.all(
@@ -310,7 +571,16 @@ export const runAgent = inngest.createFunction(
 
     let summary: string | null = null;
     let outOfCredits = exhausted(budget);
-    let written: string[] = [];
+    let written: string[] = resume?.handoff?.written ?? [];
+    let paused: { requestId: string } | null = null;
+    let handoff: string | null = null;
+    const handoffProgress = resume?.handoff
+      ? {
+          readAgentsMd: resume.handoff.readAgentsMd,
+          loadedSkills: resume.handoff.loadedSkills,
+          installs: resume.handoff.installs,
+        }
+      : undefined;
 
     if (!outOfCredits) {
       const briefs = briefsMessage(
@@ -325,17 +595,16 @@ export const runAgent = inngest.createFunction(
         spec: agentSpecs.builder,
         messages: briefs ? [...visionHistory, briefs] : visionHistory,
         budget,
-        expectWrites: true,
+        expectWrites: !resume,
+        written,
+        progress: handoffProgress,
       });
       runs.push(build);
       budget = spend(budget, build);
       outOfCredits = build.outOfCredits;
       written = build.written;
-      if (!build.finished && !outOfCredits) {
-        throw new NonRetriableError(
-          `The agent reached its ${agentSpecs.builder.maxTurns}-step limit without finishing.`,
-        );
-      }
+      paused = build.paused;
+      handoff = build.handoff;
       summary = build.output;
       const builderPart: AgentPart = {
         type: "agent",
@@ -345,14 +614,20 @@ export const runAgent = inngest.createFunction(
         skills: build.progress.loadedSkills,
         searches: 0,
       };
-      await publishAgentState(step, projectId, "builder-done", {
-        name: "builder",
-        state: "done",
-        summary: builderPart.summary,
-      });
+      if (!paused && !handoff) {
+        await publishAgentState(step, projectId, "builder-done", {
+          name: "builder",
+          state: "done",
+          summary: builderPart.summary,
+        });
+      }
       agentParts.push(builderPart);
+      let builderMessages = build.messages;
+      let builderProgress = build.progress;
 
       if (
+        !paused &&
+        !handoff &&
         !outOfCredits &&
         shouldReview({ hasVersion: setup.hasVersion, written: written.length })
       ) {
@@ -400,28 +675,73 @@ export const runAgent = inngest.createFunction(
           const fix = await runAgentLoop({
             ...loopArgs,
             spec: agentSpecs.builder,
-            messages: [...build.messages, fixPrompt],
+            messages: [...builderMessages, fixPrompt],
             budget,
             stepPrefix: "builder-fix",
-            maxTurns: FIX_PASS_MAX_TURNS,
             written,
-            progress: build.progress,
+            progress: builderProgress,
           });
           runs.push(fix);
           budget = spend(budget, fix);
           outOfCredits = fix.outOfCredits;
           written = fix.written;
+          paused = fix.paused;
+          handoff = fix.handoff;
+          builderMessages = fix.messages;
+          builderProgress = fix.progress;
           if (fix.finished && fix.output) summary = fix.output;
-          await publishAgentState(step, projectId, "builder-fix-done", {
-            name: "builder",
-            state: "done",
-            summary: "Fixed the reviewer's findings",
-          });
+          if (!paused && !handoff) {
+            await publishAgentState(step, projectId, "builder-fix-done", {
+              name: "builder",
+              state: "done",
+              summary: "Fixed the reviewer's findings",
+            });
+          }
           const builderIndex = agentParts.indexOf(builderPart);
           agentParts[builderIndex] = {
             ...builderPart,
             summary: `${written.length} file${written.length === 1 ? "" : "s"} changed, one fix pass`,
           };
+        }
+      }
+
+      if (!paused && !handoff && !outOfCredits && written.length > 0) {
+        const hits = await step.run("secret-scan", async () => {
+          const secrets = await loadSecretValues(db, projectId);
+          const { sandbox: box } = await connectOrRecover(
+            runContext.sandbox,
+            () =>
+              recoverSandbox({
+                projectId,
+                chainId,
+                replay: [...runContext.pendingWrites].map(
+                  ([path, content]) => ({ path, content }),
+                ),
+                secrets,
+              }),
+          );
+          return scanFiles(await snapshotSandbox(box), createRedactor(secrets));
+        });
+        if (hits.length > 0 && !exhausted(budget)) {
+          const scanFix = await runAgentLoop({
+            ...loopArgs,
+            spec: agentSpecs.builder,
+            messages: [
+              ...builderMessages,
+              { role: "user", content: scanFixPrompt(hits) },
+            ],
+            budget,
+            stepPrefix: "builder-scan-fix",
+            written,
+            progress: builderProgress,
+          });
+          runs.push(scanFix);
+          budget = spend(budget, scanFix);
+          outOfCredits = scanFix.outOfCredits;
+          written = scanFix.written;
+          paused = scanFix.paused;
+          handoff = scanFix.handoff;
+          if (scanFix.finished && scanFix.output) summary = scanFix.output;
         }
       }
     }
@@ -431,9 +751,189 @@ export const runAgent = inngest.createFunction(
       calls.push(...run.calls);
     }
 
-    const replyText = outOfCredits
+    const reasoning = runs.flatMap((run) => run.reasoning);
+    const reasoningMs = runs.reduce((sum, run) => sum + run.reasoningMs, 0);
+    const sources = uniqueSources(runs.flatMap((run) => run.searches));
+    const reasoningParts: AgentPart[] =
+      reasoning.length > 0
+        ? [
+            {
+              type: "reasoning",
+              text: reasoning.join("\n\n"),
+              durationMs: reasoningMs,
+            },
+          ]
+        : [];
+    const toolParts = runs.flatMap((run) => run.toolParts);
+    const sourceParts: AgentPart[] =
+      sources.length > 0 ? [{ type: "sources", sources }] : [];
+
+    if (handoff && !paused) {
+      const note = handoff;
+      const lastBuilder = [...runs]
+        .reverse()
+        .find((run) => run.agent === "builder");
+      const progress = lastBuilder?.progress ?? {
+        readAgentsMd: false,
+        loadedSkills: [],
+      };
+      await step.run("handoff-checkpoint", () =>
+        takeCheckpoint({ projectId, run: runContext }),
+      );
+      const cost = await step.run("cost", () =>
+        resolveRunCost(calls, lookupGenerationCost),
+      );
+      const credits = creditsForCost(cost.costUsd, creditRate);
+      await step.run("meter", async () => {
+        await debitCredits(db, {
+          userId,
+          projectId,
+          runId,
+          credits,
+          firstVersion: !setup.hasVersion,
+          usage,
+          model: model.id,
+          cost,
+          versionNumber: null,
+          handoff: true,
+          guard: guardMeta,
+        });
+        const publish = createPublisher(projectId);
+        await publish("credits", { used: credits });
+        await publish("status", { state: "thinking" });
+      });
+      await step.sendEvent(
+        "continue",
+        agentRun.create({
+          projectId,
+          userId,
+          messageId,
+          resume: {
+            chainId,
+            handoff: {
+              note: note.slice(0, 8000),
+              written: written.slice(0, 400),
+              readAgentsMd: progress.readAgentsMd,
+              loadedSkills: progress.loadedSkills.slice(0, 20),
+              installs: progress.installs ?? 0,
+            },
+          },
+        }),
+      );
+      return {
+        status: "continued" as const,
+        credits,
+        filesChanged: written.length,
+      };
+    }
+
+    if (paused) {
+      const pausedAt = paused;
+      const cost = await step.run("cost", () =>
+        resolveRunCost(calls, lookupGenerationCost),
+      );
+      const credits = creditsForCost(cost.costUsd, creditRate);
+      await step.run("persist-paused", async () => {
+        const parts: AgentPart[] = [
+          ...reasoningParts,
+          ...agentParts,
+          {
+            type: "task",
+            title: "Waiting for your answer",
+            items: [sandbox.task, ...runs.flatMap((run) => run.tasks)],
+          },
+          ...toolParts,
+          ...sourceParts,
+          { type: "text", text: WAITING },
+        ];
+        const redactor = createRedactor(await loadSecretValues(db, projectId));
+        await recordPausedReply(db, {
+          projectId,
+          runId,
+          content: WAITING,
+          parts: redactor.redactDeep(parts),
+        });
+      });
+      await step.run("meter", async () => {
+        await debitCredits(db, {
+          userId,
+          projectId,
+          runId,
+          credits,
+          firstVersion: !setup.hasVersion,
+          usage,
+          model: model.id,
+          cost,
+          versionNumber: null,
+          paused: true,
+          guard: guardMeta,
+        });
+        const publish = createPublisher(projectId);
+        await publish("credits", { used: credits });
+        await publish("status", { state: "paused", message: WAITING });
+      });
+      return {
+        status: "paused" as const,
+        requestId: pausedAt.requestId,
+        credits,
+        filesChanged: written.length,
+      };
+    }
+
+    const rawReply = outOfCredits
       ? [summary, STOPPED_FOR_CREDITS].filter(Boolean).join("\n\n")
       : (summary ?? "");
+
+    const reviewed = await step.run("guard-output", async () => {
+      const secrets = await loadSecretValues(db, projectId);
+      const text = await redactPatterns(
+        createRedactor(secrets).redact(rawReply),
+      );
+      if (!text.trim()) {
+        return {
+          text,
+          verdict: "allow",
+          call: null as BilledCall | null,
+          usage: emptyUsage as TokenUsage,
+        };
+      }
+      try {
+        const result = await classifyText(text, "output");
+        if (result.verdict === "block") {
+          await recordGuardEvent(db, {
+            userId,
+            projectId,
+            runId,
+            stage: "output",
+            verdict: "block",
+            categories: result.categories,
+            text,
+          });
+          await createPublisher(projectId)("guard", {
+            stage: "output",
+            verdict: "block",
+          });
+        }
+        return {
+          text: result.verdict === "block" ? REPLY_BLOCKED : text,
+          verdict: result.verdict as string,
+          call: result.call as BilledCall | null,
+          usage: result.usage,
+        };
+      } catch (error) {
+        console.warn("[run-agent] output classifier failed", error);
+        return {
+          text,
+          verdict: "skipped",
+          call: null as BilledCall | null,
+          usage: emptyUsage as TokenUsage,
+        };
+      }
+    });
+    guardMeta.output = reviewed.verdict;
+    usage = addUsage(usage, reviewed.usage);
+    if (reviewed.call) calls.push(reviewed.call);
+    const replyText = reviewed.text;
 
     const title = await step.run("title", async () => {
       const fallback = setup.hasVersion ? "Updated the site" : "First version";
@@ -465,34 +965,37 @@ export const runAgent = inngest.createFunction(
     );
     const credits = creditsForCost(cost.costUsd, creditRate);
 
-    const reasoning = runs.flatMap((run) => run.reasoning);
-    const reasoningMs = runs.reduce((sum, run) => sum + run.reasoningMs, 0);
-    const sources = uniqueSources(runs.flatMap((run) => run.searches));
     const parts: AgentPart[] = [
-      ...(reasoning.length > 0
-        ? [
-            {
-              type: "reasoning" as const,
-              text: reasoning.join("\n\n"),
-              durationMs: reasoningMs,
-            },
-          ]
-        : []),
+      ...reasoningParts,
       ...agentParts,
       {
         type: "task",
         title: title.text,
         items: [sandbox.task, ...runs.flatMap((run) => run.tasks)],
       },
-      ...runs.flatMap((run) => run.toolParts),
-      ...(sources.length > 0 ? [{ type: "sources" as const, sources }] : []),
+      ...toolParts,
+      ...sourceParts,
       { type: "text", text: replyText },
     ];
 
     const saved = await step.run("persist", async () => {
-      const publish = createPublisher(projectId);
+      const secrets = await loadSecretValues(db, projectId);
+      const redactor = createRedactor(secrets);
+      const publish = createPublisher(projectId, redactor);
       await publish("status", { state: "compiling" });
-      const box = await connectSandbox(sandbox.sandboxId);
+      const { sandbox: box, recovered } = await connectOrRecover(
+        runContext.sandbox,
+        () =>
+          recoverSandbox({
+            projectId,
+            chainId,
+            replay: [...runContext.pendingWrites].map(([path, content]) => ({
+              path,
+              content,
+            })),
+            secrets,
+          }),
+      );
       await ensureDevOrigins(box);
       await box.commands
         .run(
@@ -501,17 +1004,38 @@ export const runAgent = inngest.createFunction(
         )
         .catch(() => null);
       const files = await snapshotSandbox(box);
+      const hits = await scanFiles(files, redactor);
+      if (hits.length > 0) {
+        await recordGuardEvent(db, {
+          userId,
+          projectId,
+          runId,
+          stage: "save",
+          verdict: "block",
+          categories: ["secret"],
+          text: hits.map((hit) => hit.path).join("\n"),
+        });
+        throw new NonRetriableError(
+          `The project still contains secret values (${hits.map((hit) => hit.path).join(", ")}), so it wasn't saved.`,
+        );
+      }
+      const previewUrl = recovered?.previewUrl ?? runContext.sandbox.previewUrl;
       const result = await saveRunResult(db, {
         projectId,
         runId,
         title: title.text,
         content: replyText,
-        parts,
+        parts: redactor.redactDeep(parts),
         files,
         creditCost: credits,
-        previewUrl: sandbox.previewUrl,
+        previewUrl,
+        chainId,
       });
-      return { ...result, fileCount: Object.keys(files).length };
+      return {
+        ...result,
+        previewUrl,
+        fileCount: Object.keys(files).length,
+      };
     });
 
     await step.run("meter", async () => {
@@ -525,10 +1049,11 @@ export const runAgent = inngest.createFunction(
         model: model.id,
         cost,
         versionNumber: saved.versionNumber,
+        guard: guardMeta,
       });
       const publish = createPublisher(projectId);
       await publish("credits", { used: credits });
-      await publish("preview", { url: sandbox.previewUrl });
+      await publish("preview", { url: saved.previewUrl });
       await publish("status", { state: "done" });
     });
 
@@ -538,6 +1063,7 @@ export const runAgent = inngest.createFunction(
         : ("done" as const),
       agents: routed.route.agents,
       route: routed.route.decidedBy,
+      guard: guardMeta,
       version: saved.versionNumber,
       files: saved.fileCount,
       filesChanged: written.length,
@@ -545,7 +1071,7 @@ export const runAgent = inngest.createFunction(
       costUsd: cost.costUsd,
       agentCosts: cost.agents,
       model: model.id,
-      previewUrl: sandbox.previewUrl,
+      previewUrl: saved.previewUrl,
     };
   },
 );

@@ -10,6 +10,11 @@ const gateway = vi.hoisted(() => ({
 }));
 vi.mock("@/inngest/client", () => ({ inngest: { send } }));
 vi.mock("@/server/ai/gateway", () => gateway);
+const refresh = vi.hoisted(() => vi.fn());
+vi.mock("@/server/secrets/refresh", () => ({
+  refreshSandboxSecrets: refresh,
+}));
+vi.mock("next/server", () => ({ after: (fn: () => unknown) => fn() }));
 
 const sonnet = {
   id: "anthropic/claude-sonnet-5.5",
@@ -28,6 +33,7 @@ const textOnly = {
 
 beforeEach(() => {
   send.mockReset().mockResolvedValue({ ids: ["e1"] });
+  refresh.mockReset().mockResolvedValue(undefined);
   gateway.findAgentModel.mockReset().mockResolvedValue(sonnet);
   gateway.getAgentModels.mockReset().mockResolvedValue([sonnet, textOnly]);
   gateway.pickDefaultModel.mockReset().mockReturnValue(sonnet);
@@ -77,7 +83,19 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
     creditLedger: {
       aggregate: vi.fn(),
     },
+    inputRequest: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    projectSecret: {
+      findMany: vi.fn().mockResolvedValue([]),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    secretEvent: { create: vi.fn().mockResolvedValue({}) },
+    $transaction: vi.fn(),
   };
+  db.$transaction.mockImplementation((fn: (tx: typeof db) => unknown) =>
+    fn(db),
+  );
   const ctx = {
     db: db as unknown as TRPCContext["db"],
     session: null,
@@ -261,6 +279,46 @@ describe("project.bySlug", () => {
       ).resolves.toMatchObject({ agent: { status, reply } });
     },
   );
+
+  test("reports a paused agent with its open question", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ ...project, messages: [] });
+    db.message.findFirst.mockResolvedValue({
+      role: "ASSISTANT",
+      content: "I need your answer to continue.",
+      parts: [],
+    });
+    db.inputRequest.findFirst.mockResolvedValue({
+      kind: "SECRET",
+      payload: {
+        request: {
+          kind: "secret",
+          name: "OPENAI_API_KEY",
+          label: "OpenAI API key",
+          reason: "For the chat feature",
+        },
+      },
+    });
+    await expect(
+      createCaller(ctx).project.bySlug({ slug: "demo" }),
+    ).resolves.toMatchObject({
+      agent: {
+        status: "paused",
+        question: {
+          kind: "secret",
+          question: "OpenAI API key (OPENAI_API_KEY)",
+        },
+      },
+    });
+    expect(db.inputRequest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          project: { slug: "demo", userId: "u1" },
+          status: { in: ["PENDING", "PAUSED"] },
+        },
+      }),
+    );
+  });
 
   test("prompt is null when there is no message", async () => {
     const { ctx, db } = signedIn();
@@ -521,5 +579,76 @@ describe("credits.balance", () => {
       balance: 0,
       granted: 0,
     });
+  });
+});
+
+describe("secret", () => {
+  test("requires a session", async () => {
+    const { ctx } = makeContext();
+    await expect(
+      createCaller(ctx).secret.list({ projectId: "p1" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  test("lists names only, for the owner's project", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.projectSecret.findMany.mockResolvedValue([
+      {
+        name: "OPENAI_API_KEY",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastUsedAt: null,
+      },
+    ]);
+    const list = await createCaller(ctx).secret.list({ projectId: "p1" });
+    expect(list.map((entry) => entry.name)).toEqual(["OPENAI_API_KEY"]);
+    expect(db.project.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "p1", userId: "u1" } }),
+    );
+    expect(db.projectSecret.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: {
+          name: true,
+          createdAt: true,
+          updatedAt: true,
+          lastUsedAt: true,
+        },
+      }),
+    );
+  });
+
+  test("hides other users' projects", async () => {
+    const { ctx } = signedIn();
+    await expect(
+      createCaller(ctx).secret.list({ projectId: "p2" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  test("deletes a secret, records it and refreshes the sandbox", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    await expect(
+      createCaller(ctx).secret.delete({
+        projectId: "p1",
+        name: "OPENAI_API_KEY",
+      }),
+    ).resolves.toEqual({ name: "OPENAI_API_KEY" });
+    expect(db.secretEvent.create).toHaveBeenCalledWith({
+      data: {
+        projectId: "p1",
+        userId: "u1",
+        name: "OPENAI_API_KEY",
+        action: "DELETED",
+      },
+    });
+    expect(refresh).toHaveBeenCalledWith("p1");
+  });
+
+  test("rejects invalid names", async () => {
+    const { ctx } = signedIn();
+    await expect(
+      createCaller(ctx).secret.delete({ projectId: "p1", name: "lower" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
