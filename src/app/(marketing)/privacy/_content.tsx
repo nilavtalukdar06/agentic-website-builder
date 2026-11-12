@@ -80,11 +80,7 @@ export const privacySections: ArticleSection[] = [
           preview, saving versions, and exporting to GitHub.
         </li>
         <li>To meter credits and process payments.</li>
-        <li>
-          To keep Vibe working: debugging, preventing abuse, and measuring
-          availability on the <A href="/status">status page</A>. The health
-          checks behind it contain no personal data.
-        </li>
+        <li>To keep Vibe working: debugging and preventing abuse.</li>
         <li>To reply when you contact us.</li>
       </UL>
     ),

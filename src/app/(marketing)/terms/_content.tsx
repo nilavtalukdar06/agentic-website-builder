@@ -201,8 +201,7 @@ export const termsSections: ArticleSection[] = [
       <>
         <P>
           We aim to keep Vibe running but don&apos;t promise it will always be
-          available or error-free. Live uptime is published on the{" "}
-          <A href="/status">status page</A>.
+          available or error-free.
         </P>
         <P>
           Sandboxes are temporary. A sandbox may expire when idle and is
@@ -286,8 +285,7 @@ export const termsSections: ArticleSection[] = [
     body: (
       <P>
         Questions about these Terms:{" "}
-        <A href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</A>, or see{" "}
-        <A href="/contact">Contact</A>.
+        <A href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</A>.
       </P>
     ),
   },

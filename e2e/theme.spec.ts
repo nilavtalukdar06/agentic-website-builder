@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 for (const theme of ["dark", "light"] as const) {
-  for (const path of ["/sign-in", "/contact", "/docs"]) {
+  for (const path of ["/sign-in", "/terms"]) {
     test(`${path} loads in ${theme} without flashing the other theme`, async ({
       page,
     }) => {

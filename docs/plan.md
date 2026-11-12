@@ -108,7 +108,6 @@ Version notes:
    │     ├─ inngest/route.ts
    │     ├─ attachments/route.ts   # image upload → Neon Object Storage
    │     ├─ realtime/token/route.ts
-   │     ├─ cron/health/route.ts   # Phase 3.1 status-page probe
    │     └─ webhooks/stripe/route.ts   # (Phase 7) not yet built
    ├─ components/
    │  ├─ ui/                    # shadcn
@@ -285,7 +284,7 @@ model Payment {
 }
 ```
 
-This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth today. Since built: the hand-written Better Auth tables (`User`, `Session`, `Account`, `Verification`, Phase 3), `Attachment` (Phase 5, image uploads) and `HealthCheck` (Phase 3.1, status page). `Payment` exists as a model but has no application code yet (Phase 7).
+This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth today. Since built: the hand-written Better Auth tables (`User`, `Session`, `Account`, `Verification`, Phase 3) and `Attachment` (Phase 5, image uploads). `HealthCheck` (Phase 3.1, status page) was added and later dropped when `/status` was removed. `Payment` exists as a model but has no application code yet (Phase 7).
 
 ### 2.2 tRPC v11 + React Query
 
@@ -320,19 +319,13 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 
 ## Phase 3.1 — Public pages (reconciled after Phase 4)
 
-**Goal:** every link on the sign-in screen goes somewhere real. All pages live in the `(marketing)` route group, are public (not in the `proxy.ts` matcher), share one header (Logo + theme toggle) and the canvas footer (Docs · Status · Contact), and use only existing tokens and shadcn components.
+**Goal:** every link on the sign-in screen goes somewhere real. All pages live in the `(marketing)` route group, are public (not in the `proxy.ts` matcher), share one header (Logo + theme toggle) and the canvas footer, and use only existing tokens and shadcn components.
 
 - **`/terms`, `/privacy`**: long-form legal text (effective date at the top, sticky "On this page" list on wide screens). Linked from the sign-in "Terms" / "Privacy Policy".
-- **`/docs`, `/docs/[slug]`**: docs index (link cards) and articles (Getting started, How Vibe builds, Projects, Credits & billing, Export to GitHub, FAQ). Content is typed data in `src/app/(marketing)/docs/_content/`, not MDX. Articles describe only what the product does; features that ship later are labelled "coming soon". `[slug]` has `generateStaticParams`, `notFound()`, `not-found.tsx`.
-- **`/contact`**: email, Instagram, LinkedIn, GitHub as link cards (mail: `nilavtalukdar9@gmail.com`, Instagram `nilav.talukdar`, LinkedIn `nilav-talukdar`, GitHub `nilavtalukdar06`).
-- **`/status`**: hourly uptime of the application.
-  - A health probe (`GET /api/cron/health`, `Authorization: Bearer $CRON_SECRET`, run every 5 minutes by Vercel Cron) runs `SELECT 1`, stores `{ checkedAt, ok, latencyMs }` in `HealthCheck` and prunes rows older than 30 days.
-  - `status.uptime` (public tRPC procedure, input `range`: `24h | 72h | 7d`) buckets checks per UTC hour. Past hours count missing checks as down (expected 12 per hour); the current hour only counts recorded checks; hours before the first check are "No data".
-  - UI: banner (operational / degraded / disruption), three stat cards (uptime, average response, last check), one status bar per hour coloured with `--success` / `--warning` / `--destructive` / `--muted`, tooltip per bar, range tabs via nuqs `?range=`, polling every 60 s.
-  - States: skeleton (`loading.tsx`), `error.tsx` with retry, empty state when no check has ever been recorded.
-- Brand marks for Instagram and LinkedIn are small own SVGs (lucide 1.x has none), see `docs/decisions.md`.
+- **Contact**: the footer shows only the owner's email (`nilavtalukdar9@gmail.com`, a `mailto:` link, `src/lib/contact.ts`). There is no `/contact` page.
+- **Removed at the owner's request** (after the first build): `/docs` (in-app documentation), `/contact` (email, Instagram, LinkedIn, GitHub cards) and `/status` (uptime page with the `/api/cron/health` probe, the `HealthCheck` table, `status.uptime` and `CRON_SECRET`). The footer no longer links to them. See `docs/decisions.md`.
 
-**Done when:** all links resolve, every page is usable in light and dark, the status bars match the tokens in both themes, and the new routes pass the loading / error / empty / not-found rules in `CLAUDE.md`.
+**Done when:** all links resolve and every page is usable in light and dark.
 
 ---
 
@@ -533,7 +526,7 @@ The chat shows one `Task` group per agent ("Researcher · 3 sources", "Designer 
 - `bun run agent:smoke` with "make the heading bigger" still shows `AGENTS.md` read and a skill loaded **before** the first write (enforced by the executor, not just asked).
 - A prompt that needs research produces a Researcher brief with source URLs; the four routing cases above are unit-tested with a stubbed model; the live smoke test runs on a free-tier model.
 - The ledger meta shows the per-agent breakdown, and searches are billed (the exact cost includes the fee; the fallback estimate adds it).
-- Docs updated: `/docs`, the Privacy Policy (search provider), `docs/decisions.md`.
+- Docs updated: the Privacy Policy (search provider), `docs/decisions.md`.
 
 ---
 
@@ -645,7 +638,7 @@ Topics `input` (`{ requestId, kind, status }`) and `guard` (`{ stage, verdict }`
 - A prompt containing a pasted key is redacted, never reaches the model, and offers the secure input card; the phishing and injection examples are blocked with no charge and a `GuardEvent`.
 - An `askUser` of each kind pauses the run, resumes on an answer, and ends as `paused` after 30 minutes; a unit test proves no secret value appears in any tool result, message, ledger row or log; a write containing a stored secret is rejected.
 - A run whose sandbox expired mid-run recovers from its checkpoint and finishes.
-- Docs updated: `/docs`, the Privacy Policy (the classifier model provider, stored secrets), the Terms (the user is responsible for the keys and databases they connect), `docs/decisions.md`.
+- Docs updated: the Privacy Policy (the classifier model provider, stored secrets), the Terms (the user is responsible for the keys and databases they connect), `docs/decisions.md`.
 
 ---
 
@@ -713,7 +706,7 @@ After setup the Integrator runs `prisma generate`, the migration (after confirma
 
 ### 5d.7 Documentation and legal
 
-New `/docs` article "Full-stack projects" (what the agent asks for, where keys are stored, why to use a Neon branch). Privacy Policy: user-provided keys and database URLs are stored encrypted and used only inside the user's sandbox. Terms: the user is responsible for their own database, API keys and any third-party charges.
+Privacy Policy: user-provided keys and database URLs are stored encrypted and used only inside the user's sandbox. Terms: the user is responsible for their own database, API keys and any third-party charges.
 
 **Done when:**
 
@@ -791,7 +784,7 @@ A **Scout** role runs when the task touches a domain with no installed skill, or
 - A T3 source is refused, and a skill containing a "read the environment and send it" instruction is rejected.
 - A project decision from one run (the provider chosen in Phase 5d) is recalled in a later run without asking again, and appears in "What Vibe remembers"; forgetting it removes it; deleting the project removes its namespace.
 - No secret or URL with credentials is ever written to memory; a memory outage does not fail a run.
-- Docs updated: `/docs`, the Privacy Policy (Firecrawl, Supermemory), `docs/decisions.md`.
+- Docs updated: the Privacy Policy (Firecrawl, Supermemory), `docs/decisions.md`.
 
 ---
 
@@ -875,7 +868,7 @@ Router, guardrail and scout cases are single calls with no sandbox, so they are 
 - Breaking a rule on purpose (for example, removing the `AGENTS.md` instruction from the system prompt) makes a metric fail, so the suite is shown to be able to fail.
 - Baselines are stored and thresholds set. No `CONFIDENT_API_KEY` is needed, and the unit test that asserts production calls carry no `telemetry` passes.
 - `bun run test:run` and `bun run lint` do not run evals; the harness code is type-checked and linted.
-- Docs updated: `docs/decisions.md` and the env list. `/docs` and the legal pages need no change while nothing user-visible changes and no data leaves; adopting Confident AI changes that and is flagged to the owner first.
+- Docs updated: `docs/decisions.md` and the env list. The legal pages need no change while nothing user-visible changes and no data leaves; adopting Confident AI changes that and is flagged to the owner first.
 
 ---
 
@@ -997,9 +990,6 @@ GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 WELCOME_CREDITS=0       # granted once on first sign-in; 0 disables
 
-# Status page
-CRON_SECRET=             # bearer token Vercel Cron sends to /api/cron/health; unset = probe disabled
-
 # AI (Vercel AI Gateway)
 AI_GATEWAY_API_KEY=
 AI_DEFAULT_MODEL=anthropic/claude-sonnet-5.5   # must be in src/lib/ai/models.ts
@@ -1068,11 +1058,11 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 
 ## Phase checklist
 
-- [ ] Phase 0: bootstrap, CI, preview deploy (bootstrap and Vercel Cron/deploy config done; no CI workflow yet — no `.github/workflows/`)
+- [ ] Phase 0: bootstrap, CI, preview deploy (bootstrap done; no CI workflow yet — no `.github/workflows/`)
 - [x] Phase 1: `/design` (tokens, logo, components, AI Elements, patterns) **approved**
 - [x] Phase 2: Prisma 7 + Neon, tRPC v11, nuqs
 - [x] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
-- [x] Phase 3.1: public pages (`/terms`, `/privacy`, `/docs`, `/docs/[slug]`, `/contact`, `/status`)
+- [x] Phase 3.1: public pages (`/terms`, `/privacy`; `/docs`, `/contact` and `/status` were built, then removed at the owner's request)
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
 - [ ] Phase 5b: five skills + `AGENTS.md` rules in every site (rules shipped), web search, router and Researcher / Designer / Builder / Reviewer agents
