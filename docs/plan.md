@@ -323,7 +323,7 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 ## Phase 4 — App shell, Home, Projects
 
 - **Sidebar layout** (shadcn `Sidebar`, `variant="inset"` (the rounded main panel has a 1 px `border`), `collapsible="icon"`: the logo sits at the top of the sidebar; ⌘B / Ctrl+B or the rail on its edge collapses it to centred icons with tooltips, and the logo expands it again (the owner removed the separate collapse button and the inset's outer padding); the app header with breadcrumbs and the theme toggle was removed, appearance (Light / Dark / System) lives in the account menu, and phones get a floating sidebar button; since the post-Phase 5 Lovable restyle: the main area is a rounded panel inset from the sidebar colour and scrolls inside itself, the page itself does not scroll; the workspace switcher was removed at the owner's request and a **Search** button, which opens the ⌘K command menu, took its place): New project (⌘K), Search (⌘K), Platform nav, Recent projects, credits card (balance + Top up), user menu
-- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects". _After Phase 5 the **aurora** gradient fills the whole page behind the header, hero (heading, prompt, chips) and the project cards. It stays fixed to the viewport (`position: sticky` inside the scrolling main panel) while the page scrolls, so it never ends in a hard edge. The prompt is a solid card (28 px radius, no shadow, up to 768 px wide, 64 px minimum text height) filled with Lovable's composer colour (`--composer`: white in light, `#272726` in dark) with icon suggestion pills under it. Recent projects sit in a fully rounded panel (32 px corners, 24 px padding, 48 px margins at the sides and bottom on desktop, 12 px on phones) that rises out of the gradient at 85 % of the viewport, as on Lovable's dashboard: a pill switcher (Search → `/projects`, My projects, Templates marked Soon) and "Browse all" (replaces "See all projects"), cards 24 px apart. A blue glow sits under the prompt. The gradient (`<Aurora />`, `src/components/brand/aurora.tsx`, tokens `--aurora-*` in `globals.css`), and the prompt placeholder is typed out and rotated through four example prompts by `useTypewriter` (`src/hooks/use-typewriter.ts`). Reduced motion shows whole phrases and no drift animation._
+- **Home**: heading, **PromptInput** (AI Elements) with attach and model chips (_the canvas also shows visibility and framework chips; both were removed at the owner's request in Phase 5_); Suggestion chips; "Recent projects" (6 cards) + "See all projects". _After Phase 5 the **aurora** gradient fills the whole page behind the header, hero (heading, prompt, chips) and the project cards. It stays fixed to the viewport (`position: sticky` inside the scrolling main panel) while the page scrolls, so it never ends in a hard edge. The prompt is a solid card (28 px radius, no shadow, up to 768 px wide, 64 px minimum text height) filled with Lovable's composer colour (`--composer`: white in light, `#272726` in dark) with icon suggestion pills under it. Recent projects sit in a fully rounded panel (32 px corners, 24 px padding, 48 px margins at the sides and bottom on desktop, 12 px on phones) that rises out of the gradient at 85 % of the viewport, as on Lovable's dashboard: a pill switcher (Search → `/projects`, My projects) and "Browse all" (replaces "See all projects"), cards 24 px apart. A blue glow sits under the prompt. The gradient (`<Aurora />`, `src/components/brand/aurora.tsx`, tokens `--aurora-*` in `globals.css`), and the prompt placeholder is typed out and rotated through four example prompts by `useTypewriter` (`src/hooks/use-typewriter.ts`). Reduced motion shows whole phrases and no drift animation._
   - Submit → `project.create` (name + slug generated from the prompt, see below) → `inngest.send("agent/run")` → navigate to `/p/[slug]`
 - **Projects page**: search, filter tabs (All / On GitHub / Not exported), sort, grid of **ProjectCard** (name, slug, description, edited time, "On GitHub" badge), empty state
   - nuqs: `?q=`, `?filter=all|github|local`, `?sort=edited|name|created`
@@ -335,7 +335,6 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 
 - `project.create` stores the prompt as the project's first `USER` `Message`. The `inngest.send("agent/run")` call is added in Phase 5, when Inngest is installed; it reads that message.
 - `/p/[slug]` ships in Phase 4 as a minimal page (name, slug, prompt, "waiting for the agent" state) with loading / error / not-found, so opening a project works. Phase 6 replaces its body with the workspace.
-- **Templates** is on the canvas but has no phase: the nav item is shown disabled ("Soon").
 - PromptInput **attach** and **mic** were shown disabled with a "Coming soon" tooltip (_both are live as of Phase 5, §5.5 and §5.6_). The **visibility** and **framework** chips from the canvas were dropped (_removed at the owner's request in Phase 5: visibility has no column until Phase 8 export, and Next.js is the only template, so a chip had nothing to choose_). (_Phase 5 enabled **attach** for image references and added a **model** chip, see §5.4–5.5; the mic dictates, see §5.6._)
 - Sidebar credits card: balance = `SUM(delta)`; the bar is balance ÷ total credits ever granted (positive deltas).
 
@@ -629,15 +628,15 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 - **Ledger-based** balance (`SUM(delta)`); never store a mutable balance without the ledger
 - Top-up: any whole-dollar amount **$5–$100**
 - Rate: `CREDITS_PER_USD` env var (design assumed 100; product decision)
-- Usage: the run's exact cost includes the Builder's model calls and the guardrail classifier calls (§5.2); the ledger meta lists them as `builder` and `guard`.
+- Usage: the run cost includes the Builder's model calls and the guardrail classifier calls (§5.2); the ledger meta lists them as `builder` and `guard`. Gateway-reported costs are used when available; otherwise the live-price estimate is recorded, with exact and estimated call counts in the ledger.
 - Usage: debit per agent run from token usage. Show cost in the chat ("N credits used") and on the version ("v3 · 42 credits").
-- Block new runs when balance ≤ 0, with a top-up prompt
+- Block new runs when balance ≤ 0, with a top-up prompt. Runs are serialized per user so concurrent projects cannot spend the same starting balance; an in-flight turn can still slightly exceed the balance.
 
 ### 7.2 Payments
 
 - `PaymentProvider` interface (`createCheckout(amountCents, userId)`, `verifyWebhook(req)`) with a **Stripe** implementation:
   - Stripe Checkout Session, `mode: "payment"`, `price_data` with the chosen amount; validate $5–$100 on the server
-  - `app/api/webhooks/stripe/route.ts`: verify signature, handle `checkout.session.completed`, **idempotent** ledger insert (`paymentId` unique)
+  - `app/api/webhooks/stripe/route.ts`: verify signature, handle paid `checkout.session.completed` and `checkout.session.async_payment_succeeded`, **idempotent** payment and ledger inserts (`providerRef` and `paymentId` unique). Freeze the purchased credit amount in the signed Checkout Session metadata; grant only after payment clears.
 - ⚠️ **Risk:** Stripe accounts are **invite-only for Indian businesses**. Request an invite early. Keep the interface so another provider can be added without touching the UI or ledger. Build and test everything in Stripe **test mode** meanwhile.
 
 ### 7.3 Usage & credits page
@@ -654,15 +653,19 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 
 ## Phase 8 — Export to GitHub
 
-- Button in the workspace header. Disabled while building; shows "On GitHub" badge + repo link after export.
-- Flow: ensure repo scope (Phase 3 note) → dialog (repo name prefilled with slug, public/private) → create repo → push the current Version as one commit
+- Button in the workspace header. Disabled while building or exporting; shows an "On GitHub" badge + repo link after a successful push.
+- **Execution:** an authenticated tRPC mutation validates project ownership and export options, then enqueues a typed GitHub export event. A dedicated **Inngest function** owns sandbox recovery, repository creation and pushing the code. No API route or request handler performs the export directly; the request only starts the durable job.
+- **Flow:** ensure repo scope (Phase 3 note) → dialog (repo name prefilled with slug, public/private) → enqueue export → resume/recover sandbox → prepare and scan files → create or reuse repo → push commit → persist result → publish success.
+- **Sandbox first, before any push:** connect to the project's existing sandbox and resume it if idle/paused, reusing the Phase 5 lifecycle helpers. If it cannot be resumed or no longer exists, create a new sandbox and restore the project's latest saved **READY Version snapshot**. Save the replacement sandbox id and preview URL on the project. A missing snapshot or failed recovery produces an export error; never push an empty or partially restored project.
+- **Durable steps and retries:** sandbox recovery, file preparation, repository creation, commit/push and result persistence run as resumable Inngest steps. Serialize exports per project and coordinate with generation/restore so files cannot change during preparation. Retries must reuse the repository and avoid duplicate commits for the same export request.
+- **Realtime UI:** publish export progress and completion through the existing project-scoped Inngest realtime channel. The workspace subscribes with **`useRealtime` from `inngest/react`**, showing queued, resuming/recovering sandbox, preparing, pushing, succeeded or failed states. Show **"Pushed to GitHub"** only after the push succeeds and the repository/commit result is persisted. Errors show a retry action. Persist job status and repository/commit details so a reload or missed realtime event can recover the actual outcome.
 - Implementation candidates (evaluate first):
-  - `@octokit/rest` with the Git Data API (create blobs → tree → commit → update ref), all server-side with the user's GitHub access token from Better Auth's `Account` table
-  - Alternative: run `git` inside the E2B sandbox and push with a short-lived token (no file round-trip, but a token enters the sandbox; prefer the Octokit route)
-- Re-export pushes a new commit to the same repo; store `githubRepo` on the project
-- Exclude `node_modules`, `.next`, `.env*`, `.agents/`, `.claude/`, `agent/skills/` and `skills-lock.json` (the skills, §5.7); run the secret scan first (§5.10); add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
+  - `@octokit/rest` with the Git Data API (create blobs → tree → commit → update ref), executed inside the Inngest job with the user's GitHub access token from Better Auth's `Account` table. Read the export files from the resumed/recovered sandbox after preparation; keep GitHub credentials server-side and out of sandbox files, model context and realtime payloads.
+  - Running `git` inside E2B would put a GitHub credential in the sandbox; the existing no-secrets-in-sandboxes rule still applies, so prefer the server-side Octokit approach within the Inngest function.
+- Re-export pushes a new commit to the same repo; store `githubRepo` on the project.
+- Exclude `node_modules`, `.next`, `.env*`, `.agents/`, `.claude/`, `agent/skills/` and `skills-lock.json` (the skills, §5.7); run the secret scan first (§5.10); add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview).
 
-**Done when:** a project exports to a new repo that `git clone && npm i && npm run dev` runs locally.
+**Done when:** an Inngest export job resumes an idle sandbox or rebuilds an unavailable one from the saved Version, pushes the project to GitHub, and reports "Pushed to GitHub" through realtime only after success. Test both recovery paths, failed recovery/push, reload/reconnect and duplicate event delivery. The exported repo must run locally with `git clone && npm i && npm run dev`.
 
 ---
 
@@ -707,6 +710,10 @@ AI_GUARD_MODEL=openai/gpt-oss-safeguard-20b    # policy classifier for input and
 CREDITS_PER_USD=100
 CREDIT_MARKUP=1          # 1 = model cost only
 
+# Stripe Checkout (optional until payments are configured)
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
 # Sandbox
 E2B_API_KEY=
 E2B_TEMPLATE_ID=         # printed by `bun run sandbox:build`
@@ -721,14 +728,6 @@ AWS_REGION=
 INNGEST_DEV=             # 1 locally (Dev Server); unset in production
 INNGEST_EVENT_KEY=
 INNGEST_SIGNING_KEY=
-```
-
-**Planned variables** (not yet in `src/config/env.ts`; they move into the list above when their phase is built, together with `.env.example` and the test env):
-
-```
-# Phase 7 (billing)
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
 ```
 
 `SECRETS_ENCRYPTION_KEY` was removed with project secrets in the Phase 5 simplification; a value left in a local `.env` is ignored.
@@ -759,6 +758,6 @@ STRIPE_WEBHOOK_SECRET=
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template with skills, the Builder (Inngest + AI SDK, AI Gateway models; web search when the user references a website), input and output guardrails, sandbox lifecycle (pause instead of kill, checkpoints, recovery), realtime events, metering, image attachments. Simplified on 13 November 2026 and the dropped 5b/5c code removed (§5.13)
 - [x] Phase 6: workspace (chat, preview + overlay, read-only code) with the §6.4 backend (follow-ups, stop, retry, restore, wake) and the mobile workspace (§6.5); live generation checked, both findings fixed, canvas signed off by the owner
-- [ ] Phase 7: credits ledger, Stripe top-ups, usage page (credit ledger and balance card from Phase 5/3 only; no Stripe top-up or usage page)
+- [x] Phase 7: credits ledger, Stripe top-ups, usage page; test-mode payments confirmed successful by the owner. The payment issue was resolved by applying the missing database migration.
 - [ ] Phase 8: Export to GitHub
 - [ ] Phase 9: hardening, tests, launch

@@ -159,14 +159,10 @@ test("someone else's or a missing project is not found", async ({ page }) => {
   ).toHaveAttribute("content", /noindex/);
 });
 
-test("Templates is disabled, the sidebar collapses to icons and Appearance sets the theme", async ({
+test("the sidebar collapses to icons and Appearance sets the theme", async ({
   page,
 }) => {
   await page.goto("/projects");
-  await expect(page.getByRole("button", { name: "Templates" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
   await page.keyboard.press("ControlOrMeta+b");
   await expect(
     page.locator("[data-slot=sidebar][data-state=collapsed]"),

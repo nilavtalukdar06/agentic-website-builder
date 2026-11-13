@@ -82,14 +82,6 @@ export function RecentProjects() {
           >
             My projects
           </span>
-          <span
-            aria-disabled="true"
-            title="Templates are coming soon"
-            className={`${pill} cursor-not-allowed text-muted-foreground/70`}
-          >
-            Templates
-            <span className="text-xs">Soon</span>
-          </span>
         </div>
         <Link
           href="/projects"

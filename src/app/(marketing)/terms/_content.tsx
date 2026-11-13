@@ -154,9 +154,9 @@ export const termsSections: ArticleSection[] = [
             before you pay.
           </li>
           <li>
-            Credits are deducted as the agent works, based on the usage of each
-            step. The balance and every deduction are shown on the Usage &amp;
-            credits page.
+            Credits are deducted for completed agent runs based on usage. The
+            balance and every deduction are shown on the Usage &amp; credits
+            page.
           </li>
           <li>
             Payments are processed by our payment provider. We never see or

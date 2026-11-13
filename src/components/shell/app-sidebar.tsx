@@ -6,7 +6,6 @@ import {
   CreditCardIcon,
   FolderIcon,
   HouseIcon,
-  LayoutGridIcon,
   PanelLeftIcon,
   SearchIcon,
 } from "lucide-react";
@@ -33,7 +32,6 @@ import { type ShellUser, UserMenu } from "./user-menu";
 export const platformNav = [
   { title: "Home", href: "/", icon: HouseIcon },
   { title: "Projects", href: "/projects", icon: FolderIcon },
-  { title: "Templates", href: "/templates", icon: LayoutGridIcon, soon: true },
   { title: "Usage & credits", href: "/usage", icon: CreditCardIcon },
 ] as const;
 
@@ -119,31 +117,15 @@ export function AppSidebar({
             <SidebarMenu className="group-data-[collapsible=icon]:items-center">
               {platformNav.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  {"soon" in item ? (
-                    <>
-                      <SidebarMenuButton
-                        aria-disabled
-                        tooltip={item.title}
-                        className="border"
-                      >
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </SidebarMenuButton>
-                      <SidebarMenuBadge>Soon</SidebarMenuBadge>
-                    </>
-                  ) : (
-                    <SidebarMenuButton
-                      className={
-                        isNavActive(item.href, current) ? "border" : ""
-                      }
-                      isActive={isNavActive(item.href, current)}
-                      tooltip={item.title}
-                      render={<Link href={item.href} />}
-                    >
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </SidebarMenuButton>
-                  )}
+                  <SidebarMenuButton
+                    className={isNavActive(item.href, current) ? "border" : ""}
+                    isActive={isNavActive(item.href, current)}
+                    tooltip={item.title}
+                    render={<Link href={item.href} />}
+                  >
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

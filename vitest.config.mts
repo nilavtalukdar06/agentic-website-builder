@@ -16,6 +16,8 @@ export default defineConfig({
       GITHUB_CLIENT_ID: "test-client-id",
       GITHUB_CLIENT_SECRET: "test-client-secret",
       AI_GATEWAY_API_KEY: "test-gateway-key",
+      STRIPE_SECRET_KEY: "sk_test_dummy",
+      STRIPE_WEBHOOK_SECRET: "whsec_test_dummy",
       E2B_API_KEY: "test-e2b-key",
       E2B_TEMPLATE_ID: "test-template",
       AWS_ACCESS_KEY_ID: "test-access-key",

@@ -108,7 +108,7 @@ export const runAgent = inngest.createFunction(
     name: "Run the builder",
     triggers: [agentRun],
     concurrency: [
-      { key: "event.data.userId", limit: 2 },
+      { key: "event.data.userId", limit: 1 },
       { key: "event.data.projectId", limit: 1 },
     ],
     retries: 2,

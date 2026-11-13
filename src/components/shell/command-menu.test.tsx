@@ -51,7 +51,6 @@ describe("CommandMenu", () => {
     fireEvent.keyDown(document, { key: "k", metaKey: true });
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("Usage & credits")).toBeInTheDocument();
-    expect(screen.queryByText("Templates")).toBeNull();
     fireEvent.click(await screen.findByText("Gamma site"));
     expect(router.push).toHaveBeenCalledWith("/p/gamma");
   });

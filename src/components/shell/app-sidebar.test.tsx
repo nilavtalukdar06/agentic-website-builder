@@ -42,12 +42,9 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("link", { name: "Home" })).not.toHaveAttribute(
       "data-active",
     );
-    expect(screen.queryByRole("link", { name: /Templates/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Templates" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByText("Soon")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link").map((link) => link.getAttribute("href")),
+    ).toEqual(["/", "/", "/projects", "/usage"]);
     expect(screen.getByText("recent slot")).toBeInTheDocument();
     expect(screen.getByText("credits slot")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New project" })).toBeEnabled();

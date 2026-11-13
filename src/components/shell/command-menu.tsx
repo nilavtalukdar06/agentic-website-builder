@@ -154,18 +154,16 @@ export function CommandMenu() {
             </CommandItem>
           </CommandGroup>
           <CommandGroup heading="Go to">
-            {platformNav
-              .filter((item) => !("soon" in item))
-              .map((item) => (
-                <CommandItem
-                  key={item.href}
-                  value={item.title}
-                  onSelect={() => run(() => router.push(item.href))}
-                >
-                  <item.icon />
-                  {item.title}
-                </CommandItem>
-              ))}
+            {platformNav.map((item) => (
+              <CommandItem
+                key={item.href}
+                value={item.title}
+                onSelect={() => run(() => router.push(item.href))}
+              >
+                <item.icon />
+                {item.title}
+              </CommandItem>
+            ))}
           </CommandGroup>
           <CommandSeparator />
           {open ? (
