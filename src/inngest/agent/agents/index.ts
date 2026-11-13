@@ -13,4 +13,5 @@ export const agentSpecs: Record<AgentName, AgentSpec> = {
   reviewer,
 };
 
+export { fastBuilder } from "./builder";
 export type { AgentSpec } from "./types";

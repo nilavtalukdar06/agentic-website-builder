@@ -34,9 +34,11 @@ import {
   resolveSelectedModel,
   useAgentModels,
 } from "@/components/models/model-picker";
+import { ModePicker } from "@/components/models/mode-picker";
 import { PROMPT_INPUT_ID } from "@/components/shell/new-project-button";
 import { toast } from "@/components/ui/toast";
 import { useTypewriter } from "@/hooks/use-typewriter";
+import { type AgentModeName, DEFAULT_AGENT_MODE } from "@/lib/agent/modes";
 import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENT_BYTES,
@@ -101,6 +103,7 @@ function PromptComposer() {
   const queryClient = useQueryClient();
   const { textInput, attachments } = usePromptInputController();
   const [modelId, setModelId] = useState<string | null>(null);
+  const [mode, setMode] = useState<AgentModeName>(DEFAULT_AGENT_MODE);
   const [uploading, setUploading] = useState(false);
   const models = useAgentModels();
   const placeholder = useTypewriter(promptPlaceholders);
@@ -194,6 +197,7 @@ function PromptComposer() {
           await create.mutateAsync({
             prompt,
             model: selectedModel?.id,
+            mode,
             attachmentIds,
           });
         }}
@@ -232,6 +236,7 @@ function PromptComposer() {
               needsVision={hasImages}
               disabled={busy}
             />
+            <ModePicker value={mode} onChange={setMode} disabled={busy} />
           </PromptInputTools>
           <PromptInputTools>
             <PromptInputSpeechButton

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AgentModeName } from "@/lib/agent/modes";
 import type { AgentName } from "@/lib/agent/parts";
 
 export const REVIEW_FILE_THRESHOLD = 5;
@@ -16,12 +17,13 @@ export type RouteInput = {
   hasVersion: boolean;
   attachments: number;
   files: string[];
+  mode?: AgentModeName;
 };
 
 export type Route = {
   agents: AgentName[];
   reason: string;
-  decidedBy: "rules" | "model" | "fallback";
+  decidedBy: "rules" | "model" | "fallback" | "fast";
 };
 
 const order: AgentName[] = ["researcher", "designer", "builder"];
@@ -38,6 +40,13 @@ function wordCount(text: string) {
 }
 
 export function routeByRules(input: RouteInput): Route | null {
+  if (input.mode === "fast") {
+    return {
+      agents: ["builder"],
+      reason: "Fast mode: the builder works alone.",
+      decidedBy: "fast",
+    };
+  }
   if (
     input.hasVersion &&
     input.attachments === 0 &&
@@ -102,9 +111,12 @@ export async function routeAgents(
 export function shouldReview({
   hasVersion,
   written,
+  mode,
 }: {
   hasVersion: boolean;
   written: number;
+  mode?: AgentModeName;
 }) {
+  if (mode === "fast") return false;
   return written > 0 && (!hasVersion || written >= REVIEW_FILE_THRESHOLD);
 }

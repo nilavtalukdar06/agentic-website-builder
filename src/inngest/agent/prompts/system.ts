@@ -60,6 +60,19 @@ ${SUMMARY_CLOSE}
 
 Do not include the summary tags until everything is done.`;
 
+export const FAST_MODE_PROMPT = `## Fast mode
+The user picked Fast mode: you work alone, with no designer or reviewer, and the goal is a finished result in as few replies as possible.
+- Plan the whole change once, before your first write. Don't explore files you won't change.
+- In your first reply, read AGENTS.md, load the one skill that fits best, and read every file you need, all in parallel.
+- Write all the files for the change in as few createOrUpdateFiles calls as you can, many files per call. Don't re-read files you just wrote.
+- Install every package in one command, before you write the code that uses it.
+- Check that the page compiles once, after all writes, then fix anything it shows in the same reply if you can.
+- Then reply with the task_summary straight away.`;
+
 export function builderInstructions(skills: string) {
   return `${SYSTEM_PROMPT}\n\n${skills}`;
+}
+
+export function fastBuilderInstructions(skills: string) {
+  return `${builderInstructions(skills)}\n\n${FAST_MODE_PROMPT}`;
 }

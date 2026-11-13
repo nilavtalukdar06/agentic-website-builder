@@ -492,7 +492,7 @@ Today `run-agent` runs one coding loop. New: an **orchestrator** step chooses th
 | Builder    | The Phase 5 coding agent: writes files and runs commands                                                                                                                                                      | terminal, `createOrUpdateFiles`, `readFiles`, `loadSkill` | `next-best-practices`, `vercel-react-best-practices`, `vercel-composition-patterns`, `shadcn`, `frontend-design` | Always                                                                                           |
 | Reviewer   | Checks the result: `npx tsc --noEmit`, lint, that the page compiles, and the skill checklists (server and client boundaries, composition, accessibility). Returns findings; the Builder gets **one** fix pass | terminal (read-only commands), `readFiles`, `loadSkill`   | all five                                                                                                         | After the Builder, for a first version or when it wrote 5 or more files; skipped for small edits |
 
-- **Roles added later:** Phase 5d adds the **Integrator** (database, AI provider and service setup, with questions to the user) and Phase 5e adds the **Scout** (finds and installs skills). The router chooses them the same way.
+- **Roles added later:** Phase 5d adds the **Integrator** (database, AI provider and service setup, with questions to the user) and the **Tester** (Vitest, Playwright and Puppeteer tests, §5d.7), and Phase 5e adds the **Scout** (finds and installs skills). The router chooses them the same way.
 - **Router:** one cheap structured call (`generateText` with `Output.object`, zod `{ agents: ("researcher" | "designer" | "builder")[], reason }`) from the message, whether the project has a Version, its file list and any attachments. Obvious cases are decided in code: an existing site with a short edit (25 words or fewer, no images, no URL) goes to the Builder alone with no model call. After the model answers, code adds the Builder always, the Researcher when the message names a site or URL, and the Designer for a new site or when images are attached. **Default when unsure: Builder alone** (cheapest and safe), also when the router call fails. Reviewer is decided after the Builder finishes, from the number of files written.
 
   | Message                                    | Agents                                     |
@@ -501,6 +501,7 @@ Today `run-agent` runs one coding loop. New: an **orchestrator** step chooses th
   | "Add a newsletter signup"                  | Builder (+ Reviewer if it wrote 5+ files)  |
   | "A landing page for Ember & Oak"           | Designer → Builder → Reviewer              |
   | "A site for Acme, like stripe.com/pricing" | Researcher → Designer → Builder → Reviewer |
+  | Any message in Fast mode (§5b.9)           | Builder                                    |
 
 - **Order and parallelism:** sequential by default, because all agents share one sandbox. Only **read-only** agents run in parallel (Researcher and Designer, as parallel step branches). Never two writers at once.
 - **Handoff:** compact briefs (about 1.5 k tokens at most), persisted as `agent` parts, not transcripts. This is the AI SDK subagent pattern: the parent sees a summary, not the subagent's whole context.
@@ -532,6 +533,16 @@ The chat shows one `Task` group per agent ("Researcher · 3 sources", "Designer 
 | Loading skills    | Own `loadSkill` tool (about 40 lines) on our loop                | AI SDK harness skills (need a harness runtime); eve           |
 | Web search        | `gateway.tools.parallelSearch` (Perplexity / Exa as options)     | Provider-native search tools; own scraper                     |
 | Multiple agents   | Namespaced step loops in `run-agent`, router via structured call | `ToolLoopAgent` subagents (no per-step durability); harnesses |
+
+### 5b.9 Fast mode (added at the owner's request, 13 November 2026)
+
+The composer has a **mode** select next to the model chip: **Standard** (the team above, the default) or **Fast** (the Builder alone, in as few turns as it can).
+
+- **What Fast skips:** the router model call (the route is decided in code, `decidedBy: "fast"`), the Researcher, the Designer, the Reviewer and its fix pass.
+- **What stays:** every guardrail (the input and output classifiers, the secret scan before save, the executor's path, command and package guards, `askUser`), the "read `AGENTS.md` and load a skill before the first write" rule, the credit stop, handoff to a fresh run, and one debit per message.
+- **Fewer turns, by prompt, not by cap:** the Builder gets an extra block telling it to plan once, read `AGENTS.md` and load its skill in the first turn, batch many files into each `createOrUpdateFiles`, skip optional exploration and re-reads, check the compile once at the end, then reply with `<task_summary>`. There is no turn cap (the 13 November decision of no Builder turn limit stands), so a Fast run never fails half-built.
+- **Stored on the message:** `Message.mode` (`STANDARD | FAST`, default `STANDARD`), set by `project.create`. Handoff and `askUser` continuations re-read the same message, so they stay in Fast. The ledger meta records `mode`.
+- **UI:** `PromptInputSelect` from the AI Elements prompt-input kit (vibe-ui has no mode control; this reuses the composer kit's select, flagged to the owner). The Phase 6 workspace composer gets the same select.
 
 **Done when:**
 
@@ -743,9 +754,41 @@ The agent cannot start arbitrary background processes. Tools `startProcess`, `st
 
 ### 5d.6 Build and verify
 
-After setup the Integrator runs `prisma generate`, the migration (after confirmation), `npx tsc --noEmit`, starts the services, and the Reviewer calls the app's health routes (database reachable, provider call succeeded, Inngest function ran) and reports what passed. A setup that cannot be verified is reported as unverified, not as done.
+After setup the Integrator runs `prisma generate`, the migration (after confirmation), `npx tsc --noEmit` and starts the services. The app's health routes (database reachable, provider call succeeded, Inngest function ran) are then checked by the **Tester's Playwright suite** (§5d.7), which reports what passed. A setup that cannot be verified is reported as unverified, not as done.
 
-### 5d.7 Documentation and legal
+### 5d.7 Testing: Vitest, Playwright, Puppeteer and the Tester (added at the owner's request, 13 November 2026)
+
+**Goal:** a generated app is complete only when its tests pass. A new **Tester** agent writes and runs unit, end-to-end and browser tests against the running app. Failures go back to the Builder, the Reviewer checks the fix, and the Tester runs again.
+
+- **Template:** `vitest`, `@testing-library/react`, `jsdom`, `@playwright/test` with **Chromium only** (`npx playwright install --with-deps chromium`), and `puppeteer-core` pointed at that same Chromium (`executablePath` from Playwright), so the image carries one browser. Measure the image size and boot time before settling, like `inngest-cli` (§5d.4). The template also ships `vitest.config.ts` (jsdom) and `playwright.config.ts` with `baseURL: "http://localhost:3000"` and no `webServer`, because the dev server is already running.
+- **What each tool covers:**
+  - **Vitest:** logic and components (`*.test.ts(x)` next to the code).
+  - **Playwright:** user flows across pages (`e2e/*.spec.ts`): forms, navigation, auth, and the database, AI and Inngest health routes from §5d.6.
+  - **Puppeteer:** a page sweep (`tests/browser/sweep.mjs`) that visits every route and fails on console errors, hydration warnings, failed requests or broken internal links. It takes screenshots at 3 viewports (mobile, tablet, desktop) for the report.
+- **Tester role:**
+  - **Tools:** `readFiles`, `loadSkill`, and `createOrUpdateFiles` limited by the executor to test paths (`tests/`, `e2e/`, `*.test.ts(x)`, `vitest.config.ts`, `playwright.config.ts`). The Tester never edits app code.
+  - **Terminal allowlist:** `npx vitest run`, `npx playwright test`, `node tests/browser/*.mjs`, `npx tsc --noEmit`, `curl localhost:3000`, plus the Reviewer's read-only commands (§5b.4). The 3-minute command timeout applies, and output is redacted and truncated like any tool result.
+  - **Skills:** `next-best-practices`, `vercel-react-best-practices`.
+  - **Output:** `<test_report>` with each suite's result (passed, failed, skipped) and every failure as file, test or step, and error. "none failed" means the suites passed.
+- **Loop:** Builder → Reviewer → **Tester**. A failing report starts a round:
+  1. The report goes to the Builder as a fix pass (continuing its conversation, like the Reviewer's findings).
+  2. The Reviewer checks the files the fix changed.
+  3. The Tester runs the suites again.
+
+  At most **3 rounds**. Passing tests are the completion condition. If tests still fail after round 3, the version is saved (the work is kept and charged), and the reply lists the failing tests and says the app is **not verified**, never "done".
+
+- **When it runs:** full-stack requests (the Integrator ran), first versions, and edits that wrote 5 or more files (the Reviewer threshold). Skipped for small edits and in **Fast mode** (§5b.9).
+- **Snapshots and export:** test files are project files (they count toward the 400-file cap). `test-results/`, `playwright-report/`, `coverage/` and the sweep screenshots are excluded from snapshots and the GitHub export.
+- **Realtime and persistence:** a `test` topic `{ suite: vitest | playwright | browser, state: running | passed | failed, passed, failed }`, and a persisted `tests` part with the last report. Phase 6 shows it as a "Tester · 24 passed" task group. Metering lists the Tester under `meta.agents`. Each round is one Builder, Reviewer and Tester pass in the same run, so there is still one debit.
+- **Package decisions (recorded in `docs/decisions.md` when built):**
+
+  | Need                  | Chosen                                                   | Rejected                                                    |
+  | --------------------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+  | Unit tests in the app | Vitest + Testing Library + jsdom (what Vibe itself uses) | Jest (slower setup with ESM and TypeScript)                 |
+  | End-to-end flows      | `@playwright/test`, Chromium only                        | Cypress (heavier, its own runner)                           |
+  | Browser sweep         | `puppeteer-core` on Playwright's Chromium                | Full `puppeteer` (second browser download); Playwright only |
+
+### 5d.8 Documentation and legal
 
 Privacy Policy: user-provided keys and database URLs are stored encrypted and used only inside the user's sandbox. Terms: the user is responsible for their own database, API keys and any third-party charges.
 
@@ -755,6 +798,7 @@ Privacy Policy: user-provided keys and database URLs are stored encrypted and us
 - The Gemini example above works end to end, and choosing the gateway instead asks for `AI_GATEWAY_API_KEY`.
 - A request for background jobs installs Inngest, runs its Dev Server as a managed process, and a test event runs a function.
 - `prisma migrate reset` is refused; an unvetted package asks first.
+- A first version gets Vitest, Playwright and Puppeteer runs in the Tester's report. A deliberately broken flow (for example a form that doesn't submit) is caught by the Tester, fixed by the Builder, checked by the Reviewer, and passes on the next round. A run still failing after 3 rounds saves its version and replies "not verified" with the failing tests. Fast mode skips the Tester.
 
 ---
 
@@ -1091,7 +1135,7 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 8. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
 9. **Guardrails (Phase 5c):** _partly resolved when built_: `GuardEvent` stores hashes only; the classifier fails open (deterministic checks only, `guard.input: "skipped"` in the ledger meta) except for projects that hold secrets, which fail closed; `review` continues with restricted tools; the initial install allowlist is in `src/inngest/agent/guardrails/packages.ts`. Still open: whether a `block` is ever appealed (blocks are never charged), which packages to add to the allowlist over time, and whether `review` should ask the user instead
 10. **Secrets (Phase 5c):** _encryption resolved when built_: Node `crypto` AES-256-GCM with project id and name as additional data, key version 1 from `SECRETS_ENCRYPTION_KEY`. Still open: how to make previews private for projects that hold a database URL (the Next HMR websocket cannot go through a route handler); whether to adopt E2B's header injection for HTTP API keys; a per-project secret or an account-level vault that projects opt into; rotation policy for `SECRETS_ENCRYPTION_KEY`
-11. **Full-stack (Phase 5d):** `@prisma/adapter-neon` or `@prisma/adapter-pg` per deployment target; when to move generated apps to Prisma 8 (still a release candidate); AgentKit or plain `inngest` for users who ask for agents; whether to pre-install `inngest-cli` and the Prisma CLI in the template; the egress allowlist per integration
+11. **Full-stack (Phase 5d):** `@prisma/adapter-neon` or `@prisma/adapter-pg` per deployment target; when to move generated apps to Prisma 8 (still a release candidate); AgentKit or plain `inngest` for users who ask for agents; whether to pre-install `inngest-cli` and the Prisma CLI in the template; the egress allowlist per integration; the Tester (§5d.7): Puppeteer sharing Playwright's Chromium or its own download, the 3-round limit, and whether the Tester also runs on edits under 5 files
 12. **Skills (Phase 5e):** the trusted-owner allowlist, whether T1 skills are pre-approved by default, the Firecrawl credit budget per run and per user, and whether the Researcher should move from gateway search to Firecrawl
 13. **Memory (Phase 5e):** Supermemory or our own pgvector table on Neon in the long run; the retention and backup-purge answers from Supermemory before launch; how much of "What Vibe remembers" ships in Phase 6
 14. **Evals (Phase 5f):** which model judges; the regression tolerance (start 0.1); whether to build the harness and the Builder core suite **before** Phase 5b so that Phases 5b to 5e are measured against a baseline instead of judged by eye (recommended); the CI cadence once CI exists; whether Confident AI or any production telemetry is ever adopted (Privacy Policy and redaction review first)
@@ -1107,9 +1151,9 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 - [x] Phase 3.1: public pages (`/terms`, `/privacy`; `/docs`, `/contact` and `/status` were built, then removed at the owner's request)
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
-- [x] Phase 5b: five skills + `AGENTS.md` rules in every site, `loadSkill` enforced before writes, web search (Researcher), router and Researcher / Designer / Builder / Reviewer agents, per-agent metering
+- [x] Phase 5b: five skills + `AGENTS.md` rules in every site, `loadSkill` enforced before writes, web search (Researcher), router and Researcher / Designer / Builder / Reviewer agents, per-agent metering; Fast mode (Builder only, §5b.9)
 - [x] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery, pause instead of kill with binary snapshots (backend; cards and "Waking up the preview…" in Phase 6; full live `agent:smoke` scenarios still to run with the Inngest dev server)
-- [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role)
+- [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role, Tester with Vitest / Playwright / Puppeteer and the test-fix-review loop)
 - [ ] Phase 5e: skill discovery with Firecrawl, approved and pinned installs, memory with Supermemory
 - [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry) — package decisions recorded in `docs/decisions.md`, harness and `evals/` not yet built
 - [ ] Phase 6: workspace (chat, preview + overlay, read-only code) — only the route scaffold exists (`(workspace)/p/[slug]`: shell header, loading/error/not-found states); no chat, preview or code view yet

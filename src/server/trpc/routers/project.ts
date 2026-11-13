@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { inngest } from "@/inngest/client";
 import { agentRun } from "@/inngest/events";
+import { AGENT_MODES, DEFAULT_AGENT_MODE, toDbMode } from "@/lib/agent/modes";
 import { agentPartsSchema, inputQuestion } from "@/lib/agent/parts";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import {
@@ -199,6 +200,7 @@ export const projectRouter = createTRPCRouter({
       z.object({
         prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH),
         model: z.string().min(1).max(120).optional(),
+        mode: z.enum(AGENT_MODES).default(DEFAULT_AGENT_MODE),
         attachmentIds: z
           .array(z.string().min(1).max(64))
           .max(MAX_ATTACHMENTS)
@@ -260,6 +262,7 @@ export const projectRouter = createTRPCRouter({
                   role: "USER",
                   content: input.prompt,
                   model: model.id,
+                  mode: toDbMode(input.mode),
                   attachments: {
                     connect: attachmentIds.map((id) => ({ id })),
                   },

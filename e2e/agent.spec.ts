@@ -121,6 +121,34 @@ test.describe("with a session", () => {
     await expect(page.getByText("reference.png")).toHaveCount(0);
   });
 
+  test("the composer switches between Standard and Fast mode", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const trigger = page.getByRole("combobox", {
+      name: "Mode: Standard. Change mode",
+    });
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+    await expect(
+      page.getByRole("option", { name: /Standard.*team of agents/ }),
+    ).toBeVisible();
+    const popup = page.locator('[data-slot="select-content"]');
+    expect(
+      await popup.evaluate(
+        (element) => element.scrollWidth - element.clientWidth,
+      ),
+    ).toBeLessThanOrEqual(0);
+    await page.getByRole("option", { name: /Fast.*builder alone/ }).click();
+    await expect(
+      page.getByRole("combobox", { name: "Mode: Fast. Change mode" }),
+    ).toHaveText(/Fast/);
+    const opacity = await page
+      .locator('form [data-slot="input-group"]')
+      .evaluate((group) => getComputedStyle(group).opacity);
+    expect(opacity).toBe("1");
+  });
+
   test("the microphone works where the browser supports speech recognition", async ({
     page,
   }) => {

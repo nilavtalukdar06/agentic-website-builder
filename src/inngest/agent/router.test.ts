@@ -21,6 +21,48 @@ const fresh = (prompt: string): RouteInput => ({
   files: [],
 });
 
+describe("fast mode", () => {
+  test("any message goes to the builder alone, with no model call", async () => {
+    const classify = vi.fn();
+    const route = await routeAgents(
+      {
+        ...fresh("A site for Acme, like stripe.com/pricing"),
+        attachments: 2,
+        mode: "fast",
+      },
+      classify,
+    );
+    expect(route).toEqual({
+      agents: ["builder"],
+      reason: "Fast mode: the builder works alone.",
+      decidedBy: "fast",
+    });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  test("standard mode still routes a new site through the team", async () => {
+    const classify = vi.fn().mockResolvedValue({
+      agents: ["builder"],
+      reason: "r",
+    });
+    const route = await routeAgents(
+      { ...fresh("A landing page for Ember & Oak"), mode: "standard" },
+      classify,
+    );
+    expect(route.agents).toEqual(["designer", "builder"]);
+    expect(classify).toHaveBeenCalledOnce();
+  });
+
+  test("fast mode skips the reviewer", () => {
+    expect(shouldReview({ hasVersion: false, written: 12, mode: "fast" })).toBe(
+      false,
+    );
+    expect(
+      shouldReview({ hasVersion: false, written: 12, mode: "standard" }),
+    ).toBe(true);
+  });
+});
+
 describe("routeAgents", () => {
   test('"Make the heading bigger" → Builder, decided in code', async () => {
     const classify = vi.fn();

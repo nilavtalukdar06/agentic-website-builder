@@ -31,12 +31,15 @@ import {
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
 import { ModelLogo } from "@/components/models/model-logo";
+import { ModePicker } from "@/components/models/mode-picker";
+import type { AgentModeName } from "@/lib/agent/modes";
 import { formatPrice, groupByProvider } from "@/lib/ai/models";
 import { sampleAttachments, sampleModels } from "../_data/fixtures";
 
 export function ModelAttachmentsExample() {
   const [open, setOpen] = useState(false);
   const [modelId, setModelId] = useState(sampleModels[0].id);
+  const [mode, setMode] = useState<AgentModeName>("standard");
   const selected =
     sampleModels.find((model) => model.id === modelId) ?? sampleModels[0];
 
@@ -105,6 +108,7 @@ export function ModelAttachmentsExample() {
                 </ModelSelectorList>
               </ModelSelectorContent>
             </ModelSelector>
+            <ModePicker value={mode} onChange={setMode} />
           </PromptInputTools>
           <PromptInputTools>
             <PromptInputSpeechButton />

@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@/generated/prisma/client";
+import type { AgentModeName } from "@/lib/agent/modes";
 import type { AgentPart } from "@/lib/agent/parts";
 import type { TokenUsage } from "@/server/billing/pricing";
 import type { RunCost } from "@/server/billing/run-cost";
@@ -189,6 +190,7 @@ export async function debitCredits(
     paused?: boolean;
     handoff?: boolean;
     guard?: { input: string; output?: string };
+    mode?: AgentModeName;
   },
 ) {
   if (input.credits <= 0) return null;
@@ -212,6 +214,7 @@ export async function debitCredits(
         ...(input.paused ? { paused: true } : {}),
         ...(input.handoff ? { handoff: true } : {}),
         ...(input.guard ? { guard: input.guard } : {}),
+        ...(input.mode ? { mode: input.mode } : {}),
         ...input.usage,
       },
     },

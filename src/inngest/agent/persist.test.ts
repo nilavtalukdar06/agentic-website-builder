@@ -157,6 +157,14 @@ describe("debitCredits", () => {
     });
   });
 
+  test("records the mode when given", async () => {
+    const { db } = makeDb();
+    await debitCredits(db as never, { ...input, mode: "fast" });
+    expect(db.creditLedger.upsert.mock.calls[0][0].create.meta.mode).toBe(
+      "fast",
+    );
+  });
+
   test("uses EDIT after the first version", async () => {
     const { db } = makeDb();
     await debitCredits(db as never, { ...input, firstVersion: false });

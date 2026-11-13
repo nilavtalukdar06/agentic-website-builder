@@ -5,7 +5,12 @@ import { DESIGNER_PROMPT } from "./designer";
 import { RESEARCHER_PROMPT } from "./researcher";
 import { REVIEWER_PROMPT } from "./reviewer";
 import { ROUTER_PROMPT } from "./router";
-import { builderInstructions, SYSTEM_PROMPT } from "./system";
+import {
+  builderInstructions,
+  FAST_MODE_PROMPT,
+  fastBuilderInstructions,
+  SYSTEM_PROMPT,
+} from "./system";
 
 const rules = readFileSync(
   join(process.cwd(), "sandbox-templates/nextjs/agents-rules.md"),
@@ -98,5 +103,19 @@ describe("working without a turn limit", () => {
       "Keep going until the whole request is done",
     );
     expect(SYSTEM_PROMPT).toContain("There is no turn limit");
+  });
+});
+
+describe("fast mode", () => {
+  test("the fast builder keeps the full prompt and adds the fast block", () => {
+    const fast = fastBuilderInstructions("SKILLS");
+    expect(fast.startsWith(builderInstructions("SKILLS"))).toBe(true);
+    expect(fast.endsWith(FAST_MODE_PROMPT)).toBe(true);
+    expect(FAST_MODE_PROMPT).toContain("as few replies as possible");
+    expect(FAST_MODE_PROMPT).toContain("task_summary");
+  });
+
+  test("the standard builder has no fast block", () => {
+    expect(builderInstructions("SKILLS")).not.toContain("## Fast mode");
   });
 });

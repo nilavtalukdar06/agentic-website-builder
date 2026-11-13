@@ -165,6 +165,15 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Search cap overshoot** → the same run made 7 searches against the cap of 6, because one model call ran several provider-executed searches before the between-turn check. Accepted: the overshoot is bounded by one turn (about $0.005 a search), the prompt asks for at most two per reply, and the exact gateway cost bills what happened.
 - **Privacy** → the Privacy Policy lists **Parallel** (the gateway's search provider) under "Who we share it with"; updated date 12 November 2026, flagged to the owner.
 
+## Fast mode (built 13 November 2026; owner's request, §5b.9)
+
+- **What Fast is** → the Builder alone (route decided in code with `decidedBy: "fast"`, no router call, no Researcher, Designer, Reviewer or fix pass) with an extra prompt block asking it to batch work and finish in as few turns as it can → a separate cheaper model (the user's picked model stays the only model, as in 5b).
+- **No turn cap** → prompt only (owner's choice): the 13 November decision of no Builder turn limit stands, so a Fast run never fails or stops half-built → a soft cap of 12 turns.
+- **Guardrails kept** → classifiers, secret scan, executor guards and the "read `AGENTS.md` and load a skill before the first write" rule all stay (owner's choice); the model can do those reads in its first turn alongside other reads → dropping the skill rule (saves about one turn, brings back the theme and dark-mode mistakes 5b fixed).
+- **Stored on `Message.mode`** (`AgentMode` enum, default `STANDARD`) → handoff and `askUser` continuations re-read the triggering message, so a continuation keeps the mode without a new event field → an `agent/run` event field (lost if a continuation is sent from the answer route) or a project-level setting (the mode is per message).
+- **UI** → `PromptInputSelect` from the AI Elements prompt-input kit beside the model chip → a toggle button (less clear about what Standard does). vibe-ui has no mode control; flagged to the owner.
+- **Legal** → no change: no new data store, provider or kind of personal data (the mode is a field on an existing row).
+
 ## Sandbox AGENTS.md rules (shipped ahead of Phase 5b)
 
 - **Where the rules live** → `sandbox-templates/nextjs/agents-rules.md`, merged by the template build **above** the block `next dev` manages in `AGENTS.md` (`cat rules AGENTS.md`), with `grep` checks that fail the build if either part is missing → editing inside the managed block (`next dev` re-adds it, so our text would be lost or duplicated), a heredoc in the Dockerfile (quoting). `CLAUDE.md` stays `@AGENTS.md`. Verified on a fresh sandbox: our rules first, the managed block intact after them, no duplicate, dev server up.

@@ -1,6 +1,7 @@
 import "server-only";
 import type { ModelMessage } from "ai";
 import { NonRetriableError } from "inngest";
+import { fromDbMode } from "@/lib/agent/modes";
 import type { AgentName, AgentPart, TaskItem } from "@/lib/agent/parts";
 import { findAgentModel, lookupGenerationCost } from "@/server/ai/gateway";
 import { getCreditBalance } from "@/server/billing/balance";
@@ -31,7 +32,7 @@ import {
 import { prepareSandboxSecrets } from "@/server/secrets/inject";
 import { createRedactor } from "@/server/secrets/redact";
 import { loadSecretValues, projectHoldsSecrets } from "@/server/secrets/store";
-import { agentSpecs } from "../agent/agents";
+import { agentSpecs, fastBuilder } from "../agent/agents";
 import { hasFindings } from "../agent/agents/reviewer";
 import {
   type Brief,
@@ -147,6 +148,7 @@ export const runAgent = inngest.createFunction(
             createdAt: true,
             content: true,
             model: true,
+            mode: true,
             _count: { select: { attachments: true } },
           },
         }),
@@ -194,6 +196,7 @@ export const runAgent = inngest.createFunction(
         projectName: project.name,
         sandboxId: project.sandboxId,
         prompt: trigger.content,
+        mode: fromDbMode(trigger.mode),
         attachments: trigger._count.attachments,
         history: history.filter(
           (message) =>
@@ -350,6 +353,7 @@ export const runAgent = inngest.createFunction(
             hasVersion: setup.hasVersion,
             attachments: setup.attachments,
             files: setup.files,
+            mode: setup.mode,
           },
           async (prompt) => {
             const result = await classifyAgents(model, prompt);
@@ -592,7 +596,7 @@ export const runAgent = inngest.createFunction(
       );
       const build = await runAgentLoop({
         ...loopArgs,
-        spec: agentSpecs.builder,
+        spec: setup.mode === "fast" ? fastBuilder : agentSpecs.builder,
         messages: briefs ? [...visionHistory, briefs] : visionHistory,
         budget,
         expectWrites: !resume,
@@ -629,7 +633,11 @@ export const runAgent = inngest.createFunction(
         !paused &&
         !handoff &&
         !outOfCredits &&
-        shouldReview({ hasVersion: setup.hasVersion, written: written.length })
+        shouldReview({
+          hasVersion: setup.hasVersion,
+          written: written.length,
+          mode: setup.mode,
+        })
       ) {
         const review = await runAgentLoop({
           ...loopArgs,
@@ -797,6 +805,7 @@ export const runAgent = inngest.createFunction(
           versionNumber: null,
           handoff: true,
           guard: guardMeta,
+          mode: setup.mode,
         });
         const publish = createPublisher(projectId);
         await publish("credits", { used: credits });
@@ -867,6 +876,7 @@ export const runAgent = inngest.createFunction(
           versionNumber: null,
           paused: true,
           guard: guardMeta,
+          mode: setup.mode,
         });
         const publish = createPublisher(projectId);
         await publish("credits", { used: credits });
@@ -1050,6 +1060,7 @@ export const runAgent = inngest.createFunction(
         cost,
         versionNumber: saved.versionNumber,
         guard: guardMeta,
+        mode: setup.mode,
       });
       const publish = createPublisher(projectId);
       await publish("credits", { used: credits });
@@ -1063,6 +1074,7 @@ export const runAgent = inngest.createFunction(
         : ("done" as const),
       agents: routed.route.agents,
       route: routed.route.decidedBy,
+      mode: setup.mode,
       guard: guardMeta,
       version: saved.versionNumber,
       files: saved.fileCount,

@@ -375,6 +375,7 @@ describe("project.create", () => {
               role: "USER",
               content: prompt,
               model: sonnet.id,
+              mode: "STANDARD",
               attachments: { connect: [] },
             },
           },
@@ -411,6 +412,30 @@ describe("project.create", () => {
     expect(
       db.project.create.mock.calls[0][0].data.messages.create.attachments,
     ).toEqual({ connect: [{ id: "a1" }, { id: "a2" }] });
+  });
+
+  test("stores fast mode on the message", async () => {
+    const { ctx, db } = signedIn();
+    db.project.create.mockResolvedValue({
+      id: "p1",
+      slug: "x",
+      name: "X",
+      messages: [{ id: "m1" }],
+    });
+    await createCaller(ctx).project.create({ prompt, mode: "fast" });
+    expect(db.project.create.mock.calls[0][0].data.messages.create.mode).toBe(
+      "FAST",
+    );
+  });
+
+  test("rejects an unknown mode", async () => {
+    const { ctx } = signedIn();
+    await expect(
+      createCaller(ctx).project.create({
+        prompt,
+        mode: "turbo" as never,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 
   test("rejects an unknown model", async () => {
