@@ -30,7 +30,9 @@ export function resolveAppPath(input: string, mode: PathMode = "write") {
   }
   if (
     mode === "write" &&
-    (readOnlySegments.has(segments[0]) || readOnlyFiles.has(relative))
+    (readOnlySegments.has(segments[0]) ||
+      (segments[0] === "agent" && segments[1] === "skills") ||
+      readOnlyFiles.has(relative))
   ) {
     throw new GuardError(`Path is read-only (installed skills): ${relative}`);
   }
@@ -69,9 +71,9 @@ const blockedCommands: { pattern: RegExp; reason: string }[] = [
   },
   {
     pattern:
-      /(\b(rm|mv|cp|tee|touch|chmod|ln|truncate)\b|\bsed\s+-i|>)[^;&|]*(\.agents|\.claude|skills-lock\.json)\b|\bskills\s+(add|remove|update|init)\b/,
+      /(\b(rm|mv|cp|tee|touch|chmod|ln|truncate)\b|\bsed\s+-i|>)[^;&|]*(\.agents|\.claude|(?<![\w-]\/|[\w-])agent\/skills(?![\w-])|skills-lock\.json)\b|\bskills\s+(add|remove|update|init)\b/,
     reason:
-      "the installed skills in .agents/ and .claude/ are read-only; read them, don't change them",
+      "the installed skills in .agents/, .claude/ and agent/skills/ are read-only; read them, don't change them",
   },
 ];
 

@@ -18,7 +18,7 @@ import { secretRedactionMiddleware } from "./guardrails/middleware";
 import { patternRedactor, type Redactor } from "./guardrails/redact";
 import type { Publish } from "../publisher";
 import { resolveAttachments } from "./conversation";
-import { TITLE_PROMPT } from "./prompts/summary";
+import { REPLY_PROMPT, TITLE_PROMPT } from "./prompts/summary";
 import { SEARCH_TOOL, type SearchRecord, searchRecord } from "./search";
 
 const FLUSH_MS = 150;
@@ -181,6 +181,27 @@ export async function generateVersionTitle(
     model: gateway(model.id),
     instructions: TITLE_PROMPT,
     prompt: `Request:\n${prompt.slice(0, 2000)}\n\nSummary:\n${summary.slice(0, 2000)}`,
+    maxRetries: 2,
+  });
+  const usage = toTokenUsage(result.totalUsage);
+  const generationId = generationIdOf(result.providerMetadata);
+  return {
+    text: result.text,
+    usage,
+    estimatedUsd: costOf(usage, model),
+    generationIds: generationId ? [generationId] : [],
+  };
+}
+
+export async function generateReply(
+  model: AgentModel,
+  input: { prompt: string; notes: string; files: string[] },
+): Promise<ModelCall & { text: string }> {
+  const result = await generateText({
+    model: gateway(model.id),
+    instructions: REPLY_PROMPT,
+    prompt: `Request:\n${input.prompt.slice(0, 2000)}\n\nAgent notes:\n${input.notes.slice(0, 4000)}\n\nFiles changed:\n${input.files.slice(0, 40).join("\n") || "none"}`,
+    maxOutputTokens: 800,
     maxRetries: 2,
   });
   const usage = toTokenUsage(result.totalUsage);

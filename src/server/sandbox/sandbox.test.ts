@@ -24,6 +24,7 @@ describe("snapshotListCommand", () => {
     expect(command).toContain("! -name '.env*'");
     expect(command).toContain("-name '.agents'");
     expect(command).toContain("-name '.claude'");
+    expect(command).toContain("-path './agent/skills'");
     expect(command).toContain("! -name 'skills-lock.json'");
     expect(command).toContain("-size -1048577c");
     expect(command).toMatch(/-printf '%s\\t%p\\n'$/);

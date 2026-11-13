@@ -218,6 +218,24 @@ describe("runAgentLoop", () => {
     expect(result.outOfCredits).toBe(true);
     expect(runModelTurn).toHaveBeenCalledTimes(1);
   });
+
+  test("stops before the next turn when the user asks", async () => {
+    runModelTurn.mockResolvedValue(
+      turn("", [{ toolName: "readFiles", input: { paths: ["a.ts"] } }]),
+    );
+    const shouldStop = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const result = await run({ shouldStop });
+    expect(result.stopped).toBe(true);
+    expect(result.finished).toBe(false);
+    expect(runModelTurn).toHaveBeenCalledTimes(1);
+    expect(step.run).toHaveBeenCalledWith(
+      "builder-stop-1",
+      expect.any(Function),
+    );
+  });
 });
 
 describe("checkpoints", () => {

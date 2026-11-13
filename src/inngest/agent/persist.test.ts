@@ -103,6 +103,35 @@ describe("saveRunResult", () => {
     });
   });
 
+  test("links the reply to its prompt", async () => {
+    const { db, tx } = makeDb();
+    await saveRunResult(db as never, { ...input, replyToId: "m1" });
+    expect(tx.message.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ replyToId: "m1" }),
+      }),
+    );
+  });
+
+  test("a stop without changes saves the reply but no version", async () => {
+    const { db, tx } = makeDb();
+    (tx.version as Record<string, unknown>).deleteMany = vi
+      .fn()
+      .mockResolvedValue({ count: 0 });
+    await expect(
+      saveRunResult(db as never, {
+        ...input,
+        saveVersion: false,
+        chainId: "r0",
+      }),
+    ).resolves.toEqual({ versionNumber: null });
+    expect(tx.version.create).not.toHaveBeenCalled();
+    expect(tx.project.update).not.toHaveBeenCalled();
+    expect(tx.message.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: replyId("r1") } }),
+    );
+  });
+
   test("is idempotent when the step is retried", async () => {
     const { db, tx } = makeDb();
     tx.version.findUnique.mockResolvedValue({ number: 3 });
@@ -179,6 +208,7 @@ describe("recordAssistantError", () => {
       projectId: "p1",
       runId: "r1",
       message: "Something broke",
+      replyToId: "m1",
     });
     expect(db.message.upsert).toHaveBeenCalledWith({
       where: { id: replyId("r1") },
@@ -188,6 +218,7 @@ describe("recordAssistantError", () => {
         role: "ASSISTANT",
         content: "Something broke",
         parts: [{ type: "error", message: "Something broke" }],
+        replyToId: "m1",
       },
       update: {},
     });

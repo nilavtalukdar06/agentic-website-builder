@@ -93,7 +93,7 @@ Version notes:
    │  ├─ (app)/page.tsx         # Home
    │  ├─ (app)/projects/page.tsx
    │  ├─ (app)/usage/page.tsx   # (Phase 7) not yet built
-   │  ├─ (workspace)/p/[slug]/page.tsx   # route scaffold only (shell header, loading/error/not-found); chat, preview and code view are Phase 6
+   │  ├─ (workspace)/p/[slug]/page.tsx   # workspace (Phase 6): chat, preview and read-only code; `_components/`
    │  ├─ design/page.tsx        # design system (Phase 1)
    │  └─ api/
    │     ├─ auth/[...all]/route.ts
@@ -283,7 +283,7 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 - Procedures: `publicProcedure`, `protectedProcedure` (throws `UNAUTHORIZED`)
 - `app/api/trpc/[trpc]/route.ts` with `fetchRequestHandler`
 - Client: `trpc/client.tsx` (`createTRPCContext`, `httpBatchLink` or `httpBatchStreamLink`), `trpc/query-client.ts` (dehydrate config), `trpc/server.tsx` (`createTRPCOptionsProxy`, `HydrateClient`, prefetch helpers)
-- Routers: `project`, `message`, `version`, `credits`, `billing`, `github`
+- Routers: `project`, `message`, `version`, `credits`, `billing`, `github` (built so far: `project`, `credits`, `model` in Phases 4–5; `message`, `version` and `sandbox` in Phase 6, §6.4; `billing` and `github` come with Phases 7 and 8)
 
 ### 2.3 nuqs
 
@@ -371,7 +371,7 @@ The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
 - `inngest/client.ts`, `app/api/inngest/route.ts` (`serve`, `maxDuration = 300`, checkpointing `maxRuntime: "240s"`)
 - `project.create` sends `agent/run` (`{ projectId, userId, messageId }`); if sending fails the project is still created and the error is logged (retry UI is Phase 6/9)
 - Function `run-agent` (event `agent/run`):
-  1. `step.run("load-project")`: ownership check, history up to the triggering message, latest Version file list, credit balance. Balance ≤ 0 → assistant error message ("out of credits"), no model call, no charge
+  1. `step.run("claim")` (Phase 6, §6.4): marks the prompt started unless the user already stopped it; a stopped prompt gets a "Stopped" reply and the run ends with no model call and no charge. Then `step.run("load-project")`: ownership check, history up to the triggering message, latest Version file list, credit balance. Balance ≤ 0 → assistant error message ("out of credits"), no model call, no charge
   2. **Input guard** (§5.9): secret detection, then the classifier. A secret or a `block` ends the run here with a short reply, no charge
   3. `step.run("sandbox")`: connect or create (restoring the latest Version), make sure `next.config.ts` still has `allowedDevOrigins` (`ensureDevOrigins`, also re-run in `persist` before the snapshot) and `AGENTS.md` still has the rules (`ensureAgentInstructions`); read the installed skills' frontmatter; save `sandboxId` + `previewUrl`
   4. Builder loop, **no turn limit** (owner's decision, 13 November 2026; it was 30, then 60): `step.run("builder-N")` streams one model turn (`streamText` through AI Gateway with the user's chosen model, §5.4); each tool call then runs in its own `step.run("tool-N-M")` through the guarded executor (§5.10). Tools:
@@ -382,7 +382,7 @@ The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
      - `parallel_search`: web search through the gateway, offered **only when the user's message references a website** (§5.8)
   5. The loop stops when a turn has no tool calls (the reply holds `<task_summary>`) or when the running cost reaches the balance (it stops early and keeps what was built). A Builder pass that finishes without writing any file is sent back once to make the change. A long job is **handed over** to a fresh run before it reaches Inngest's per-run limits (about 1,000 steps and 32 MiB of state): at 850 steps or 24 MiB the Builder writes a handoff note (no tools), the run saves a checkpoint (§5.11), debits the work so far (`meta.handoff`) and sends `agent/run` with `resume.handoff` (note, files changed, skill progress, installs, searches used); the next run restores the checkpoint, skips the input guard and continues. No chat message is written between segments
   6. **Output guard** (§5.10) on the final reply
-  7. `step.run("title")`: a short version title from the summary prompt
+  7. `step.run("summary")` (added after Phase 6 at the owner's request): the Builder's `<task_summary>` notes, the request and the changed files go to the chosen model, which writes the user-facing reply (an opening sentence and 2–5 bullets, no tags, no test commands). Billed as `builder`; if it fails the notes are used with the tags stripped. Skipped for stopped and out-of-credits runs. Then `step.run("title")`: a short version title from the summary prompt
   8. `step.run("persist")`: warm the preview (`curl localhost:3000`), snapshot files, scan them (§5.10), then one transaction: Version (next number, title, files, `creditCost`), assistant Message with `parts`, `previewUrl`
   9. `step.run("meter")`: one `CreditLedger` debit (`GENERATION` for the first version, `EDIT` after), then `credits` / `preview` / `status: done` events
   - `onFailure` (after retries, or a `NonRetriableError`): assistant error message, `status: error`, **no charge**
@@ -396,22 +396,22 @@ The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
 
 One channel per project, `project:<projectId>`, typed with zod in `src/inngest/channels.ts`. Publishing happens only inside steps (never in the function body, which replays).
 
-| Topic       | Payload                                                                   | UI effect                              |
-| ----------- | ------------------------------------------------------------------------- | -------------------------------------- |
-| `status`    | `{ state: thinking \| building \| compiling \| done \| error, message? }` | header badge, Shimmer                  |
-| `reasoning` | `{ turn, delta }`                                                         | Reasoning ("Thought for N seconds")    |
-| `text`      | `{ turn, delta }`                                                         | streaming assistant text               |
-| `task`      | sandbox / install / skill / file item                                     | Task list rows                         |
-| `file`      | `{ phase, path, verb, lines? }`                                           | file chips + generating overlay stream |
-| `tool`      | `{ phase, callId, name, command?, chunk?, exitCode? }`                    | Tool card + Terminal                   |
-| `search`    | `{ query, sources: [{ title, url }] }`                                    | Sources list under the Builder's work  |
-| `guard`     | `{ stage: input \| output, verdict }`                                     | blocked / restricted notice            |
-| `credits`   | `{ used }`                                                                | "N credits used" in the composer       |
-| `preview`   | `{ url }`                                                                 | swap overlay for WebPreview iframe     |
+| Topic       | Payload                                                                              | UI effect                              |
+| ----------- | ------------------------------------------------------------------------------------ | -------------------------------------- |
+| `status`    | `{ state: thinking \| building \| compiling \| done \| stopped \| error, message? }` | header badge, Shimmer                  |
+| `reasoning` | `{ turn, delta }`                                                                    | Reasoning ("Thought for N seconds")    |
+| `text`      | `{ turn, delta }`                                                                    | streaming assistant text               |
+| `task`      | sandbox / install / skill / read / file (created, edited, deleted) item              | Task list rows                         |
+| `file`      | `{ phase, path, verb, lines? }`                                                      | file chips + generating overlay stream |
+| `tool`      | `{ phase, callId, name, command?, chunk?, exitCode? }`                               | Tool card + Terminal                   |
+| `search`    | `{ query, sources: [{ title, url }] }`                                               | Sources list under the Builder's work  |
+| `guard`     | `{ stage: input \| output, verdict }`                                                | blocked / restricted notice            |
+| `credits`   | `{ used }`                                                                           | "N credits used" in the composer       |
+| `preview`   | `{ url }`                                                                            | swap overlay for WebPreview iframe     |
 
 - Token endpoint: `POST /api/realtime/token` `{ projectId }` → session + ownership check → `getClientSubscriptionToken(inngest, { channel, topics })` (Phase 6 passes it to `useRealtime`)
-- Persisted message `parts` (`src/lib/agent/parts.ts`, zod): `reasoning`, `task`, `tool`, `text`, `sources`, `error`, for Phase 6 to render on reload. The parser skips part types it doesn't know (`agent`, `input-request`, `input-answer` from before the simplification), so old messages still load
-- Until Phase 6, `/p/[slug]` shows the agent state from the latest message: building (with Refresh), done (reply + Open preview) or stopped (error reply)
+- Persisted message `parts` (`src/lib/agent/parts.ts`, zod): `reasoning`, `task`, `tool`, `text`, `sources`, `error`, plus `guard` (a `review` verdict) and `stopped` (Phase 6, §6.4), rendered by the workspace on reload. The parser skips part types it doesn't know (`agent`, `input-request`, `input-answer` from before the simplification), so old messages still load
+- `/p/[slug]` subscribes to the channel only while a prompt is pending, and polls `message.list` / `project.bySlug` every 5 s as a fallback when realtime is unavailable (Phase 6)
 
 ### 5.4 Model choice and pricing (added at the owner's request during Phase 5)
 
@@ -458,7 +458,7 @@ Every sandbox has five agent skills, installed once at template build (§5.1). T
 
 The Builder can search the web, but only when the user points it at a website ("like stripe.com/pricing", "a site for Acme, see acme.io", a pasted URL).
 
-- **When it is offered:** code decides, not the model. `mentionsSite(prompt)` (a URL or a domain with a common TLD; today in `router.ts`, it moves to `search.ts`) runs on the triggering message. If it matches, `parallel_search` is in the Builder's tools for the whole run, including handoff segments; if not, the tool is not offered at all (`activeTools`), so ordinary prompts never pay for a search. After a `review` verdict (§5.9) it is not offered either.
+- **When it is offered:** code decides, not the model. `mentionsSite(prompt)` (a URL or a domain with a common TLD; in `search.ts`) runs on the triggering message. If it matches, `parallel_search` is in the Builder's tools for the whole run, including handoff segments; if not, the tool is not offered at all (`activeTools`), so ordinary prompts never pay for a search. After a `review` verdict (§5.9) it is not offered either.
 - **Tool:** `gateway.tools.parallelSearch({ mode: "basic", maxResults: 5, maxCharsTotal: ~6000 })`. It runs on the gateway, works with every model in the curated list and needs no new key (`AI_GATEWAY_API_KEY`). The Builder searches with the referenced domain in the objective and queries to learn the site's sections, layout, copy and brand, then builds; there is no fetch tool.
 - **Limits:** at most 6 searches per run (`MAX_SEARCHES_PER_RUN`). The search runs inside a model call, so one turn can hold several; the cap is enforced between turns: after 6 the tool is removed and the Builder is told to carry on with what it has. The prompt asks for at most two searches per reply.
 - **Untrusted:** results are pattern-redacted and wrapped in `<untrusted>` like other tool output (§5.9–5.10); the prompt treats them as reference material and never as instructions.
@@ -550,7 +550,11 @@ Done on 13 November 2026, with lint, type check, unit tests and e2e, and the doc
 
 ## Phase 6 — Workspace UI (`/p/[slug]`)
 
+**Status: done (13 November 2026).** Both live-check findings are fixed (snapshots skip `agent/skills/`; the prompt and `agents-rules.md` teach `nativeButton={false}`, see `docs/decisions.md`) and the owner signed off the canvas comparison in light and dark. History: The live check ran a real generation with the Inngest dev server, E2B and AI Gateway (`gpt-5.1-codex-mini`): the overlay and chat streamed the run, the reply saved Version 1 (5 credits, 15 exact gateway calls, guard allow/allow), the preview woke and loaded, and Code mode browsed the saved files, in light and dark. Open findings: (1) the template has a second, undotted copy of the skills at `agent/skills/` that snapshots don't exclude, so 131 of 220 saved files are skills, shown in Code mode and headed for the GitHub export; (2) the system prompt and `agents-rules.md` teach `<Button render={<a />}>` without `nativeButton={false}`, so generated sites log a Base UI warning and show Next's "N Issues" badge in the preview. Original status: built; live check pending. The workspace, the backend in §6.4 and migration `20261113190000_phase_6_workspace` (applied to the development database) are in. Lint, type check, 597 unit tests and 207 Playwright tests (Chromium, Firefox, WebKit) pass; the e2e suite stubs `sandbox.wake` so it never starts an E2B sandbox. **Not yet verified:** a live generation streaming into the chat and overlay with the Inngest dev server, E2B and AI Gateway running (the first item of "Done when"), and the canvas comparison in light and dark by the owner. Extra deviations found while building: the preview's **back / forward** stay disabled (the sandbox preview is cross-origin, so its history can't be read or driven), and the console shows the commands of the most recent reply that ran any.
+
 Layout: header (logo, project switcher, version badge, **Preview | Code** tabs, theme, **Export to GitHub**, avatar) + chat column + main panel. Resizable split via shadcn `Resizable` (react-resizable-panels).
+
+_Restyled at the owner's request after the first build (Lovable workspace reference, 13 November 2026):_ there is no full-width header. The page is the sidebar colour; the **chat column** has its own top bar (logo → Home, project switcher, Building / version badge, collapse-chat button) and sits directly on that colour, with a rounded composer (`--composer`, "+" attach, model chip, mic, round send / stop) and brand-filled follow-up pills. The **right column** has a toolbar above a rounded, bordered panel (`bg-background`): a pill **Preview | Code** switcher on the left; in Preview, a device menu, a pill with reload and the read-only preview address, and open-in-new-tab in the middle; theme, **Export to GitHub** (disabled until Phase 8) and the avatar on the right. The preview has no browser bar inside the panel (back / forward are dropped, see §6.4); the **Console** opens from a floating pill at the bottom of the preview. Code mode keeps its layout inside the same panel. The canvas's header layout is retired for the workspace.
 
 nuqs state: `?view=preview|code`, `?file=app/page.tsx`, `?device=desktop|tablet|mobile`.
 
@@ -560,13 +564,13 @@ AI Elements, installed and themed in Phase 1:
 
 - `Conversation` (auto-scroll), `Message` (user bubble / assistant plain), `Reasoning`, `Task` + file chips, `Tool` (+ `Terminal` for output), `Shimmer` for the active step, `Checkpoint` (Restore → set active Version, rewrite the sandbox files), `Suggestion`, `PromptInput` (Stop while running, Send when idle, image attachments, the model chip and the mic as on Home, §5.4–5.6)
 - The Builder's work as one `Task` group (skills loaded, files written, installs), `Sources` for web search results (§5.8), a notice when a guardrail blocked or restricted the run (§5.9), and the run's credits on the version
-- Message actions: copy, retry, thumbs up/down (store feedback)
+- Message actions: copy, retry (thumbs up/down were removed at the owner's request, 13 November 2026)
 
 ### 6.2 Preview mode
 
 - AI Elements `WebPreview`: back / forward / reload, URL field (read-only), device toggle, open in new tab, collapsible **Console** (stream dev-server logs)
 - **Waking a paused sandbox** (§5.11): opening a project whose sandbox is paused resumes it with `connect` and shows "Waking up the preview…" (skeleton over the frame) until the dev server answers; a sandbox that is gone is rebuilt from the latest Version
-- **Generating overlay** while building: faded page outline + rolling list of files ("Edited lib/utils.ts" → "**Editing** tailwind.config.ts" with Shimmer → "Up next…"), file-type icons, elapsed time
+- **Generating overlay** while building: faded page outline + a rolling timeline of **every step of the run** (owner's request after Phase 6), newest seven, each with its icon: thinking (brain), sandbox (box), skill loaded (sparkles), files read (book), package installed (package), command running / ran / failed (terminal, red when it fails), file creating / created / editing / edited (file-type icon), deleted (trash), web search (globe), safety check (shield), compiling and saving (hammer), preview ready (monitor). The active step is large with a Shimmer; elapsed time below. Before the first event it shows "Starting the agent"
 
 ### 6.3 Code mode (read-only)
 
@@ -584,6 +588,35 @@ Scope is **view, copy, download**, nothing editable.
 
 - Files come from the latest `Version.files` (fast, no sandbox round-trip). Optionally refresh from the sandbox via `files.list`/`read` when it's alive.
 - Large files: virtualize lines if they're long (evaluate `@tanstack/react-virtual`)
+
+### 6.4 Backend the workspace needs (reconciled at Phase 6 start, 13 November 2026)
+
+Phases 2–5 left these out; they are built with the workspace.
+
+- **Routers:** `message.list` (the conversation with parts, attachments and the Version each reply saved), `message.send` (follow-up: a `USER` message with model and images, then `agent/run`), `message.stop`, `message.retry`; `version.list` (number, title, credits, file count, no contents) and `version.files` (one Version's files plus the previous Version's paths for **A / M** markers); `version.restore`; `sandbox.wake`. `project.bySlug` adds `building`, `version` and `sandboxId`. Every procedure checks ownership.
+- **Replies are linked to their prompt:** `Message.replyToId` (the triggering `USER` message; the migration backfills it for existing replies). A prompt with no reply is **pending**; the project is _building_ while one is pending. Follow-ups sent while it builds are queued (Inngest runs one per project at a time) and shown as pending.
+- **Stop (owner can change):** `message.stop` sets `stopRequestedAt` on every pending prompt. A prompt that hasn't started gets a "Stopped" reply at once, and its run exits without a model call or a charge (`load-project` claims the prompt with `startedAt` only if no stop was asked). A running Builder checks the flag before each turn and **stops like the credit stop**: it keeps what it built, saves a Version if it changed files (no Version if it didn't) and is **charged for the work done so far**, because that work was paid for at the gateway. Stopping takes effect after the current turn. Stop also unsticks a prompt whose `agent/run` was never delivered.
+- **Retry:** on the latest reply only, when nothing is pending. It re-runs the same prompt (same model and images) and adds a new reply under it; the old reply stays.
+- **Restore:** creates a **new** Version (next number, title "Restored vN", 0 credits, the old files) and an assistant note, so history stays append-only and "latest READY" stays the active Version. If the sandbox is reachable its files are rewritten (stale source files deleted, `npm install` in the background when `package.json` changed); otherwise the next run or wake rebuilds from the latest Version. Refused while building.
+- **Wake** (§6.2): on open, when nothing is building and a Version exists, `sandbox.wake` connects (resuming a paused sandbox) or recreates it from the latest Version, re-applies `allowedDevOrigins`, waits for the dev server (up to 60 s), saves the preview URL and returns it. A project with no Version never creates a sandbox.
+- **Guard notice after reload:** a `restricted` (`review`) run persists a `guard` part (`{ stage, verdict }`), so the notice survives a reload; blocked prompts already persist an `error` part.
+
+**Deviations from §6.1–6.3 (owner can change):**
+
+- **Console** shows the agent's commands and their output (the `tool` topic live, `tool` parts after reload) plus status lines, not the raw `next dev` log: the template's start command output isn't readable from outside the sandbox without a template rebuild. That is where compile errors show up, because the Builder checks the compile through commands.
+- **Follow-up suggestions** are a fixed set of generic edits (no extra model call per reply).
+- **Export to GitHub** is in the header but disabled with "Coming in a later update" until Phase 8. The canvas's composer **Select** (element picker) has no phase and is not built.
+- **Sources** (AI Elements) is added to the registry components and to `/design` before the chat uses it.
+- **Packages:** ZIP → `client-zip`; copy → the copy button built into `code-block`; single-file download → own `Blob` helper; no virtualisation (snapshots cap a text file at 200 KB, Shiki handles that). Recorded in `docs/decisions.md`.
+
+### 6.5 Mobile workspace (owner's request, 13 November 2026)
+
+Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replaced by **one full-screen view at a time**, after the owner's Lovable phone screenshots (no vibe-ui artboard exists for it; tokens and components are the desktop workspace's):
+
+- **Chat view:** the chat header (logo, project switcher, version badge, version history) with a button that switches to the preview, then the existing `ChatPanel` and composer.
+- **Preview view only:** Code mode does not exist on a phone: no Code switcher, no "View code" on version cards or in version history, and `?view=code` is ignored. The preview panel fills the screen with no border and its wrapper scrolls in both directions with the scrollbars hidden (all scrollbars are hidden app-wide); a cross-origin site's own inner scrolling can't be styled from outside. The toolbar is replaced by a **bottom bar** on the sidebar colour: a **Chat** button on the left; a **"…" menu** and **Export to GitHub** (same disabled-until-Phase-8 behaviour) on the right, with equal left and right padding. The preview ignores `?device=`.
+- **"…" menu:** Reload, Open in new tab, **Version history** (restore only), Theme. Not built: the screenshots' Change page, Share, Social & search, Supabase connect and the mic in the bar (voice input stays in the composer).
+- The chat opens first. The view is local state, not a URL param.
 
 **Done when:** a full generation shows live in chat + overlay, the preview loads, Code mode browses/copies/downloads files and ZIP, and all three states match the canvas in light/dark.
 
@@ -627,7 +660,7 @@ Scope is **view, copy, download**, nothing editable.
   - `@octokit/rest` with the Git Data API (create blobs → tree → commit → update ref), all server-side with the user's GitHub access token from Better Auth's `Account` table
   - Alternative: run `git` inside the E2B sandbox and push with a short-lived token (no file round-trip, but a token enters the sandbox; prefer the Octokit route)
 - Re-export pushes a new commit to the same repo; store `githubRepo` on the project
-- Exclude `node_modules`, `.next`, `.env*`, `.agents/`, `.claude/` and `skills-lock.json` (the skills, §5.7); run the secret scan first (§5.10); add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
+- Exclude `node_modules`, `.next`, `.env*`, `.agents/`, `.claude/`, `agent/skills/` and `skills-lock.json` (the skills, §5.7); run the secret scan first (§5.10); add a README and `.gitignore`. Consider dropping `allowedDevOrigins` from the exported `next.config.ts` (a harmless dev-only option that only exists for the E2B preview)
 
 **Done when:** a project exports to a new repo that `git clone && npm i && npm run dev` runs locally.
 
@@ -725,7 +758,7 @@ STRIPE_WEBHOOK_SECRET=
 - [x] Phase 3.1: public pages (`/terms`, `/privacy`; `/docs`, `/contact` and `/status` were built, then removed at the owner's request)
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template with skills, the Builder (Inngest + AI SDK, AI Gateway models; web search when the user references a website), input and output guardrails, sandbox lifecycle (pause instead of kill, checkpoints, recovery), realtime events, metering, image attachments. Simplified on 13 November 2026 and the dropped 5b/5c code removed (§5.13)
-- [ ] Phase 6: workspace (chat, preview + overlay, read-only code) — only the route scaffold exists (`(workspace)/p/[slug]`: shell header, loading/error/not-found states); no chat, preview or code view yet
+- [x] Phase 6: workspace (chat, preview + overlay, read-only code) with the §6.4 backend (follow-ups, stop, retry, restore, wake) and the mobile workspace (§6.5); live generation checked, both findings fixed, canvas signed off by the owner
 - [ ] Phase 7: credits ledger, Stripe top-ups, usage page (credit ledger and balance card from Phase 5/3 only; no Stripe top-up or usage page)
 - [ ] Phase 8: Export to GitHub
 - [ ] Phase 9: hardening, tests, launch

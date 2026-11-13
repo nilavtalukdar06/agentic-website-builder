@@ -14,8 +14,6 @@ import {
   SmartphoneIcon,
   TabletIcon,
   TerminalIcon,
-  ThumbsDownIcon,
-  ThumbsUpIcon,
 } from "lucide-react";
 import {
   Checkpoint,
@@ -66,6 +64,12 @@ import {
   SnippetInput,
   SnippetText,
 } from "@/components/ai-elements/snippet";
+import {
+  Source,
+  Sources,
+  SourcesContent,
+  SourcesTrigger,
+} from "@/components/ai-elements/sources";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import {
   Task,
@@ -95,6 +99,7 @@ import {
   samplePreviewUrl,
   samplePrompt,
   sampleReasoning,
+  sampleSources,
   sampleSuggestions,
   sampleSummary,
   sampleTaskItems,
@@ -204,12 +209,6 @@ export function AiElementsSection() {
                   <MessageAction tooltip="Retry" label="Retry">
                     <RotateCwIcon className="size-4" />
                   </MessageAction>
-                  <MessageAction tooltip="Good response" label="Good response">
-                    <ThumbsUpIcon className="size-4" />
-                  </MessageAction>
-                  <MessageAction tooltip="Bad response" label="Bad response">
-                    <ThumbsDownIcon className="size-4" />
-                  </MessageAction>
                 </MessageActions>
               </Message>
               <Checkpoint>
@@ -281,6 +280,20 @@ export function AiElementsSection() {
           </Example>
           <Example title="ModelSelector · Attachments · Voice input">
             <ModelAttachmentsExample />
+          </Example>
+          <Example title="Sources">
+            <Sources defaultOpen>
+              <SourcesTrigger count={sampleSources.length} />
+              <SourcesContent>
+                {sampleSources.map((source) => (
+                  <Source
+                    key={source.url}
+                    href={source.url}
+                    title={source.title}
+                  />
+                ))}
+              </SourcesContent>
+            </Sources>
           </Example>
           <Example title="Snippet · Shimmer">
             <Snippet code="npx create-next-app@latest ember-oak">

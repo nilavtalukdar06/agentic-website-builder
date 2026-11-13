@@ -107,6 +107,7 @@ describe("read-only skills", () => {
   test.each([
     ".agents/skills/shadcn/SKILL.md",
     ".claude/skills/shadcn",
+    "agent/skills/shadcn/SKILL.md",
     "skills-lock.json",
   ])("%s can be read but not written", (path) => {
     expect(resolveAppPath(path, "read").relative).toBe(path);
@@ -120,6 +121,8 @@ describe("read-only skills", () => {
     "echo hi > .agents/skills/x/SKILL.md",
     "sed -i 's/a/b/' .claude/skills/shadcn/SKILL.md",
     "mv .agents/skills/shadcn /tmp",
+    "rm -rf agent/skills",
+    "rm ./agent/skills/shadcn/SKILL.md",
     "npx skills add vercel-labs/agent-skills",
     "npx skills remove shadcn",
   ])("blocks %j", (command) => {
@@ -130,6 +133,8 @@ describe("read-only skills", () => {
     "ls .agents/skills",
     "cat .agents/skills/shadcn/SKILL.md",
     "rm components/old.tsx",
+    "cat agent/skills/shadcn/SKILL.md",
+    "rm components/agent/skills-card.tsx",
   ])("allows %j", (command) => {
     expect(checkCommand(command)).toBeNull();
   });

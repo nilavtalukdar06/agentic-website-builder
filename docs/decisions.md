@@ -264,3 +264,64 @@ _Superseded by the Phase 5 simplification (13 November 2026): kept as history._
 - **Collapsible sidebar** → shadcn `collapsible="icon"` with tooltips, `SidebarRail`, and Recent and Credits hidden while collapsed; when collapsed, the logo becomes the expand button (it shows the panel icon on hover); collapsing is by ⌘B / Ctrl+B or the rail, since the owner removed the header collapse button. Collapsed items are centred in the 66 px column (`items-center` on header, footer and menus, the avatar shrunk to 30 px to fit inside its bordered button) → a separate expand button that would add a second control to a 48 px column.
 - **No app header** → removed with its breadcrumbs (`breadcrumbsFor` and its tests deleted; the Projects e2e test now covers collapse and appearance instead). On phones a floating "Open sidebar" button sits in a 48 px reserved strip, because the sidebar is a sheet there and nothing else opens it.
 - **Appearance** → a Light / Dark / System radio submenu in the account menu, writing through the existing `ThemeProvider` → the header's sun/moon toggle, which only switched light and dark. The marketing header, `/design` and the workspace header keep their toggles (outside the app shell).
+
+## Phase 6 — workspace (built 13 November 2026)
+
+- **Download project as ZIP** → `client-zip` 2.5 (MIT, ~42 KB unpacked, released September 2026, loaded on demand) → streaming, tiny, browser-native `Response`/`Blob` output → `fflate` (larger, last release July 2026), `jszip` (dual MIT/GPL-3.0 license, ~690 KB).
+- **Copy to clipboard** → the copy button built into AI Elements `code-block` → already installed → `usehooks-ts` (last release February 2025, fails the "maintained" check).
+- **Download a single file** → own `Blob` + `URL.createObjectURL` helper (`src/lib/download.ts`, decodes `data:` snapshots for binaries) → `file-saver`.
+- **File tree, code viewer, file tabs** → AI Elements `file-tree` + `code-block` (Shiki) + shadcn `Tabs` (`line` variant) → plan defaults → `react-arborist`, `shiki` directly.
+- **Long files** → no virtualisation → snapshots cap a text file at 200 KB, which Shiki renders → `@tanstack/react-virtual` (revisit if files grow).
+- **Web search sources** → AI Elements `sources`, added from its registry and adapted to Base UI (`data-open` / `data-closed`, `group-data-panel-open`, tokens instead of `text-primary`), shown on `/design` before use → own list.
+- **Realtime in the client** → `useRealtime` from `inngest/react` with a token factory calling `POST /api/realtime/token`, enabled only while a prompt is pending; events are reduced by a pure function (`src/lib/agent/live-run.ts`) → hand-rolled SSE. `message.list` / `project.bySlug` poll every 5 s while building, so the page still finishes when realtime is down. The token route now answers 503 instead of throwing when Inngest is unreachable.
+- **Stop** → a `stopRequestedAt` flag checked by the Builder before each turn (stops like the credit stop: keeps and charges the work done) plus a `startedAt` claim so a prompt stopped before its run starts gets an immediate, free "Stopped" reply → Inngest `cancelOn` (a cancelled run can't save what it built or charge for the model calls already made, and `onFailure` doesn't run on cancel).
+- **Reply ↔ prompt link** → `Message.replyToId` (backfilled by the migration) → ordering by `createdAt` alone (queued follow-ups made replies appear under the wrong prompt and the "building" state flip early).
+- **Restore** → a new Version with the old files (append-only history; "latest READY" stays the active version) and a best-effort rewrite of a reachable sandbox → an "active version" pointer on `Project`.
+- **Preview back / forward** → disabled → the E2B preview is cross-origin, so the parent page can't read or drive the iframe's history; driving `window.history` could navigate the app itself.
+
+## Workspace restyle (owner's request after Phase 6, Lovable reference)
+
+- **Layout** → no full-width header; the chat column carries its own top bar (logo, project switcher, status badge, collapse) and the right column a toolbar above a rounded preview / code panel, on the sidebar colour like the app shell → the canvas's `WorkspaceHeader` (removed, replaced on `/design` by `ChatHeader` and `WorkspaceToolbar`).
+- **Preview controls** → in the toolbar: device menu (`DropdownMenu` radio group), `InputGroup` pill with reload and the read-only address, open in new tab → AI Elements `WebPreviewNavigation` inside the panel. Back / forward are dropped instead of shown disabled (they can't work on a cross-origin preview).
+- **Console** → a floating pill at the bottom of the preview opening an AI Elements `Terminal` above it → the full-width `WebPreviewConsole` bar.
+- **Composer and follow-ups** → the Home composer's rounded `--composer` card with a round "+" attach and round send / stop; follow-up suggestions as `--brand` pills → the square composer and outline chips.
+
+## Accent chip and view switcher (owner's request after the workspace restyle, Lovable markup)
+
+- **Accent chip** → `Button` variant `accent` + size `chip` (28 px, fully rounded, 16 px icons), used for the workspace's follow-up suggestions and **Export to GitHub**. Built from the pasted Lovable chip: brand fill, an inset rim, top and bottom highlights, a two-step drop shadow, a vertical "dome" gradient and a hover / pressed overlay, all in one `btn-accent` utility in `globals.css` (relative colours from `--brand`, so nothing is hard-coded per theme). Dark mode is our own counterpart: the dome flips to a white highlight at the top, the rim becomes a 32 % white line, the hover overlay lightens instead of darkens and the shadow is deeper. Disabled drops the rim and shadow. This is the **one raised control** in an otherwise flat system (`--shadow-*` stay `none`); it is shown with its states on `/design` → Button states.
+- **View switcher** → the active tab shows its icon and label on a soft brand tint; the inactive tab collapses to the icon. The label's width eases over 340 ms with `cubic-bezier(0.32, 0.72, 0, 1)` (none under reduced motion). Colours are two new tokens, `--brand-soft` (tint) and `--brand-text` (label and icon), light and dark, both listed on `/design` with a contrast pair (about 7:1) → the plain `--brand` blue, which failed axe on the tint.
+- **Not copied** → Lovable's chip dismiss (the icon turns into an X on hover) and its sliding indicator element; the tint sits on the tab itself.
+
+## Workspace polish (owner's feedback after the restyle)
+
+- **Thumbs up / down removed** → the buttons, `message.feedback`, `Message.feedback` and its enum (migration `20261113200000_remove_message_feedback`, applied to the development database; it held only test ratings), the privacy-policy lines about ratings and the sample on `/design` → keeping a stored rating nothing read.
+- **Accent chip colours** → white label and white 1 px border in both themes (the owner's request); dark mode uses a deeper fill (`oklch(0.52 0.22 264.4)`, about 6:1 with white) because white on the dark-theme brand blue is 3.8:1; hover and pressed darken in both themes.
+- **Export to GitHub** → looks exactly like the suggestion pills; until Phase 8 it is `aria-disabled` (not `disabled`, which dims it) and shows a "coming in a later update" toast on click; while building it stays truly disabled.
+- **Console** → one compact pill (icon, "Console", line count); the `next dev` status text and the chevron are gone.
+
+## Realtime fix (13 November 2026)
+
+- **Bug** → `getClientSubscriptionToken` returns only `{ key, apiBaseUrl }`; `useRealtime` also needs the channel and topics, so every subscription threw before connecting and the workspace showed "Starting…" until the 5 s poll saw the finished run. **Fix** → the channel name and topic list live in `src/lib/agent/realtime-topics.ts` (no SDK import, safe in the browser), `src/inngest/channels.ts` reuses them, and the hook passes `channel` + `topics` and keeps only `kind: "data"` messages. `e2e/realtime.spec.ts` publishes real events through the Inngest dev server and checks the chat, terminal, credits and overlay; it skips when no dev server is running (CI).
+
+## Live activity, reply summary and version switching (owner's feedback, 13 November 2026)
+
+- **Lost live events** → `useRealtime` keeps `historyLimit: null` with a 100 ms buffer, and `advanceLive` folds the events into one run state that resets at each `done` / `error` / `stopped` → the 2,000-message window, which every reasoning and text delta filled, so file, task and tool events were dropped and the overlay stayed empty.
+- **Reply missing until refresh** → the workspace also refetches when `building` turns false, whatever noticed it first → relying on the final realtime event only; the 5 s poll could see the saved reply first, switch realtime off and miss that event.
+- **Activity rows** → the executor publishes `read` (files read), `skill` (skill loaded) and `deleted` file rows (plain `rm` paths of a command that succeeded) next to sandbox, install, created and edited; created and edited rows show `+N` lines; command cards are titled with the command → tool cards only.
+- **Collapsed by default** → reasoning (`defaultOpen={false}`, still "Thinking…" while streaming) and command cards start closed with a constant `defaultOpen`, which also removes Base UI's "changing the default open state of an uncontrolled Collapsible" warning (the command card changed it when a command finished). The live build list stays open.
+- **Reply text** → a `summary` step writes the user-facing reply from the `<task_summary>` notes; while streaming, everything from `<task_summary>` on is hidden → showing the raw tags.
+- **Versions** → the checkpoint line is a card (title, `vN · credits`, **View code**, **Restore** or a disabled **Current version**), after the owner's Lovable reference; the chat header has a **Version history** menu (view code or restore any version). **View code** opens Code mode on that version through `?version=N` with a "Viewing version N · Back to latest" bar; the preview always shows the sandbox (the latest version) → the AI Elements `Checkpoint` line.
+
+## Run timeline in the preview overlay (owner's request, 13 November 2026)
+
+- **Every step, not only files** → the live reducer keeps an ordered `steps` list built from the events the run already publishes (status, task, file, tool, search, guard, preview), so no new realtime topic or backend change; `GeneratingOverlay` rows gained an optional `icon` and an `error` status (file rows keep the file-type icon). Icons from lucide (brain, box, sparkles, book-open, package, terminal, trash, globe, shield-alert, hammer, monitor-check, rocket). Shown on `/design` as "GeneratingOverlay · run steps" → a separate per-step Inngest topic.
+
+## Mobile workspace (owner's request, 13 November 2026)
+
+- **One view at a time under 768 px** → `useIsMobile` (already in `src/hooks`) switches `Workspace` between the desktop split and `MobileWorkspace` (chat, or preview / code with a bottom bar) → a third resizable layout, or CSS-only hiding, which would mount both panels and open two realtime subscriptions.
+- **Bottom bar and "…" menu** → built from existing `Button` (`accent`, `chip`), `DropdownMenu` and `ThemeToggle`; the version list is shared with the chat header through `VersionHistoryItems`. No new package.
+
+## Phase 6 live-check findings (fixed 13 November 2026)
+
+- **Second skills copy in snapshots** → the snapshot and restore listing prunes the root `agent/skills/` folder (`-path ./agent/skills`) next to `.agents/` and `.claude/`, and the path and command guards treat it as read-only skills → removing the folder in the template build (it would need a template rebuild, and existing sandboxes would still carry it). Versions saved before the fix still hold those files; development data only.
+- **`nativeButton={false}`** → the system prompt and `agents-rules.md` (kept identical to `AGENT_RULES` by a test) now say to add `nativeButton={false}` when `render` turns a `Button` into a link, as the shadcn skill's Base UI rule says. The system prompt applies to every run at once; sandboxes built from the current template keep the old `AGENTS.md` until the next `bun run sandbox:build`.

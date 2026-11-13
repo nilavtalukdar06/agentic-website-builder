@@ -41,7 +41,8 @@ export const privacySections: ArticleSection[] = [
             prompts and chat messages, the AI model you chose for each message,
             the images you attach as references, the files the agent writes,
             saved versions, the preview address and the linked GitHub repository
-            after you export.
+            after you export. When you stop a request, we record when you
+            stopped it.
           </li>
           <li>
             <Strong>Safety checks.</Strong> When a prompt, a reply or the

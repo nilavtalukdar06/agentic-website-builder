@@ -1,5 +1,9 @@
 import { CommandExitError, type Sandbox } from "e2b";
-import { packagesFromInstall, type TaskItem } from "@/lib/agent/parts";
+import {
+  deletedPaths,
+  packagesFromInstall,
+  type TaskItem,
+} from "@/lib/agent/parts";
 import { isSandboxGone } from "@/server/sandbox/errors";
 import {
   APP_DIR,
@@ -306,6 +310,13 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
     tasks.push(task);
     await ctx.publish("task", task);
   }
+  if (exitCode === 0) {
+    for (const path of deletedPaths(command)) {
+      const task: TaskItem = { kind: "file", verb: "deleted", path, lines: 0 };
+      tasks.push(task);
+      await ctx.publish("task", task);
+    }
+  }
 
   return outcome(
     ctx,
@@ -452,7 +463,17 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
   const readAgentsMd = contents.some(
     (entry) => entry.path === "AGENTS.md" && "content" in entry,
   );
+  const read = contents.flatMap((entry) =>
+    "content" in entry ? [entry.path] : [],
+  );
+  const tasks: TaskItem[] = [];
+  if (read.length > 0) {
+    const task: TaskItem = { kind: "read", paths: read };
+    tasks.push(task);
+    await ctx.publish("task", task);
+  }
   return outcome(ctx, wrapUntrusted("files", JSON.stringify(contents)), {
+    tasks,
     progress: readAgentsMd
       ? { ...ctx.progress, readAgentsMd: true }
       : ctx.progress,
@@ -503,10 +524,13 @@ async function loadSkill(call: ToolCall, ctx: ToolContext) {
   const loadedSkills = ctx.progress.loadedSkills.includes(name)
     ? ctx.progress.loadedSkills
     : [...ctx.progress.loadedSkills, name];
+  const task: TaskItem = { kind: "skill", name };
+  await ctx.publish("task", task);
   return outcome(
     ctx,
     wrapUntrusted(`skill:${name}`, `# Skill: ${name}\n\n${body}${fileList}`),
     {
+      tasks: [task],
       progress: { ...ctx.progress, loadedSkills },
     },
   );

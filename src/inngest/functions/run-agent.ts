@@ -1,7 +1,11 @@
 import "server-only";
 import type { ModelMessage } from "ai";
 import { NonRetriableError } from "inngest";
-import type { AgentPart, TaskItem } from "@/lib/agent/parts";
+import {
+  type AgentPart,
+  stripSummaryTags,
+  type TaskItem,
+} from "@/lib/agent/parts";
 import { findAgentModel, lookupGenerationCost } from "@/server/ai/gateway";
 import { getCreditBalance } from "@/server/billing/balance";
 import { creditRate } from "@/server/billing/credit-rate";
@@ -40,7 +44,7 @@ import {
   createRunContext,
   runAgentLoop,
 } from "../agent/loop";
-import { generateVersionTitle } from "../agent/model";
+import { generateReply, generateVersionTitle } from "../agent/model";
 import { MODEL_UNAVAILABLE } from "../agent/model-errors";
 import {
   debitCredits,
@@ -49,7 +53,17 @@ import {
   recordAssistantError,
   saveRunResult,
 } from "../agent/persist";
-import { BLOCKED, SECRET_IN_PROMPT } from "../agent/replies";
+import {
+  claimPrompt,
+  isStopRequested,
+  recordStoppedBeforeStart,
+} from "../agent/prompt-state";
+import {
+  BLOCKED,
+  SECRET_IN_PROMPT,
+  STOPPED,
+  STOPPED_NO_CHANGES,
+} from "../agent/replies";
 import { takeCheckpoint } from "../agent/runtime";
 import { mentionsSite, uniqueSources } from "../agent/search";
 import { listInstalledSkills } from "../agent/skills";
@@ -99,13 +113,18 @@ export const runAgent = inngest.createFunction(
     ],
     retries: 2,
     onFailure: async ({ event, error, step }) => {
-      const { projectId } = event.data.event.data;
+      const { projectId, messageId } = event.data.event.data;
       const runId = event.data.run_id;
       const message =
         error.message === MODEL_UNAVAILABLE ? MODEL_UNAVAILABLE : FAILED;
       await step.run("record-failure", async () => {
         console.error(`[run-agent] ${runId} failed`, error);
-        await recordAssistantError(db, { projectId, runId, message });
+        await recordAssistantError(db, {
+          projectId,
+          runId,
+          message,
+          replyToId: messageId,
+        });
         await createPublisher(projectId)("status", { state: "error", message });
       });
     },
@@ -113,6 +132,16 @@ export const runAgent = inngest.createFunction(
   async ({ event, step, runId }) => {
     const { projectId, userId, messageId, resume } = event.data;
     const chainId = resume?.chainId ?? runId;
+
+    if (!resume) {
+      const claimed = await step.run("claim", async () => {
+        if (await claimPrompt(db, messageId)) return true;
+        await recordStoppedBeforeStart(db, { projectId, messageId });
+        await createPublisher(projectId)("status", { state: "stopped" });
+        return false;
+      });
+      if (!claimed) return { status: "stopped-before-start" as const };
+    }
 
     const setup = await step.run("load-project", async () => {
       const [project, trigger] = await Promise.all([
@@ -175,6 +204,7 @@ export const runAgent = inngest.createFunction(
           projectId,
           runId,
           message: OUT_OF_CREDITS,
+          replyToId: messageId,
         });
         await createPublisher(projectId)("status", {
           state: "error",
@@ -210,6 +240,7 @@ export const runAgent = inngest.createFunction(
           projectId,
           runId,
           message: SECRET_IN_PROMPT,
+          replyToId: messageId,
         });
         const publish = createPublisher(projectId);
         await publish("guard", { stage: "input", verdict: "secret" });
@@ -249,7 +280,12 @@ export const runAgent = inngest.createFunction(
           categories: guard.categories,
           text: setup.prompt,
         });
-        await recordAssistantError(db, { projectId, runId, message: BLOCKED });
+        await recordAssistantError(db, {
+          projectId,
+          runId,
+          message: BLOCKED,
+          replyToId: messageId,
+        });
         const publish = createPublisher(projectId);
         await publish("guard", { stage: "input", verdict: "block" });
         await publish("status", { state: "error", message: BLOCKED });
@@ -338,6 +374,7 @@ export const runAgent = inngest.createFunction(
       model,
       installedSkills: sandbox.skills,
       spec,
+      shouldStop: () => isStopRequested(db, messageId),
     };
 
     const handoffNote: ModelMessage[] = resume?.handoff
@@ -357,6 +394,7 @@ export const runAgent = inngest.createFunction(
 
     let summary: string | null = null;
     let outOfCredits = exhausted(budget);
+    let stopped = false;
     let written: string[] = resume?.handoff?.written ?? [];
     let handoff: string | null = null;
 
@@ -378,6 +416,7 @@ export const runAgent = inngest.createFunction(
       runs.push(build);
       budget = spend(budget, build);
       outOfCredits = build.outOfCredits;
+      stopped = build.stopped;
       written = build.written;
       handoff = build.handoff;
       summary = build.output;
@@ -397,7 +436,7 @@ export const runAgent = inngest.createFunction(
           );
           return scanFiles(await snapshotSandbox(box));
         });
-        if (hits.length > 0 && !exhausted(budget)) {
+        if (hits.length > 0 && !stopped && !exhausted(budget)) {
           const scanFix = await runAgentLoop({
             ...loopArgs,
             messages: [
@@ -412,6 +451,7 @@ export const runAgent = inngest.createFunction(
           runs.push(scanFix);
           budget = spend(budget, scanFix);
           outOfCredits = scanFix.outOfCredits;
+          stopped = scanFix.stopped;
           written = scanFix.written;
           handoff = scanFix.handoff;
           if (scanFix.finished && scanFix.output) summary = scanFix.output;
@@ -499,13 +539,46 @@ export const runAgent = inngest.createFunction(
       };
     }
 
-    const rawReply = outOfCredits
-      ? [summary, STOPPED_FOR_CREDITS].filter(Boolean).join("\n\n")
-      : (summary ?? "");
+    const notes = summary ? stripSummaryTags(summary) : null;
+    if (notes && !stopped && !outOfCredits) {
+      const reply = await step.run("summary", async () => {
+        const generated = await generateReply(model, {
+          prompt: setup.prompt,
+          notes,
+          files: written,
+        }).catch((error) => {
+          console.warn("[run-agent] summary failed", error);
+          return null;
+        });
+        const text = generated ? stripSummaryTags(generated.text) : "";
+        return generated && text ? { ...generated, text } : null;
+      });
+      if (reply) {
+        usage = addUsage(usage, reply.usage);
+        calls.push({
+          generationIds: reply.generationIds,
+          estimatedUsd: reply.estimatedUsd,
+          agent: "builder",
+          model: model.id,
+        });
+      }
+      summary = reply?.text ?? notes;
+    } else if (notes) {
+      summary = notes;
+    }
+
+    const saveVersion = !stopped || written.length > 0;
+    const rawReply = stopped
+      ? saveVersion
+        ? STOPPED
+        : STOPPED_NO_CHANGES
+      : outOfCredits
+        ? [summary, STOPPED_FOR_CREDITS].filter(Boolean).join("\n\n")
+        : (summary ?? "");
 
     const reviewed = await step.run("guard-output", async () => {
       const text = await redactPatterns(rawReply);
-      if (!text.trim()) {
+      if (!text.trim() || stopped) {
         return {
           text,
           verdict: "allow",
@@ -559,7 +632,7 @@ export const runAgent = inngest.createFunction(
         estimatedUsd: 0,
         generationIds: [] as string[],
       };
-      if (outOfCredits) return empty;
+      if (outOfCredits || stopped) return empty;
       const generated = await generateVersionTitle(
         model,
         setup.prompt,
@@ -590,7 +663,11 @@ export const runAgent = inngest.createFunction(
       },
       ...toolParts,
       ...sourceParts,
+      ...(restricted
+        ? [{ type: "guard", stage: "input", verdict: "review" } as const]
+        : []),
       { type: "text", text: replyText },
+      ...(stopped ? [{ type: "stopped" } as const] : []),
     ];
 
     const saved = await step.run("persist", async () => {
@@ -615,7 +692,7 @@ export const runAgent = inngest.createFunction(
           { cwd: APP_DIR, timeoutMs: 100_000 },
         )
         .catch(() => null);
-      const files = await snapshotSandbox(box);
+      const files = saveVersion ? await snapshotSandbox(box) : {};
       const hits = await scanFiles(files);
       if (hits.length > 0) {
         await recordGuardEvent(db, {
@@ -642,6 +719,8 @@ export const runAgent = inngest.createFunction(
         creditCost: credits,
         previewUrl,
         chainId,
+        replyToId: messageId,
+        saveVersion,
       });
       return {
         ...result,
@@ -666,13 +745,15 @@ export const runAgent = inngest.createFunction(
       const publish = createPublisher(projectId);
       await publish("credits", { used: credits });
       await publish("preview", { url: saved.previewUrl });
-      await publish("status", { state: "done" });
+      await publish("status", { state: stopped ? "stopped" : "done" });
     });
 
     return {
-      status: outOfCredits
-        ? ("stopped-for-credits" as const)
-        : ("done" as const),
+      status: stopped
+        ? ("stopped" as const)
+        : outOfCredits
+          ? ("stopped-for-credits" as const)
+          : ("done" as const),
       search,
       guard: guardMeta,
       version: saved.versionNumber,

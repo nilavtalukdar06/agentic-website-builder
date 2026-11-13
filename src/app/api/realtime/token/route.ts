@@ -28,9 +28,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  const token = await getClientSubscriptionToken(inngest, {
-    channel: projectChannel({ projectId: project.id }),
-    topics: [...projectTopics],
-  });
-  return Response.json(token, { headers: { "Cache-Control": "no-store" } });
+  try {
+    const token = await getClientSubscriptionToken(inngest, {
+      channel: projectChannel({ projectId: project.id }),
+      topics: [...projectTopics],
+    });
+    return Response.json(token, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    console.warn("[realtime] couldn't create a subscription token", error);
+    return Response.json(
+      { error: "Live updates are unavailable" },
+      { status: 503 },
+    );
+  }
 }

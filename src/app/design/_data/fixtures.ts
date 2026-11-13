@@ -1,3 +1,9 @@
+import {
+  BookOpenIcon,
+  PackageIcon,
+  SparklesIcon,
+  TerminalIcon,
+} from "lucide-react";
 import type { GeneratingFile } from "@/components/workspace/generating-overlay";
 import type { AgentModel } from "@/lib/ai/models";
 
@@ -289,5 +295,48 @@ export const sampleAttachments = [
     filename: "palette.png",
     mediaType: "image/png",
     url: "/globe.svg",
+  },
+];
+
+export const sampleSources = [
+  { title: "Stripe Pricing", url: "https://stripe.com/pricing" },
+  { title: "Stripe Docs — Billing", url: "https://docs.stripe.com/billing" },
+  { title: "Stripe Press", url: "https://press.stripe.com" },
+];
+
+export const sampleRunSteps: GeneratingFile[] = [
+  {
+    id: "1",
+    path: "frontend-design",
+    verb: "Loaded skill",
+    status: "done",
+    icon: SparklesIcon,
+  },
+  {
+    id: "2",
+    path: "AGENTS.md, app/page.tsx",
+    verb: "Read",
+    status: "done",
+    icon: BookOpenIcon,
+  },
+  {
+    id: "3",
+    path: "motion",
+    verb: "Installed",
+    status: "done",
+    icon: PackageIcon,
+  },
+  {
+    id: "4",
+    path: "components/roast-grid.tsx",
+    verb: "Created",
+    status: "done",
+  },
+  {
+    id: "5",
+    path: "npm run lint",
+    verb: "Running",
+    status: "active",
+    icon: TerminalIcon,
   },
 ];

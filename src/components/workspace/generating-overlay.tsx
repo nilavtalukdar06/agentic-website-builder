@@ -1,14 +1,18 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
 import { FileIcon } from "@/components/files/file-icon";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 export type GeneratingFile = {
+  id?: string;
   path: string;
   verb: string;
-  status: "done" | "active" | "next";
+  status: "done" | "active" | "next" | "error";
+  icon?: LucideIcon;
+  mono?: boolean;
 };
 
 export type GeneratingOverlayProps = {
@@ -37,12 +41,12 @@ export function GeneratingOverlay({
   caption = "Preview loads after the first compile",
   className,
 }: GeneratingOverlayProps) {
-  const activeIndex = Math.max(
-    0,
-    files.findIndex((file) => file.status === "active"),
-  );
-  const active = files.find((file) => file.status === "active");
+  const lastActive = files.findLastIndex((file) => file.status === "active");
+  const activeIndex =
+    lastActive >= 0 ? lastActive : Math.max(0, files.length - 1);
+  const active = files.findLast((file) => file.status === "active");
   const doneCount = files.filter((file) => file.status === "done").length;
+  const noun = files.some((file) => file.icon) ? "step" : "file";
 
   return (
     <div
@@ -67,7 +71,7 @@ export function GeneratingOverlay({
       <div className="relative flex flex-col items-center gap-3">
         <p role="status" aria-live="polite" className="sr-only">
           {active ? `${active.verb} ${active.path}. ` : ""}
-          {doneCount} {doneCount === 1 ? "file" : "files"} done.
+          {doneCount} {doneCount === 1 ? noun : `${noun}s`} done.
         </p>
         <ul aria-hidden className="flex flex-col items-center gap-3">
           {files.map((file, index) => {
@@ -78,25 +82,42 @@ export function GeneratingOverlay({
             const isActive = file.status === "active";
             return (
               <li
-                key={`${file.status}-${file.path}`}
+                key={file.id ?? `${file.status}-${file.path}`}
                 className={cn(
-                  "flex items-center gap-2 text-muted-foreground",
+                  "flex max-w-full items-center gap-2 text-muted-foreground",
                   fadeByDistance[distance],
                   isActive ? "text-lg text-foreground" : "text-sm",
+                  file.status === "error" && "text-destructive",
                 )}
               >
-                <FileIcon
-                  path={file.path}
-                  className={cn(isActive && "size-5")}
-                />
+                {file.icon ? (
+                  <file.icon
+                    aria-hidden
+                    className={cn("size-4 shrink-0", isActive && "size-5")}
+                  />
+                ) : (
+                  <FileIcon
+                    path={file.path}
+                    className={cn(isActive && "size-5")}
+                  />
+                )}
                 {isActive ? (
-                  <Shimmer as="span" className="font-medium">
+                  <Shimmer as="span" className="shrink-0 font-medium">
                     {file.verb}
                   </Shimmer>
                 ) : (
-                  <span>{file.verb}</span>
+                  <span className="shrink-0">{file.verb}</span>
                 )}
-                <span className="font-mono">{file.path}</span>
+                {file.path ? (
+                  <span
+                    className={cn(
+                      "max-w-md truncate",
+                      file.mono !== false && "font-mono",
+                    )}
+                  >
+                    {file.path}
+                  </span>
+                ) : null}
               </li>
             );
           })}

@@ -2,18 +2,15 @@ import { TRPCError } from "@trpc/server";
 import { customAlphabet } from "nanoid";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
-import { inngest } from "@/inngest/client";
-import { agentRun } from "@/inngest/events";
-import { parseAgentParts } from "@/lib/agent/parts";
-import { MAX_ATTACHMENTS } from "@/lib/attachments";
+import { pendingPromptWhere } from "@/inngest/agent/prompt-state";
 import {
   projectNameFromPrompt,
   slugFromName,
   withSlugSuffix,
 } from "@/lib/project-name";
 import { projectFilters, projectSorts } from "@/lib/search-params/projects";
-import { findAgentModel } from "@/server/ai/gateway";
 import { createTRPCRouter, protectedProcedure } from "../init";
+import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
 export const projectSelect = {
   id: true,
@@ -24,7 +21,6 @@ export const projectSelect = {
   updatedAt: true,
 } as const;
 
-export const MAX_PROMPT_LENGTH = 4000;
 const MAX_SLUG_ATTEMPTS = 5;
 const slugSuffix = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 4);
 
@@ -74,36 +70,6 @@ function isSlugConflict(error: unknown) {
     : String(target).includes("slug");
 }
 
-function agentState(
-  latest: {
-    role: "USER" | "ASSISTANT";
-    content: string;
-    parts: unknown;
-  } | null,
-) {
-  if (!latest || latest.role === "USER") {
-    return { status: "building" as const, reply: null };
-  }
-  const parts = parseAgentParts(latest.parts);
-  const failed = parts?.some((part) => part.type === "error") ?? false;
-  return {
-    status: failed ? ("failed" as const) : ("done" as const),
-    reply: latest.content,
-  };
-}
-
-async function startAgent(data: {
-  projectId: string;
-  userId: string;
-  messageId: string;
-}) {
-  try {
-    await inngest.send(agentRun.create(data));
-  } catch (error) {
-    console.error("[project.create] couldn't start the agent", error);
-  }
-}
-
 export const projectRouter = createTRPCRouter({
   list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const owner = { userId: ctx.session.user.id };
@@ -135,7 +101,7 @@ export const projectRouter = createTRPCRouter({
     .input(z.object({ slug: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
       const owner = { slug: input.slug, userId: ctx.session.user.id };
-      const [project, latest] = await Promise.all([
+      const [project, pending, latest] = await Promise.all([
         ctx.db.project.findFirst({
           where: owner,
           select: {
@@ -149,10 +115,13 @@ export const projectRouter = createTRPCRouter({
             },
           },
         }),
-        ctx.db.message.findFirst({
-          where: { project: owner },
-          orderBy: { createdAt: "desc" },
-          select: { role: true, content: true, parts: true },
+        ctx.db.message.count({
+          where: { project: owner, ...pendingPromptWhere },
+        }),
+        ctx.db.version.findFirst({
+          where: { project: owner, status: "READY" },
+          orderBy: { number: "desc" },
+          select: { number: true },
         }),
       ]);
       if (!project) {
@@ -162,55 +131,19 @@ export const projectRouter = createTRPCRouter({
       return {
         ...rest,
         prompt: messages[0]?.content ?? null,
-        agent: agentState(latest),
+        building: pending > 0,
+        version: latest?.number ?? null,
       };
     }),
   create: protectedProcedure
-    .input(
-      z.object({
-        prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH),
-        model: z.string().min(1).max(120).optional(),
-        attachmentIds: z
-          .array(z.string().min(1).max(64))
-          .max(MAX_ATTACHMENTS)
-          .default([]),
-      }),
-    )
+    .input(z.object(promptFields))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
-      const attachmentIds = [...new Set(input.attachmentIds)];
-      const [model, attachments] = await Promise.all([
-        findAgentModel(input.model).catch(() => {
-          throw new TRPCError({
-            code: "SERVICE_UNAVAILABLE",
-            message: "Couldn't load the model list. Try again in a moment.",
-          });
-        }),
-        attachmentIds.length
-          ? ctx.db.attachment.findMany({
-              where: { id: { in: attachmentIds }, userId, messageId: null },
-              select: { id: true },
-            })
-          : Promise.resolve([]),
-      ]);
-      if (!model) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "That model isn't available. Pick another one.",
-        });
-      }
-      if (attachments.length !== attachmentIds.length) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Some images are missing. Attach them again.",
-        });
-      }
-      if (attachmentIds.length > 0 && !model.vision) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `${model.name} can't read images. Pick a model that supports images.`,
-        });
-      }
+      const { model, attachmentIds } = await resolvePrompt(
+        ctx.db,
+        userId,
+        input,
+      );
 
       const name = projectNameFromPrompt(input.prompt);
       const baseSlug = slugFromName(name);

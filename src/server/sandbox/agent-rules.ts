@@ -16,7 +16,7 @@ These rules apply to every AI agent that writes or changes code in this project,
 
 - Next.js App Router, TypeScript, Tailwind CSS v4 and shadcn/ui built on Base UI.
 - Source folders are \`app/\`, \`components/\`, \`hooks/\` and \`lib/\`. There is no \`src/\` folder.
-- Every shadcn/ui component is already installed in \`components/ui\`. Compose with the \`render\` prop, not \`asChild\`.
+- Every shadcn/ui component is already installed in \`components/ui\`. Compose with the \`render\` prop, not \`asChild\`. When \`render\` turns a button into a link or another non-button element, add \`nativeButton={false}\`: \`<Button render={<a href="/shop" />} nativeButton={false}>Shop</Button>\`.
 - Style with the theme tokens (\`bg-background\`, \`text-foreground\`, \`bg-muted\`, \`border\`) so light and dark themes both work.
 - Check your work before you finish: run \`npx tsc --noEmit\` and fix what it reports.
 `;

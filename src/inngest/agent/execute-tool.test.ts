@@ -541,3 +541,35 @@ describe("guardrails in the executor", () => {
     expect(capped.output).toMatch(/limit is 20/);
   });
 });
+
+describe("activity rows", () => {
+  test("a read lists the files it read", async () => {
+    const { ctx, sandbox, publish } = makeCtx();
+    sandbox.files.read
+      .mockResolvedValueOnce("content")
+      .mockRejectedValueOnce(new Error("missing"));
+    const result = await executeTool(
+      call("readFiles", { paths: ["app/page.tsx", "nope.ts"] }),
+      ctx,
+    );
+    const task = { kind: "read", paths: ["app/page.tsx"] };
+    expect(result.tasks).toEqual([task]);
+    expect(publish).toHaveBeenCalledWith("task", task);
+  });
+
+  test("an rm command records deleted files", async () => {
+    const { ctx, publish } = makeCtx();
+    const result = await executeTool(
+      call("terminal", { command: "rm components/old.tsx" }),
+      ctx,
+    );
+    const task = {
+      kind: "file",
+      verb: "deleted",
+      path: "components/old.tsx",
+      lines: 0,
+    };
+    expect(result.tasks).toContainEqual(task);
+    expect(publish).toHaveBeenCalledWith("task", task);
+  });
+});

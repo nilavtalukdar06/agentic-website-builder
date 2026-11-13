@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  ArrowRightIcon,
   ArrowUpIcon,
   CircleCheckIcon,
   CodeIcon,
@@ -145,6 +146,10 @@ export function ComponentsSection() {
             <Button variant="ghost">Ghost</Button>
             <Button variant="destructive">Destructive</Button>
             <Button variant="link">Link</Button>
+            <Button variant="accent" size="chip">
+              <ArrowRightIcon data-icon="inline-start" />
+              Accent chip
+            </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="lg">

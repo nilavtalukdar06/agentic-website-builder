@@ -8,7 +8,16 @@ const gateway = vi.hoisted(() => ({
   getAgentModels: vi.fn(),
   pickDefaultModel: vi.fn(),
 }));
+const workspace = vi.hoisted(() => ({
+  wakeSandbox: vi.fn(),
+  writeVersionToSandbox: vi.fn(),
+}));
+vi.mock("server-only", () => ({}));
 vi.mock("@/inngest/client", () => ({ inngest: { send } }));
+vi.mock("@/server/sandbox/workspace", () => workspace);
+vi.mock("@/server/storage/attachments", () => ({
+  attachmentUrl: vi.fn(async (key: string) => `https://files.test/${key}`),
+}));
 vi.mock("@/server/ai/gateway", () => gateway);
 
 const sonnet = {
@@ -31,6 +40,8 @@ beforeEach(() => {
   gateway.findAgentModel.mockReset().mockResolvedValue(sonnet);
   gateway.getAgentModels.mockReset().mockResolvedValue([sonnet, textOnly]);
   gateway.pickDefaultModel.mockReset().mockReturnValue(sonnet);
+  workspace.wakeSandbox.mockReset();
+  workspace.writeVersionToSandbox.mockReset();
 });
 import type { Session, TRPCContext } from "../init";
 import { createCaller } from "./_app";
@@ -70,6 +81,17 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
     },
     message: {
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
+    version: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue({}),
     },
     attachment: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -79,8 +101,10 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
     },
     $transaction: vi.fn(),
   };
-  db.$transaction.mockImplementation((fn: (tx: typeof db) => unknown) =>
-    fn(db),
+  Object.assign(db.project, { update: vi.fn().mockResolvedValue({}) });
+  db.$transaction.mockImplementation(
+    (fn: ((tx: typeof db) => unknown) | Promise<unknown>[]) =>
+      Array.isArray(fn) ? Promise.all(fn) : fn(db),
   );
   const ctx = {
     db: db as unknown as TRPCContext["db"],
@@ -209,69 +233,42 @@ describe("project.recent", () => {
 });
 
 describe("project.bySlug", () => {
-  test("applies the ownership filter and returns the first prompt", async () => {
+  test("applies the ownership filter and returns the workspace state", async () => {
     const { ctx, db } = signedIn();
     db.project.findFirst.mockResolvedValue({
       ...project,
       previewUrl: null,
       messages: [{ content: "Build a coffee site" }],
     });
+    db.message.count.mockResolvedValue(1);
+    db.version.findFirst.mockResolvedValue({ number: 3 });
     await expect(
       createCaller(ctx).project.bySlug({ slug: "demo" }),
     ).resolves.toEqual({
       ...project,
       previewUrl: null,
       prompt: "Build a coffee site",
-      agent: { status: "building", reply: null },
+      building: true,
+      version: 3,
     });
     expect(db.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: { slug: "demo", userId: "u1" } }),
     );
-    expect(db.message.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { project: { slug: "demo", userId: "u1" } },
-      }),
-    );
+    expect(db.message.count).toHaveBeenCalledWith({
+      where: {
+        project: { slug: "demo", userId: "u1" },
+        role: "USER",
+        replies: { none: {} },
+      },
+    });
   });
 
-  test.each([
-    [{ role: "USER", content: "Add a footer", parts: null }, "building", null],
-    [
-      {
-        role: "ASSISTANT",
-        content: "Built it",
-        parts: [{ type: "text", text: "Built it" }],
-      },
-      "done",
-      "Built it",
-    ],
-    [
-      {
-        role: "ASSISTANT",
-        content: "Failed",
-        parts: [{ type: "error", message: "Failed" }],
-      },
-      "failed",
-      "Failed",
-    ],
-  ])(
-    "reports the agent state from the latest message (%#)",
-    async (latest, status, reply) => {
-      const { ctx, db } = signedIn();
-      db.project.findFirst.mockResolvedValue({ ...project, messages: [] });
-      db.message.findFirst.mockResolvedValue(latest);
-      await expect(
-        createCaller(ctx).project.bySlug({ slug: "demo" }),
-      ).resolves.toMatchObject({ agent: { status, reply } });
-    },
-  );
-
-  test("prompt is null when there is no message", async () => {
+  test("is idle with no version when nothing is pending", async () => {
     const { ctx, db } = signedIn();
     db.project.findFirst.mockResolvedValue({ ...project, messages: [] });
     await expect(
       createCaller(ctx).project.bySlug({ slug: "demo" }),
-    ).resolves.toMatchObject({ prompt: null });
+    ).resolves.toMatchObject({ prompt: null, building: false, version: null });
   });
 
   test("throws NOT_FOUND for a project the user does not own", async () => {
@@ -525,5 +522,355 @@ describe("credits.balance", () => {
       balance: 0,
       granted: 0,
     });
+  });
+});
+
+describe("workspace procedures reject signed-out callers", () => {
+  test("message, version and sandbox", async () => {
+    const caller = createCaller(makeContext().ctx);
+    for (const call of [
+      () => caller.message.list({ projectId: "p1" }),
+      () => caller.message.send({ projectId: "p1", prompt: "Add a footer" }),
+      () => caller.message.stop({ projectId: "p1" }),
+      () => caller.message.retry({ messageId: "m1" }),
+      () => caller.version.list({ projectId: "p1" }),
+      () => caller.version.files({ projectId: "p1" }),
+      () => caller.version.restore({ projectId: "p1", number: 1 }),
+      () => caller.sandbox.wake({ projectId: "p1" }),
+    ]) {
+      await expect(call()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    }
+  });
+});
+
+const message = {
+  content: "",
+  parts: null,
+  model: null,
+  replyToId: null,
+  stopRequestedAt: null,
+  createdAt: new Date("2026-01-01T00:00:00Z"),
+  _count: { replies: 0 },
+  attachments: [],
+};
+
+describe("message.list", () => {
+  test("rejects a project the user does not own", async () => {
+    const { ctx, db } = signedIn();
+    await expect(
+      createCaller(ctx).message.list({ projectId: "p1" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(db.project.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "p1", userId: "u1" } }),
+    );
+  });
+
+  test("orders replies under their prompt and attaches versions", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.findMany.mockResolvedValue([
+      {
+        ...message,
+        id: "u1",
+        role: "USER",
+        content: "Build",
+        _count: { replies: 1 },
+        attachments: [
+          { id: "a1", name: "ref.png", contentType: "image/png", key: "k1" },
+        ],
+      },
+      {
+        ...message,
+        id: "u2",
+        role: "USER",
+        content: "Add footer",
+        stopRequestedAt: new Date(),
+      },
+      {
+        ...message,
+        id: "run_r1_reply",
+        role: "ASSISTANT",
+        content: "Done",
+        parts: [{ type: "text", text: "Done" }],
+        replyToId: "u1",
+      },
+    ]);
+    db.version.findMany.mockResolvedValue([
+      { number: 1, title: "First", creditCost: 42, runId: "r1" },
+    ]);
+    const result = await createCaller(ctx).message.list({ projectId: "p1" });
+    expect(result.latestVersion).toBe(1);
+    expect(result.messages.map((item) => item.id)).toEqual([
+      "u1",
+      "run_r1_reply",
+      "u2",
+    ]);
+    expect(result.messages[0]).toMatchObject({
+      pending: false,
+      attachments: [{ id: "a1", url: "https://files.test/k1" }],
+    });
+    expect(result.messages[1]).toMatchObject({
+      version: { number: 1, title: "First", creditCost: 42 },
+      parts: [{ type: "text", text: "Done" }],
+    });
+    expect(result.messages[2]).toMatchObject({ pending: true, stopping: true });
+  });
+});
+
+describe("message.send", () => {
+  test("stores the follow-up and starts the agent", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.create.mockResolvedValue({ id: "m9" });
+    await expect(
+      createCaller(ctx).message.send({
+        projectId: "p1",
+        prompt: "  Add a footer ",
+      }),
+    ).resolves.toEqual({ id: "m9" });
+    expect(db.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          projectId: "p1",
+          role: "USER",
+          content: "Add a footer",
+          model: sonnet.id,
+        }),
+      }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "agent/run",
+        data: { projectId: "p1", userId: "u1", messageId: "m9" },
+      }),
+    );
+  });
+
+  test("rejects images for a model without vision", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    gateway.findAgentModel.mockResolvedValue(textOnly);
+    db.attachment.findMany.mockResolvedValue([{ id: "a1" }]);
+    await expect(
+      createCaller(ctx).message.send({
+        projectId: "p1",
+        prompt: "Like this",
+        attachmentIds: ["a1"],
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.message.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("message.stop", () => {
+  test("replies at once to a prompt that hasn't started", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.findMany.mockResolvedValue([{ id: "m1" }]);
+    await expect(
+      createCaller(ctx).message.stop({ projectId: "p1" }),
+    ).resolves.toEqual({ stopped: 1 });
+    expect(db.message.updateMany).toHaveBeenCalledWith({
+      where: { id: "m1", startedAt: null, stopRequestedAt: null },
+      data: { stopRequestedAt: expect.any(Date) },
+    });
+    expect(db.message.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "stopped_m1" },
+        create: expect.objectContaining({
+          replyToId: "m1",
+          parts: [{ type: "stopped" }],
+        }),
+      }),
+    );
+  });
+
+  test("flags a running prompt for the loop to stop", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.findMany.mockResolvedValue([{ id: "m1" }]);
+    db.message.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    await createCaller(ctx).message.stop({ projectId: "p1" });
+    expect(db.message.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "m1", stopRequestedAt: null },
+      data: { stopRequestedAt: expect.any(Date) },
+    });
+    expect(db.message.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("message.retry", () => {
+  const reply = {
+    projectId: "p1",
+    replyToId: "u1",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+  };
+
+  test("re-runs the prompt of the latest reply", async () => {
+    const { ctx, db } = signedIn();
+    db.message.findFirst.mockResolvedValue(reply);
+    await expect(
+      createCaller(ctx).message.retry({ messageId: "r1" }),
+    ).resolves.toEqual({ messageId: "u1" });
+    expect(db.message.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "r1", role: "ASSISTANT", project: { userId: "u1" } },
+      }),
+    );
+    expect(db.message.updateMany).toHaveBeenCalledWith({
+      where: { replyToId: "u1" },
+      data: { replyToId: null },
+    });
+    expect(db.message.update).toHaveBeenCalledWith({
+      where: { id: "u1" },
+      data: { startedAt: null, stopRequestedAt: null },
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { projectId: "p1", userId: "u1", messageId: "u1" },
+      }),
+    );
+  });
+
+  test("refuses an older reply or a busy project", async () => {
+    const { ctx, db } = signedIn();
+    db.message.findFirst.mockResolvedValue(reply);
+    db.message.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    await expect(
+      createCaller(ctx).message.retry({ messageId: "r1" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    db.message.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    await expect(
+      createCaller(ctx).message.retry({ messageId: "r1" }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("version.files", () => {
+  test("returns the latest version with A / M markers", async () => {
+    const { ctx, db } = signedIn();
+    db.version.findFirst
+      .mockResolvedValueOnce({
+        number: 2,
+        title: "Footer",
+        files: { "app/page.tsx": "new", "components/footer.tsx": "x", a: "1" },
+      })
+      .mockResolvedValueOnce({ files: { "app/page.tsx": "old", a: "1" } });
+    await expect(
+      createCaller(ctx).version.files({ projectId: "p1" }),
+    ).resolves.toEqual({
+      number: 2,
+      title: "Footer",
+      files: { "app/page.tsx": "new", "components/footer.tsx": "x", a: "1" },
+      changes: { "app/page.tsx": "M", "components/footer.tsx": "A" },
+    });
+    expect(db.version.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          projectId: "p1",
+          project: { userId: "u1" },
+          status: "READY",
+        },
+      }),
+    );
+  });
+
+  test("is null before the first version and NOT_FOUND for a missing one", async () => {
+    const { ctx } = signedIn();
+    await expect(
+      createCaller(ctx).version.files({ projectId: "p1" }),
+    ).resolves.toBeNull();
+    await expect(
+      createCaller(ctx).version.files({ projectId: "p1", number: 4 }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("version.restore", () => {
+  test("saves a new version from the old files and rewrites the sandbox", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1", sandboxId: "sbx" });
+    db.version.findFirst
+      .mockResolvedValueOnce({ number: 1, files: { a: "1" } })
+      .mockResolvedValueOnce({ number: 3 });
+    workspace.writeVersionToSandbox.mockResolvedValue({ written: true });
+    await expect(
+      createCaller(ctx).version.restore({ projectId: "p1", number: 1 }),
+    ).resolves.toEqual({ number: 4, sandboxUpdated: true });
+    expect(db.version.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        projectId: "p1",
+        number: 4,
+        title: "Restored v1",
+        files: { a: "1" },
+        creditCost: 0,
+      }),
+    });
+    expect(db.message.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        role: "ASSISTANT",
+        content: "Restored version 1 as version 4.",
+      }),
+    });
+    expect(workspace.writeVersionToSandbox).toHaveBeenCalledWith("sbx", {
+      a: "1",
+    });
+  });
+
+  test("is refused while building", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1", sandboxId: null });
+    db.message.count.mockResolvedValue(1);
+    await expect(
+      createCaller(ctx).version.restore({ projectId: "p1", number: 1 }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(db.version.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("sandbox.wake", () => {
+  test("wakes the sandbox when a version exists", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({
+      id: "p1",
+      sandboxId: "sbx",
+      previewUrl: null,
+    });
+    db.version.findFirst.mockResolvedValue({ id: "v1" });
+    workspace.wakeSandbox.mockResolvedValue({
+      previewUrl: "https://3000-sbx.e2b.app",
+      created: false,
+    });
+    await expect(
+      createCaller(ctx).sandbox.wake({ projectId: "p1" }),
+    ).resolves.toEqual({
+      status: "ready",
+      previewUrl: "https://3000-sbx.e2b.app",
+    });
+    expect(workspace.wakeSandbox).toHaveBeenCalledWith({
+      projectId: "p1",
+      sandboxId: "sbx",
+    });
+  });
+
+  test("leaves the sandbox alone while building or before a version", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({
+      id: "p1",
+      sandboxId: null,
+      previewUrl: "https://x.e2b.app",
+    });
+    db.message.count.mockResolvedValueOnce(1);
+    await expect(
+      createCaller(ctx).sandbox.wake({ projectId: "p1" }),
+    ).resolves.toEqual({ status: "building", previewUrl: "https://x.e2b.app" });
+    await expect(
+      createCaller(ctx).sandbox.wake({ projectId: "p1" }),
+    ).resolves.toEqual({ status: "empty", previewUrl: null });
+    expect(workspace.wakeSandbox).not.toHaveBeenCalled();
   });
 });

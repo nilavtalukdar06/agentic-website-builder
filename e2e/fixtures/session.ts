@@ -49,15 +49,33 @@ export async function createTestSession(name: string) {
       return id;
     },
     addMessage: async (message: {
+      id?: string;
       projectId: string;
       role: "USER" | "ASSISTANT";
       content: string;
       parts?: unknown;
+      replyToId?: string | null;
+      startedAt?: Date | null;
+      createdAt?: Date;
+    }) => {
+      const id = message.id ?? randomUUID();
+      await sql`
+        INSERT INTO "Message" (id, "projectId", role, content, parts, "replyToId", "startedAt", "createdAt")
+        VALUES (${id}, ${message.projectId}, ${message.role}, ${message.content}, ${message.parts === undefined ? null : JSON.stringify(message.parts)}::jsonb, ${message.replyToId ?? null}, ${message.startedAt ? message.startedAt.toISOString() : null}, ${(message.createdAt ?? new Date()).toISOString()})`;
+      return id;
+    },
+    addVersion: async (version: {
+      projectId: string;
+      number: number;
+      title: string;
+      files: Record<string, string>;
+      creditCost?: number;
+      runId?: string;
       createdAt?: Date;
     }) => {
       await sql`
-        INSERT INTO "Message" (id, "projectId", role, content, parts, "createdAt")
-        VALUES (${randomUUID()}, ${message.projectId}, ${message.role}, ${message.content}, ${message.parts === undefined ? null : JSON.stringify(message.parts)}::jsonb, ${(message.createdAt ?? new Date()).toISOString()})`;
+        INSERT INTO "Version" (id, "projectId", number, status, "runId", title, files, "creditCost", "createdAt")
+        VALUES (${randomUUID()}, ${version.projectId}, ${version.number}, 'READY', ${version.runId ?? null}, ${version.title}, ${JSON.stringify(version.files)}::jsonb, ${version.creditCost ?? 0}, ${(version.createdAt ?? new Date()).toISOString()})`;
     },
     cookie: {
       name: "better-auth.session_token",

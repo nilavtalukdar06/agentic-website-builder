@@ -69,6 +69,7 @@ export type AgentRun = {
   output: string | null;
   finished: boolean;
   outOfCredits: boolean;
+  stopped: boolean;
   messages: ModelMessage[];
   usage: TokenUsage;
   calls: BilledCall[];
@@ -151,6 +152,7 @@ export async function runAgentLoop({
   written: initialWritten = [],
   progress: initialProgress = { readAgentsMd: false, loadedSkills: [] },
   expectWrites = false,
+  shouldStop,
 }: {
   step: Step;
   spec: AgentSpec;
@@ -165,6 +167,7 @@ export async function runAgentLoop({
   written?: string[];
   progress?: SkillProgress;
   expectWrites?: boolean;
+  shouldStop?: () => Promise<boolean>;
 }): Promise<AgentRun> {
   const instructions = spec.instructions(
     skillIndex(installedSkills, spec.skills),
@@ -193,11 +196,19 @@ export async function runAgentLoop({
   let output: string | null = null;
   let finished = false;
   let outOfCredits = false;
+  let stopped = false;
   let handoff: string | null = null;
   const run = givenRun ?? createRunContext({ sandboxId: sandboxId ?? "" });
   const step = trackSteps(rawStep, run);
 
   for (let turn = 0; ; turn++) {
+    if (
+      shouldStop &&
+      (await step.run(`${stepPrefix}-stop-${turn}`, () => shouldStop()))
+    ) {
+      stopped = true;
+      break;
+    }
     if (
       turn > 0 &&
       turn % CHECKPOINT_EVERY_TURNS === 0 &&
@@ -354,6 +365,7 @@ export async function runAgentLoop({
     output,
     finished,
     outOfCredits,
+    stopped,
     messages,
     usage,
     calls,

@@ -87,6 +87,18 @@ export const derivedTokens: ColorToken[] = [
     dark: "oklch(0.2 0 0)",
     derived: true,
   },
+  {
+    name: "brand-soft",
+    light: "oklch(0.94 0.035 264.4)",
+    dark: "oklch(0.3 0.07 264.4)",
+    derived: true,
+  },
+  {
+    name: "brand-text",
+    light: "oklch(0.42 0.2 264.4)",
+    dark: "oklch(0.82 0.1 264.4)",
+    derived: true,
+  },
 ];
 
 export const chartTokens: ColorToken[] = [
@@ -196,5 +208,6 @@ export const contrastPairs = [
   },
   { name: "Success", background: "success", foreground: "success-foreground" },
   { name: "Brand", background: "brand", foreground: "brand-foreground" },
+  { name: "Brand soft", background: "brand-soft", foreground: "brand-text" },
   { name: "Sidebar", background: "sidebar", foreground: "sidebar-foreground" },
 ] as const;

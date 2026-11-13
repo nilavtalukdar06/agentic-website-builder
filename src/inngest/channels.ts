@@ -1,30 +1,21 @@
 import { realtime } from "inngest";
 import { z } from "zod";
 import { fileVerbs, sourceSchema, taskItemSchema } from "@/lib/agent/parts";
+import { projectChannelName } from "@/lib/agent/realtime-topics";
 
 export const agentStatuses = [
   "thinking",
   "building",
   "compiling",
   "done",
+  "stopped",
   "error",
 ] as const;
 
-export const projectTopics = [
-  "status",
-  "reasoning",
-  "text",
-  "task",
-  "file",
-  "tool",
-  "credits",
-  "preview",
-  "search",
-  "guard",
-] as const;
+export { projectTopics } from "@/lib/agent/realtime-topics";
 
 export const projectChannel = realtime.channel({
-  name: ({ projectId }: { projectId: string }) => `project:${projectId}`,
+  name: ({ projectId }: { projectId: string }) => projectChannelName(projectId),
   topics: {
     status: {
       schema: z.object({

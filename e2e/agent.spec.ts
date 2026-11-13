@@ -162,7 +162,7 @@ test.describe("with a session", () => {
     expect(opacity).toBe("1");
   });
 
-  test("a finished run shows the reply and the preview link", async ({
+  test("a finished run shows the reply in the workspace chat", async ({
     page,
   }) => {
     const projectId = await session.addProject({
@@ -170,7 +170,7 @@ test.describe("with a session", () => {
       name: "Done site",
       previewUrl: "https://3000-sbx-e2e.e2b.app",
     });
-    await session.addMessage({
+    const promptId = await session.addMessage({
       projectId,
       role: "USER",
       content: "Build a coffee site",
@@ -179,18 +179,18 @@ test.describe("with a session", () => {
     await session.addMessage({
       projectId,
       role: "ASSISTANT",
+      replyToId: promptId,
       content: "Built a hero and a roast grid.",
       parts: [{ type: "text", text: "Built a hero and a roast grid." }],
     });
 
     await page.goto(`/p/done-${suffix}`);
-    await expect(page.getByText("Built by the agent")).toBeVisible();
+    await expect(page.getByText("Build a coffee site")).toBeVisible();
     await expect(
       page.getByText("Built a hero and a roast grid."),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Open preview" }),
-    ).toHaveAttribute("href", "https://3000-sbx-e2e.e2b.app");
+    await expect(page.getByText("Building", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("No preview yet")).toBeVisible();
   });
 
   test("a failed run says the agent stopped", async ({ page }) => {
@@ -198,7 +198,7 @@ test.describe("with a session", () => {
       slug: `failed-${suffix}`,
       name: "Failed site",
     });
-    await session.addMessage({
+    const promptId = await session.addMessage({
       projectId,
       role: "USER",
       content: "Build a coffee site",
@@ -207,14 +207,16 @@ test.describe("with a session", () => {
     await session.addMessage({
       projectId,
       role: "ASSISTANT",
+      replyToId: promptId,
       content: "You're out of credits.",
       parts: [{ type: "error", message: "You're out of credits." }],
     });
 
     await page.goto(`/p/failed-${suffix}`);
-    await expect(page.getByText("The agent stopped")).toBeVisible();
-    await expect(page.getByText("You're out of credits.")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Refresh" })).toHaveCount(0);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "You're out of credits." }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 
   test("a reply saved before the simplification still loads", async ({
@@ -224,7 +226,7 @@ test.describe("with a session", () => {
       slug: `legacy-${suffix}`,
       name: "Legacy site",
     });
-    await session.addMessage({
+    const promptId = await session.addMessage({
       projectId,
       role: "USER",
       content: "Build a coffee site like stripe.com",
@@ -233,6 +235,7 @@ test.describe("with a session", () => {
     await session.addMessage({
       projectId,
       role: "ASSISTANT",
+      replyToId: promptId,
       content: "Built the site from the research brief.",
       parts: [
         {
@@ -252,7 +255,6 @@ test.describe("with a session", () => {
     });
 
     await page.goto(`/p/legacy-${suffix}`);
-    await expect(page.getByText("Built by the agent")).toBeVisible();
     await expect(
       page.getByText("Built the site from the research brief."),
     ).toBeVisible();

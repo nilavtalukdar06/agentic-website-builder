@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   agentPartsSchema,
+  deletedPaths,
   packagesFromInstall,
   parseAgentParts,
+  stripSummaryTags,
 } from "./parts";
 
 describe("packagesFromInstall", () => {
@@ -134,5 +136,27 @@ describe("parseAgentParts", () => {
     expect(parseAgentParts(null)).toBeNull();
     expect(parseAgentParts({ type: "text" })).toBeNull();
     expect(parseAgentParts([{ type: "text" }])).toBeNull();
+  });
+});
+
+describe("deletedPaths", () => {
+  test("lists plain rm targets and skips globs, absolute and parent paths", () => {
+    expect(deletedPaths("rm components/old.tsx ./lib/x.ts")).toEqual([
+      "components/old.tsx",
+      "lib/x.ts",
+    ]);
+    expect(deletedPaths("npm run lint && rm -f a.ts; rm -rf *.tmp")).toEqual([
+      "a.ts",
+    ]);
+    expect(deletedPaths("rm /etc/hosts ../x.ts")).toEqual([]);
+    expect(deletedPaths("ls -la")).toEqual([]);
+  });
+});
+
+describe("stripSummaryTags", () => {
+  test("removes the tags and keeps the text", () => {
+    expect(stripSummaryTags("<task_summary> Built it </task_summary>")).toBe(
+      "Built it",
+    );
   });
 });

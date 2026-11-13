@@ -23,7 +23,13 @@ export async function recordAssistantError(
     projectId,
     runId,
     message,
-  }: { projectId: string; runId: string; message: string },
+    replyToId,
+  }: {
+    projectId: string;
+    runId: string;
+    message: string;
+    replyToId?: string | null;
+  },
 ) {
   const parts: AgentPart[] = [{ type: "error", message }];
   return db.message.upsert({
@@ -34,6 +40,7 @@ export async function recordAssistantError(
       role: "ASSISTANT",
       content: message,
       parts,
+      replyToId: replyToId ?? null,
     },
     update: {},
   });
@@ -99,9 +106,40 @@ export async function saveRunResult(
     creditCost: number;
     previewUrl: string;
     chainId?: string;
+    replyToId?: string | null;
+    saveVersion?: boolean;
   },
 ) {
+  const saveVersion = input.saveVersion ?? true;
   return db.$transaction(async (tx) => {
+    const reply = {
+      where: { id: replyId(input.runId) },
+      create: {
+        id: replyId(input.runId),
+        projectId: input.projectId,
+        role: "ASSISTANT" as const,
+        content: input.content,
+        parts: input.parts,
+        replyToId: input.replyToId ?? null,
+      },
+      update: {},
+    };
+    const dropCheckpoint = () =>
+      input.chainId
+        ? tx.version.deleteMany({
+            where: {
+              id: checkpointId(input.chainId),
+              projectId: input.projectId,
+            },
+          })
+        : null;
+
+    if (!saveVersion) {
+      await dropCheckpoint();
+      await tx.message.upsert(reply);
+      return { versionNumber: null };
+    }
+
     const existing = await tx.version.findUnique({
       where: { id: versionId(input.runId) },
       select: { number: true },
@@ -128,22 +166,8 @@ export async function saveRunResult(
         runId: input.runId,
       },
     });
-    if (input.chainId) {
-      await tx.version.deleteMany({
-        where: { id: checkpointId(input.chainId), projectId: input.projectId },
-      });
-    }
-    await tx.message.upsert({
-      where: { id: replyId(input.runId) },
-      create: {
-        id: replyId(input.runId),
-        projectId: input.projectId,
-        role: "ASSISTANT",
-        content: input.content,
-        parts: input.parts,
-      },
-      update: {},
-    });
+    await dropCheckpoint();
+    await tx.message.upsert(reply);
     await tx.project.update({
       where: { id: input.projectId },
       data: { previewUrl: input.previewUrl },

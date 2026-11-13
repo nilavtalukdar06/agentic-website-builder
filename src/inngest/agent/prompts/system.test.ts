@@ -9,6 +9,11 @@ const rules = readFileSync(
 );
 
 describe("agent instructions", () => {
+  test("links built with the render prop set nativeButton={false}", () => {
+    expect(SYSTEM_PROMPT).toContain("nativeButton={false}");
+    expect(rules).toContain("nativeButton={false}");
+  });
+
   test("the system prompt sends the agent to AGENTS.md and the skills first", () => {
     expect(SYSTEM_PROMPT).toContain("Read AGENTS.md with readFiles");
     expect(SYSTEM_PROMPT).toContain("even for a one-line change");

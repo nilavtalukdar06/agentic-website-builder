@@ -24,6 +24,7 @@ const SNAPSHOT_EXCLUDED_DIRS = [
   ".agents",
   ".claude",
 ];
+const SNAPSHOT_EXCLUDED_PATHS = ["./agent/skills"];
 const SNAPSHOT_EXCLUDED_FILES = [
   "package-lock.json",
   "pnpm-lock.yaml",
@@ -124,9 +125,10 @@ function quote(value: string) {
 }
 
 export function snapshotListCommand() {
-  const prune = SNAPSHOT_EXCLUDED_DIRS.map((dir) => `-name ${quote(dir)}`).join(
-    " -o ",
-  );
+  const prune = [
+    ...SNAPSHOT_EXCLUDED_DIRS.map((dir) => `-name ${quote(dir)}`),
+    ...SNAPSHOT_EXCLUDED_PATHS.map((path) => `-path ${quote(path)}`),
+  ].join(" -o ");
   const skip = SNAPSHOT_EXCLUDED_FILES.map(
     (name) => `! -name ${quote(name)}`,
   ).join(" ");

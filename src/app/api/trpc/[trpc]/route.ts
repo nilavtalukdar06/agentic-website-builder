@@ -10,4 +10,6 @@ const handler = (req: Request) =>
     createContext: () => createTRPCContext(),
   });
 
+export const maxDuration = 300;
+
 export { handler as GET, handler as POST };
