@@ -233,7 +233,7 @@ export function WorkspaceToolbar({
                 <tab.icon />
                 <span
                   aria-hidden
-                  className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,margin,opacity] duration-[340ms] ease-[cubic-bezier(0.32,0.72,0,1)] group-data-active/tab:mr-0.5 group-data-active/tab:ml-0.5 group-data-active/tab:max-w-45 group-data-active/tab:opacity-100 motion-reduce:transition-none"
+                  className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,margin,opacity] duration-340 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-active/tab:mr-0.5 group-data-active/tab:ml-0.5 group-data-active/tab:max-w-45 group-data-active/tab:opacity-100 motion-reduce:transition-none"
                 >
                   {tab.label}
                 </span>
