@@ -51,7 +51,7 @@ export default async function AppLayout({
             recent={<SidebarRecentProjects />}
             credits={<SidebarCredits />}
           />
-          <SidebarInset className="min-h-0 overflow-y-auto max-md:pt-12">
+          <SidebarInset className="min-h-0 overflow-y-auto border max-md:pt-12">
             <SidebarTrigger
               aria-label="Open sidebar"
               className="absolute top-3 left-3 z-10 border bg-background/80 backdrop-blur-md md:hidden"

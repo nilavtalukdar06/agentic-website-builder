@@ -70,6 +70,7 @@
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-composer: var(--composer);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -181,11 +182,13 @@
   --code-punc: oklch(0.254 0.011 254);
   --code-ln: oklch(0.565 0.019 251);
 
-  --aurora-blue: #5f8cfe;
-  --aurora-violet: #9b82f3;
-  --aurora-pink: #fd85e5;
-  --aurora-magenta: #fe6dc6;
-  --aurora-rose: #fe2b75;
+  --composer: #ffffff;
+
+  --aurora-blue: #5b8bfe;
+  --aurora-violet: #a584f3;
+  --aurora-pink: #fd84e4;
+  --aurora-magenta: #fe64b8;
+  --aurora-rose: #fe3780;
   --aurora-orange: #ff583a;
 }
 
@@ -240,8 +243,10 @@
   --code-punc: oklch(0.943 0.011 243.7);
   --code-ln: oklch(0.563 0.02 256.3);
 
-  --aurora-blue: #4a78e6;
-  --aurora-violet: #8a82f6;
+  --composer: #272726;
+
+  --aurora-blue: #3c6bd1;
+  --aurora-violet: #8381f5;
   --aurora-pink: #fb84e5;
   --aurora-magenta: #fe6ac0;
   --aurora-rose: #fe3a85;
@@ -277,8 +282,9 @@
   background-color: var(--background);
   background-image:
     radial-gradient(
-      ellipse 34% 22% at 50% 18%,
-      color-mix(in oklab, var(--background) 55%, transparent) 0%,
+      ellipse 58% 52% at 50% 32%,
+      var(--background) 0%,
+      color-mix(in oklab, var(--background) 65%, transparent) 55%,
       transparent 100%
     ),
     radial-gradient(
@@ -286,14 +292,25 @@
       color-mix(in oklab, var(--aurora-blue) 75%, var(--background)) 0%,
       transparent 100%
     ),
+    radial-gradient(
+      ellipse 42% 30% at 0% 46%,
+      var(--aurora-blue) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 42% 30% at 100% 46%,
+      var(--aurora-blue) 0%,
+      transparent 100%
+    ),
     linear-gradient(
       180deg,
-      color-mix(in oklab, var(--background) 85%, var(--aurora-blue)) 0%,
-      var(--aurora-blue) 26%,
-      var(--aurora-violet) 40%,
-      var(--aurora-pink) 54%,
-      var(--aurora-magenta) 68%,
-      var(--aurora-rose) 84%,
+      var(--background) 0%,
+      var(--background) 18%,
+      var(--aurora-blue) 44%,
+      var(--aurora-violet) 55%,
+      var(--aurora-pink) 66%,
+      var(--aurora-magenta) 76%,
+      var(--aurora-rose) 88%,
       var(--aurora-orange) 100%
     );
 }

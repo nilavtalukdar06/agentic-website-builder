@@ -147,7 +147,7 @@ function PromptComposer() {
   return (
     <div className="flex w-full flex-col items-center gap-5">
       <PromptInput
-        className="w-full *:data-[slot=input-group]:rounded-[1.75rem] *:data-[slot=input-group]:bg-card! *:data-[slot=input-group]:px-2 *:data-[slot=input-group]:ring-0! *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:border-input! *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:ring-0!"
+        className="w-full *:data-[slot=input-group]:rounded-[1.75rem] *:data-[slot=input-group]:bg-composer! *:data-[slot=input-group]:px-2 *:data-[slot=input-group]:ring-0! *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:border-input! *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:ring-0!"
         accept={ATTACHMENT_ACCEPT}
         multiple
         maxFiles={MAX_ATTACHMENTS}
