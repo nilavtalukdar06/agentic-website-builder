@@ -223,9 +223,10 @@ export const termsSections: ArticleSection[] = [
           available or error-free.
         </P>
         <P>
-          Sandboxes are temporary. A sandbox may expire when idle and is
-          recreated from your latest saved version. Download or export anything
-          you can&apos;t afford to lose.
+          Sandboxes are paused when idle and resumed when you come back. A
+          paused sandbox can still be lost, in which case it is recreated from
+          your latest saved version. Download or export anything you can&apos;t
+          afford to lose.
         </P>
       </>
     ),

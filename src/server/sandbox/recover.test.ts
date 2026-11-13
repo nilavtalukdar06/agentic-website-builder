@@ -93,3 +93,16 @@ describe("sandbox recovery", () => {
     ).rejects.toThrow("network");
   });
 });
+
+describe("failed resumes", () => {
+  test("a paused sandbox whose snapshot can't be restored counts as gone", () => {
+    const unresponsive = new Error("resume refused");
+    unresponsive.name = "GuestUnresponsiveError";
+    expect(isSandboxGone(unresponsive)).toBe(true);
+    expect(
+      isSandboxGone(
+        new Error("409: sandbox_snapshot_guest_agent_unresponsive"),
+      ),
+    ).toBe(true);
+  });
+});

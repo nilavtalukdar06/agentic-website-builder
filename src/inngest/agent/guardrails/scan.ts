@@ -1,3 +1,4 @@
+import { isBinarySnapshot } from "@/lib/snapshot-files";
 import type { Redactor } from "@/server/secrets/redact";
 import { detectSecrets } from "./secret-patterns";
 
@@ -9,6 +10,7 @@ export async function scanFiles(
 ): Promise<ScanHit[]> {
   const hits: ScanHit[] = [];
   for (const [path, content] of Object.entries(files)) {
+    if (isBinarySnapshot(content)) continue;
     const named = redactor.contains(content);
     if (named) {
       hits.push({ path, rule: `value of ${named}` });

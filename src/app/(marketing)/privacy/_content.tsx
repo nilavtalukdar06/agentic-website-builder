@@ -143,7 +143,9 @@ export const privacySections: ArticleSection[] = [
           <li>
             <Strong>E2B</Strong>: runs the sandbox where your project is built
             and previewed. Your project code runs there, and the secrets you add
-            are placed in its environment while it runs.
+            are placed in its environment. When a sandbox has been idle for a
+            while, E2B pauses it and keeps its saved state (files, installed
+            packages and those secrets) until we resume or delete it.
           </li>
           <li>
             <Strong>Inngest</Strong>: runs the background jobs that drive the
@@ -197,6 +199,10 @@ export const privacySections: ArticleSection[] = [
           accounting or legal reasons.
         </li>
         <li>Sessions: until they expire or you sign out.</li>
+        <li>
+          Paused sandboxes: until the project is deleted, or until we clean up
+          sandboxes of projects that have been idle for a long time.
+        </li>
         <li>
           Secrets: until you delete them, or the project or your account is
           deleted. The audit log of secret names is deleted with the project.

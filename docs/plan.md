@@ -557,6 +557,7 @@ The chat shows one `Task` group per agent ("Researcher · 3 sources", "Designer 
 - **Human in the loop:** `askUser` is a flat tool schema (portable across providers) validated per kind by the executor; Builder only in 5c. The wait is `step.waitForEvent(…, { if: 'async.data.requestId == "<id>"', timeout: "30m" })`: the plan's `match` compares a field of the triggering `agent/run` event, which has no request id. A timeout marks the request `PAUSED` only if it is still `PENDING`, so an answer that lands at the same moment still counts. The answer route moves `PENDING`→`ANSWERED` (sends `agent/input.provided`) or `PAUSED`→`ANSWERED` (sends a continuation `agent/run` with `resume`); a failed send reopens the question.
 - **Checkpoints:** a `Version` with `status: DRAFT`, `number: null` and id `checkpoint_<chainId>` (one per run chain, deleted when the chain saves its real version). Every "latest version" query filters `status: READY`.
 - **Recovery:** a tool step that finds the sandbox gone recreates it from the checkpoint, replays the run's file writes since then, re-injects secrets and egress rules, updates the project and retries once; the model is told that command changes since the checkpoint may be missing.
+- **Pause instead of kill (built 13 November 2026, §5c.6):** `createSandbox` passes `lifecycle: { onTimeout: "pause", autoResume: false }` (`SANDBOX_LIFECYCLE` in `src/server/sandbox/sandbox.ts`); every existing connect path resumes a paused sandbox. A failed resume (`SandboxNotFoundError`, or `GuestUnresponsiveError` / `sandbox_snapshot_guest_agent_unresponsive`) counts as gone, so the recovery and rebuild paths take over. Snapshots keep binary files up to 1 MB as `data:<mime>;base64,` strings in `Version.files` (`src/lib/snapshot-files.ts`), counted against the 4 MB total; restores write them back as bytes, and the secret scan skips them. Verified live against E2B: a sandbox past its timeout was `paused` (not killed), a request to its preview URL returned 502 and left it paused, and `connect` resumed it with an image in `public/` byte-identical, all 472 `node_modules` entries and the dev server answering 200.
 - **Not yet verified live:** the full `agent:smoke` scenarios (each `askUser` kind, the 30-minute pause and continuation, a mid-run sandbox kill). They need the Inngest dev server, which wasn't started in this session; the script now has `--answer`, `--answer-paused`, `--secret NAME=VALUE` and `--kill-sandbox-after <s>` for them. E2B `updateNetwork` (egress allowlist) and the dev-server restart after a secret is added are covered by unit tests only.
 
 ### 5c.1 What can go wrong
@@ -635,13 +636,26 @@ The agent pauses and asks through one tool, `askUser`, which has no `execute` (l
 - **Hardening option to verify in Phase 5d:** the E2B SDK documents per-domain `network.rules` that add headers to matching outbound HTTP and HTTPS requests. For an HTTP API key the sandbox could hold only a placeholder while E2B adds the real `Authorization` header, so not even hostile code in the sandbox can read it. It cannot cover the Postgres protocol, so a Neon URL stays in the environment. Not yet tried.
 - **Previews are not private.** A preview URL (`3000-<id>.e2b.app`) can be opened by anyone who has it, and a full-stack preview can reach the user's database. Until private previews exist (an authenticated Vibe proxy cannot carry Next's HMR websocket through a route handler, so this needs design: open decision), the secret card warns "anyone with the preview link can use this app and its database access" and recommends a dedicated Neon branch with non-production data.
 
-### 5c.6 Surviving sandbox expiry (found in the Phase 5 live tests)
+### 5c.6 Sandbox lifecycle: pause instead of kill, and surviving expiry (found in the Phase 5 live tests)
 
-A live run on 12 November failed with `SandboxNotFoundError` mid-run: the 30-minute sandbox expired while a rate-limited run waited, and files written so far were lost. Waiting for a human makes this likely, so:
+**How it works today (Phases 5–5b).** The 30-minute `SANDBOX_TIMEOUT_MS` is an idle timeout, not a lifetime: every tool step and the `persist` step reconnect with `connectSandbox`, which passes the timeout again, and E2B's connect only ever extends it. A run that finishes at minute 28 leaves the sandbox alive for another 30 minutes. When a sandbox has expired between messages, the next run's `sandbox` step creates a new one from the template, writes the latest Version's files back and runs `npm install`. Conversation, Versions, briefs and credits live in Postgres, so multi-turn conversations already survive a dead sandbox. A rebuild loses binary files the agent created (snapshots skip them), anything past the 400-file / 4 MB snapshot cap, the preview URL (it changes) and running background processes, and it costs a cold start plus a reinstall.
+
+**The gap.** A live run on 12 November failed with `SandboxNotFoundError` mid-run: the sandbox expired while a rate-limited run waited, and files written so far were lost. `askUser` waits of up to 30 minutes (§5c.4) have no steps renewing the timeout, so this becomes likely.
+
+**Pause instead of kill** (moved here from Phase 9 at the owner's request, 13 November 2026):
+
+- Create sandboxes with `lifecycle: { onTimeout: "pause" }` (full memory snapshot) in `createSandbox`. On timeout the sandbox is paused, not deleted; `Sandbox.connect()` resumes a paused sandbox automatically, so `getOrCreateSandbox` and `connectSandbox` keep working unchanged, now with `node_modules`, binary files, the dev server and managed processes intact.
+- `autoResume` stays **off**: preview traffic must not wake (and bill) a paused sandbox. The workspace (Phase 6) resumes it explicitly with `connect` when the user opens the project, and shows "Waking up the preview…" meanwhile; the preview URL is re-saved after a resume in case it changed.
+- Existing sandboxes created before this change keep `kill`; they fall back to the rebuild path on expiry and pick up `pause` when recreated.
+- **Fallback stays:** if E2B no longer has the paused sandbox (deleted, retention exceeded, or the resume fails, including the documented 409 `sandbox_snapshot_guest_agent_unresponsive`), recreate from the latest Version or checkpoint as today.
+- **Snapshots keep small binaries:** include binary files up to 1 MB (images in `public/` and the like), counted against the 4 MB total, so a rebuild no longer drops them. Restores write them back as bytes.
+- **Confirmed before building (E2B docs, 13 November 2026):** paused sandboxes are kept with **unlimited retention** on Hobby, Pro and Enterprise and are never deleted automatically (only an explicit kill removes them); compute billing stops while paused, and paused sandboxes don't count toward the concurrency limit; the continuous-runtime cap (1 hour Hobby, 24 hours Pro) resets on pause and resume. The docs don't mention a storage charge for paused sandboxes: confirm on the owner's invoice. Because nothing expires on its own, the Phase 9 job that deletes paused sandboxes of idle and deleted projects matters (idle days still open). Recorded in `docs/decisions.md`.
+
+**Surviving expiry mid-run** (still needed, because a pause can also happen mid-run and resume can fail):
 
 - **Checkpoints:** before any wait and every 5 turns, snapshot the working tree to a draft checkpoint (a `Version` with `status: draft`, replaced by the real Version when the run succeeds).
-- **Recover in the executor:** a tool step that hits `SandboxNotFoundError` recreates the sandbox, restores the last checkpoint, re-injects secrets and managed processes, and retries the call once.
-- **Keep alive while waiting:** extend the sandbox timeout when a request opens, up to the plan's limit (the E2B SDK documents 1 hour on Hobby and 24 hours on Pro).
+- **Recover in the executor:** a tool step that hits `SandboxNotFoundError` (or a failed resume) recreates the sandbox, restores the last checkpoint, re-injects secrets and managed processes, and retries the call once. A paused sandbox needs none of this: the next `connect` resumes it.
+- **Keep alive while waiting:** before `step.waitForEvent`, call `Sandbox.setTimeout` to cover the wait (30 minutes plus a margin), up to the plan's limit (the E2B SDK documents 1 hour on Hobby and 24 hours on Pro). With `onTimeout: "pause"` an over-long wait now pauses the sandbox instead of losing it.
 
 ### 5c.7 Realtime events and message parts (additions to §5.3 and §5b.6)
 
@@ -649,20 +663,22 @@ Topics `input` (`{ requestId, kind, status: open | answered | paused | cancelled
 
 ### 5c.8 Package decisions (recorded in `docs/decisions.md` when built)
 
-| Need                       | Chosen                                                       | Rejected                                                                     |
-| -------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Pausing for a human        | Inngest `step.waitForEvent` + our `askUser` tool             | AI SDK `needsApproval` (ties the pause to a chat request, not a durable run) |
-| Policy classifier          | `openai/gpt-oss-safeguard-20b` through the gateway           | A moderation API outside the gateway (new vendor and key)                    |
-| Secret detection           | `secretlint` (evaluate) plus exact-value matching            | Own regex set only                                                           |
-| Pre-install package checks | `npq` (Apache-2.0, 3.27.4, updated November 2026), evaluate  | Installing blind; own heuristics only                                        |
-| Output text guardrail      | AI SDK `wrapLanguageModel` middleware                        | Post-processing the finished reply (misses streamed leaks)                   |
-| Encryption                 | Better Auth `symmetricEncrypt` or Node `crypto`, AES-256-GCM | A hosted secrets vault (new vendor)                                          |
+| Need                       | Chosen                                                       | Rejected                                                                      |
+| -------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Pausing for a human        | Inngest `step.waitForEvent` + our `askUser` tool             | AI SDK `needsApproval` (ties the pause to a chat request, not a durable run)  |
+| Policy classifier          | `openai/gpt-oss-safeguard-20b` through the gateway           | A moderation API outside the gateway (new vendor and key)                     |
+| Secret detection           | `secretlint` (evaluate) plus exact-value matching            | Own regex set only                                                            |
+| Pre-install package checks | `npq` (Apache-2.0, 3.27.4, updated November 2026), evaluate  | Installing blind; own heuristics only                                         |
+| Output text guardrail      | AI SDK `wrapLanguageModel` middleware                        | Post-processing the finished reply (misses streamed leaks)                    |
+| Encryption                 | Better Auth `symmetricEncrypt` or Node `crypto`, AES-256-GCM | A hosted secrets vault (new vendor)                                           |
+| Sandbox idle timeout       | E2B `lifecycle: { onTimeout: "pause" }`, `autoResume` off    | Kill and rebuild from the Version every time; `autoResume` on (bills traffic) |
 
 **Done when:**
 
 - A prompt containing a pasted key is redacted, never reaches the model, and offers the secure input card; the phishing and injection examples are blocked with no charge and a `GuardEvent`.
 - An `askUser` of each kind pauses the run, resumes on an answer, and ends as `paused` after 30 minutes; a unit test proves no secret value appears in any tool result, message, ledger row or log; a write containing a stored secret is rejected.
 - A run whose sandbox expired mid-run recovers from its checkpoint and finishes.
+- A sandbox left idle past its timeout is paused, not killed: the next message (or opening the workspace) resumes it with `node_modules`, an image in `public/` and the dev server intact, and preview traffic alone does not resume it. A project whose paused sandbox is gone still rebuilds from its latest Version, images included.
 - Docs updated: the Privacy Policy (the classifier model provider, stored secrets), the Terms (the user is responsible for the keys and databases they connect), `docs/decisions.md`.
 
 ---
@@ -916,6 +932,7 @@ AI Elements, installed and themed in Phase 1:
 ### 6.2 Preview mode
 
 - AI Elements `WebPreview`: back / forward / reload, URL field (read-only), device toggle, open in new tab, collapsible **Console** (stream dev-server logs)
+- **Waking a paused sandbox** (Phase 5c §5c.6): opening a project whose sandbox is paused resumes it with `connect` and shows "Waking up the preview…" (skeleton over the frame) until the dev server answers; a sandbox that is gone is rebuilt from the latest Version
 - **Generating overlay** while building: faded page outline + rolling list of files ("Edited lib/utils.ts" → "**Editing** tailwind.config.ts" with Shimmer → "Up next…"), file-type icons, elapsed time
 
 ### 6.3 Code mode (read-only)
@@ -985,7 +1002,7 @@ Scope is **view, copy, download**, nothing editable.
 
 ## Phase 9 — Hardening & launch
 
-- **Sandbox lifecycle:** idle timeout, reconnect on open (`connect` by id), recreate from the latest Version if expired; mid-run expiry is recovered from checkpoints (Phase 5c)
+- **Sandbox lifecycle:** pause on idle timeout and resume on open were moved to Phase 5c (§5c.6). Left here: a scheduled job that deletes paused sandboxes of projects idle for a set number of days and of deleted projects, and alerting when resumes fail often
 - **Rate limits:** per user on `project.create` and `agent/run` (evaluate `@upstash/ratelimit` or Inngest throttling/concurrency)
 - **Errors:** agent failure → assistant error message + "Retry" (no charge for failed runs, or a refund ledger entry); sandbox boot failure; webhook failures alerting
 - **Observability:** Inngest dashboard for runs; app logs; optional Sentry
@@ -1068,7 +1085,7 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 2. **Welcome credits** on sign-up: _resolved in Phase 3_: `WELCOME_CREDITS` env var, default 0 (no ledger row when 0)
 3. **GitHub scopes:** _resolved in Phase 3_: sign-in asks for `read:user user:email` only; repo scope is added at first export via Better Auth `linkSocial({ provider: "github", scopes })`
 4. **Payments in India:** Stripe invite status. If it's delayed, which second provider to add behind `PaymentProvider`
-5. **Sandbox retention:** _partly resolved in Phase 5_: 30-minute sandbox timeout; an expired sandbox is recreated from the latest Version on the next run. Pausing instead of killing is a Phase 9 option
+5. **Sandbox retention:** _partly resolved_: 30-minute idle timeout that every step renews (Phase 5); **pause instead of kill moved to Phase 5c** (§5c.6, owner's decision, 13 November 2026), with rebuild from the latest Version as the fallback. E2B keeps paused sandboxes indefinitely and stops compute billing while paused (confirmed in its docs when built). Still open: whether paused storage is billed on the owner's plan, and after how many idle days the Phase 9 job deletes paused sandboxes
 6. **Private repos** on export: allowed from day one, or public only at first
 7. **Phase 5b knobs:** _router model resolved when built_: the user's picked model, no `AI_ROUTER_MODEL`. Still open: whether the Reviewer's fix pass should stay automatic or ask the user (automatic for now); the Reviewer's "5 or more files" threshold; skill update policy (pinned per template build by the committed lockfile today, or refresh on a schedule); whether users can add their own skills later; whether the Designer should ever run for tiny edits ("make it warmer"; today short edits skip it)
 8. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
@@ -1091,7 +1108,7 @@ CONFIDENT_API_KEY=       # optional, unset by default: would upload eval results
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template, Inngest + AI SDK agent (AI Gateway models), realtime events, metering, image attachments
 - [x] Phase 5b: five skills + `AGENTS.md` rules in every site, `loadSkill` enforced before writes, web search (Researcher), router and Researcher / Designer / Builder / Reviewer agents, per-agent metering
-- [x] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery (backend; cards in Phase 6; full live `agent:smoke` scenarios still to run with the Inngest dev server)
+- [x] Phase 5c: input and output guardrails, `askUser` human in the loop, project secrets, checkpoints and sandbox recovery, pause instead of kill with binary snapshots (backend; cards and "Waking up the preview…" in Phase 6; full live `agent:smoke` scenarios still to run with the Inngest dev server)
 - [ ] Phase 5d: full-stack projects (Prisma 7 + the user's Neon database, AI provider choice, Inngest, managed processes, Integrator role)
 - [ ] Phase 5e: skill discovery with Firecrawl, approved and pinned installs, memory with Supermemory
 - [ ] Phase 5f: agent evaluation with DeepEval (harness, suites for Phases 5 to 5e, baselines, no production telemetry) — package decisions recorded in `docs/decisions.md`, harness and `evals/` not yet built

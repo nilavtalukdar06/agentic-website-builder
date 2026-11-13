@@ -2,13 +2,17 @@
 import { describe, expect, test, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("e2b", () => ({ Sandbox: {} }));
+const create = vi.hoisted(() => vi.fn());
+vi.mock("e2b", () => ({ Sandbox: { create } }));
 
 const {
+  createSandbox,
   ensureAgentInstructions,
   ensureDevOrigins,
-  pickSnapshotPaths,
+  pickSnapshotEntries,
+  SANDBOX_LIFECYCLE,
   snapshotListCommand,
+  snapshotSandbox,
 } = await import("./sandbox");
 
 describe("snapshotListCommand", () => {
@@ -21,24 +25,91 @@ describe("snapshotListCommand", () => {
     expect(command).toContain("-name '.agents'");
     expect(command).toContain("-name '.claude'");
     expect(command).toContain("! -name 'skills-lock.json'");
-    expect(command).toMatch(/-size -\d+c -print$/);
+    expect(command).toContain("-size -1048577c");
+    expect(command).toMatch(/-printf '%s\\t%p\\n'$/);
   });
 });
 
-describe("pickSnapshotPaths", () => {
-  test("strips ./, drops binaries and blank lines, and sorts", () => {
+describe("pickSnapshotEntries", () => {
+  test("keeps text under 200 KB and binaries up to 1 MB, sorted", () => {
     expect(
-      pickSnapshotPaths(
-        "./app/page.tsx\n./public/logo.png\n\n./app/favicon.ico\n./lib/utils.ts\n./components/hero.tsx\n",
+      pickSnapshotEntries(
+        [
+          "120\t./app/page.tsx",
+          "5000\t./public/logo.png",
+          "",
+          "1048576\t./public/hero.jpg",
+          "250000\t./lib/data.json",
+          "900\t./components/hero.tsx",
+          "garbage",
+        ].join("\n"),
       ),
-    ).toEqual(["app/page.tsx", "components/hero.tsx", "lib/utils.ts"]);
+    ).toEqual([
+      { path: "app/page.tsx", size: 120, binary: false },
+      { path: "components/hero.tsx", size: 900, binary: false },
+      { path: "public/hero.jpg", size: 1048576, binary: true },
+      { path: "public/logo.png", size: 5000, binary: true },
+    ]);
   });
 
   test("caps the number of files", () => {
-    const listing = Array.from({ length: 500 }, (_, i) => `./f${i}.ts`).join(
-      "\n",
+    const listing = Array.from(
+      { length: 500 },
+      (_, i) => `10\t./f${i}.ts`,
+    ).join("\n");
+    expect(pickSnapshotEntries(listing)).toHaveLength(400);
+  });
+});
+
+describe("snapshotSandbox", () => {
+  test("stores small binaries as data URLs next to the text files", async () => {
+    const bytes = new Uint8Array([137, 80, 78, 71]);
+    const sandbox = {
+      commands: {
+        run: vi.fn().mockResolvedValue({
+          stdout: "4\t./public/logo.png\n9\t./app/page.tsx\n",
+        }),
+      },
+      files: {
+        read: vi.fn(async (_path: string, options?: { format?: string }) =>
+          options?.format === "bytes" ? bytes : "export {}",
+        ),
+      },
+    };
+    await expect(snapshotSandbox(sandbox as never)).resolves.toEqual({
+      "app/page.tsx": "export {}",
+      "public/logo.png": `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`,
+    });
+  });
+});
+
+describe("createSandbox", () => {
+  test("pauses on timeout without auto-resume and restores binaries as bytes", async () => {
+    const write = vi.fn().mockResolvedValue({});
+    create.mockResolvedValue({ files: { write }, commands: { run: vi.fn() } });
+    await createSandbox({
+      "app/page.tsx": "export {}",
+      "public/logo.png": "data:image/png;base64,iVBORw==",
+    });
+    expect(SANDBOX_LIFECYCLE).toEqual({
+      onTimeout: "pause",
+      autoResume: false,
+    });
+    expect(create).toHaveBeenCalledWith(
+      "test-template",
+      expect.objectContaining({
+        lifecycle: { onTimeout: "pause", autoResume: false },
+      }),
     );
-    expect(pickSnapshotPaths(listing)).toHaveLength(400);
+    const [entries] = write.mock.calls[0];
+    expect(entries[0]).toEqual({
+      path: "/home/user/app/app/page.tsx",
+      data: "export {}",
+    });
+    expect(entries[1].data).toBeInstanceOf(Uint8Array);
+    expect(Array.from(entries[1].data as Uint8Array)).toEqual([
+      137, 80, 78, 71,
+    ]);
   });
 });
 
