@@ -141,6 +141,8 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 
 ## Phase 5b — skills, web search and multiple agents (built 12 November 2026; owner's request after Phase 5)
 
+_Superseded by the Phase 5 simplification (13 November 2026): kept as history._
+
 - **Phase name** → **5b**, sections `5b.1`–`5b.8` → "Phase 5.1": Phase 5 already has a section "5.1 E2B template" and people cite "§5.4–5.5", so "§5.1.2" would be ambiguous.
 - **Skills source and install** → the owner's five skills (`vercel-react-best-practices`, `next-best-practices`, `frontend-design`, `shadcn`, `vercel-composition-patterns`), installed with the **`skills` CLI** (1.8.1, MIT, `vercel-labs/skills`, released the day before) **once at template build**, `skills-lock.json` kept so updates are deliberate → hand-copying folders (no provenance or update path), fetching from GitHub on every run (slower, network-dependent, unpinned). Verified in a scratch project: all five commands run without prompts with `-y` and write `.agents/skills/<name>/`, a symlink in `.claude/skills/`, and the source plus a content hash in `skills-lock.json`. The `--skill` flag matches the skill's _name_; the source folders are `skills/react-best-practices` and `skills/composition-patterns`.
 - **Skill weight** → measured: 131 files, 836 KB; `SKILL.md` 2.9–21.6 KB each; descriptions about 1.5 KB in total; all five bodies about 45 KB (roughly 11 k tokens). Consequences: skills are left out of Version snapshots and exports (they would use a third of the 400-file snapshot cap), agents get per-role allowlists, and bodies load on demand.
@@ -167,6 +169,8 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 
 ## Fast mode (built 13 November 2026; owner's request, §5b.9)
 
+_Superseded by the Phase 5 simplification (13 November 2026): kept as history._
+
 - **What Fast is** → the Builder alone (route decided in code with `decidedBy: "fast"`, no router call, no Researcher, Designer, Reviewer or fix pass) with an extra prompt block asking it to batch work and finish in as few turns as it can → a separate cheaper model (the user's picked model stays the only model, as in 5b).
 - **No turn cap** → prompt only (owner's choice): the 13 November decision of no Builder turn limit stands, so a Fast run never fails or stops half-built → a soft cap of 12 turns.
 - **Guardrails kept** → classifiers, secret scan, executor guards and the "read `AGENTS.md` and load a skill before the first write" rule all stay (owner's choice); the model can do those reads in its first turn alongside other reads → dropping the skill rule (saves about one turn, brings back the theme and dark-mode mistakes 5b fixed).
@@ -182,6 +186,8 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Limits** → a restore writes the last Version's `AGENTS.md` over the template's, so projects created before this change keep the old file until Phase 5b's `ensureAgentInstructions()`; the agent still reads it, it just contains no rules.
 
 ## Phases 5c–5e — guardrails, human in the loop, full-stack, skill discovery, memory (planned; owner's request after Phase 5b)
+
+_Superseded by the Phase 5 simplification (13 November 2026), except the pause-instead-of-kill entry, which still holds (plan §5.11)._
 
 - **Phase names** → **5c** (guardrails, human in the loop, project secrets), **5d** (full-stack projects), **5e** (Firecrawl skill discovery, Supermemory) → renumbering Phase 6: the same reason as 5b, existing sections are cited by number.
 - **Pausing for a human** → an own `askUser` tool (no `execute`) plus Inngest v4 `step.waitForEvent` with `match: "data.requestId"` and a 30-minute timeout (returns the event or `null`, no compute while waiting) → AI SDK `needsApproval`, which ties the pause to a chat request instead of a durable run.
@@ -205,6 +211,8 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 
 ## Phase 5c — guardrails, human in the loop, project secrets (built 13 November 2026)
 
+_Partly superseded by the Phase 5 simplification (13 November 2026): secret detection, the classifier, the output middleware, checkpoints and untrusted-content wrapping still hold; human in the loop, encryption, the egress allowlist and the dev server restart are dropped._
+
 - **Secret detection** → `@secretlint/core` 13.1.0 + `@secretlint/secretlint-rule-preset-recommend` 13.1.0 (MIT, released October 2026, 1.4 MB, in-process `lintSource`) plus own patterns for Google `AIza…`, AWS key ids, generic `sk-…`, `postgres://user:password@` URLs and private-key blocks → own regex set only. Checked in a scratch project: the preset's provider rules are strict (an OpenAI key must have the real `T3BlbkFJ` shape) and it has no Google API key rule, hence the extra patterns. Placeholders (`localhost`, `user:password@`, `${…}`) are ignored.
 - **Pre-install package checks** → `npq` 3.27.4 (Apache-2.0, November 2026) installed globally in the E2B template and run as `npq install <pkgs> --json` (audit only, never installs; `schemaVersion` 1 with `status`, `summary` and per-package `findings`), `npx --yes npq@3.27.4` as fallback for sandboxes from older templates → running it on the Vercel server (a CLI with network-heavy marshalls), installing blind. Snyk marshall disabled (needs a token).
 - **Encryption** → Node `crypto` AES-256-GCM, 12-byte random IV, `projectId:name` as additional authenticated data, key version stored per row → Better Auth `symmetricEncrypt`, which is XChaCha20-Poly1305 with no additional data, so a ciphertext could be moved between projects.
@@ -221,6 +229,8 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 
 ## Phase 5f — agent evaluation with DeepEval (planned; owner's request after Phase 5e)
 
+_Superseded by the Phase 5 simplification (13 November 2026): kept as history._
+
 - **Tool** → `deepeval` (TypeScript) with `@ai-sdk/otel`, dev dependencies, run locally with no account → chosen by the owner; other eval tools were not evaluated. Read on 2026-11-12: the integration needs AI SDK 7 (`ai>=7.0.93 <8`) and Node 22 or later, we have `ai` ^7.0.168 and Node 24. License, release date and Vitest 5.1 compatibility are checked at install per the §0.1 checklist.
 - **One trace per run** → the harness runs the agent as one multi-step `generateText` (`stopWhen: stepCountIs(30)`) with the production prompt, tools and executor guards and a real sandbox → tracing production as it is, which makes one `streamText` call per Inngest step and so one DeepEval trace per turn, leaving the trajectory metrics one step to judge. Cost of the choice: Inngest durability, retries and history compaction are not covered by evals, only by unit tests and `agent:smoke`.
 - **Telemetry off in production** → only the harness passes the tracer; a unit test asserts the production model call has no `telemetry` option → enabling it in `run-agent` for online evals, which would export user prompts to Confident AI (a new third-party provider: Privacy Policy and redaction review first).
@@ -228,6 +238,18 @@ AI Elements was installed from its registry and then adapted. Re-apply these if 
 - **Code before judges** → anything code can decide (build passes, `AGENTS.md` read and a skill loaded before the first write, a secret in no span) is a plain assertion; `GEval` only for the rest; at most 5 metrics per suite, following DeepEval's guidance.
 - **Not in the default test run** → own Vitest config, `bun run eval` and `bun run eval:live`; CI on a schedule and on a label → adding evals to `bun run test:run` (slow, costs tokens, not deterministic, and the free-tier gateway allows 5 requests per minute).
 - **Thresholds** → start at DeepEval's default 0.5, then set just under the first baseline stored in `evals/baselines.json`; a drop over the tolerance (start 0.1) fails → fixed thresholds guessed before any run.
+
+## Phase 5 simplification (owner's decision, 13 November 2026)
+
+- **Goal** → bring the app down to the bare minimum: one Builder agent (with web search for website references), input and output guardrails, and the sandbox lifecycle as built (plan §5.7–5.11) → keeping the Phase 5b–5f roadmap.
+- **One agent** → the Builder alone, with the five template skills, `loadSkill` and the enforced first-write rule → the router plus Researcher, Designer and Reviewer (more turns, more cost, more code to keep correct).
+- **Web search** → kept, moved from the Researcher to the Builder, and offered only when the user's message references a website (`mentionsSite` in code decides; 6 searches per run; off after a `review` verdict) (owner's follow-up, 13 November 2026) → removing it with the Researcher (the Builder couldn't follow "make it like example.com"); offering it on every prompt (search fees and untrusted text on runs that don't need them); letting the model decide when to search.
+- **Fast mode** → removed (the select, `Message.mode`, `AgentMode`); its "work efficiently" prompt block becomes part of the Builder's prompt → keeping the select as a prompt-only toggle (with one agent there is nothing left to skip).
+- **Human in the loop** → removed (`askUser`, input cards, the 30-minute pause and continuation runs) → keeping `askUser` for confirmations only.
+- **Project secrets** → removed (encrypted store, `.env.local` injection, egress allowlist, exact-value redaction, `SECRETS_ENCRYPTION_KEY`); pasted secrets are still detected and redacted by pattern, and the user is asked to remove them → keeping a secrets panel in Phase 6 settings (no agent asks for keys any more, so nothing would fill it).
+- **Unknown npm packages** → allowlisted packages install as before; anything else runs `npq` and installs only with no findings, otherwise it is refused and the Builder picks another package → allowlist only (drops a check that already works and blocks most real packages).
+- **Phases 5d, 5e and 5f** → dropped (full-stack projects, Firecrawl skill discovery, Supermemory, DeepEval); their planned env variables leave the plan.
+- **Order of work** → the plan is rewritten first; the code removal follows as its own task with a checklist in plan §5.13 → removing code and rewriting the plan in one change.
 
 ## Shell and brand restyle (owner's request after Phase 5, Lovable reference)
 
