@@ -257,8 +257,10 @@ export const runAgent = inngest.createFunction(
       return { status: "blocked" as const, categories: guard.categories };
     }
 
-    const restricted = guard.verdict === "review";
-    if (restricted) {
+    const restricted = resume
+      ? (resume.handoff?.restricted ?? false)
+      : guard.verdict === "review";
+    if (restricted && !resume) {
       await step.run("guard-review", async () => {
         await recordGuardEvent(db, {
           userId,
@@ -276,7 +278,7 @@ export const runAgent = inngest.createFunction(
       });
     }
     const guardMeta: GuardMeta = {
-      input: guard.skipped ? "skipped" : guard.verdict,
+      input: guard.skipped ? "skipped" : restricted ? "review" : guard.verdict,
     };
     const search = !restricted && mentionsSite(setup.prompt);
 
@@ -485,6 +487,7 @@ export const runAgent = inngest.createFunction(
               loadedSkills: progress.loadedSkills.slice(0, 20),
               installs: progress.installs ?? 0,
               searches: budget.searches,
+              restricted,
             },
           },
         }),

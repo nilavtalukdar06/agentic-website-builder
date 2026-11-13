@@ -17,6 +17,7 @@ export const agentRun = eventType("agent/run", {
             loadedSkills: z.array(z.string()).max(20),
             installs: z.number().int().nonnegative(),
             searches: z.number().int().nonnegative().optional(),
+            restricted: z.boolean().optional(),
           })
           .optional(),
       })

@@ -357,7 +357,7 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 
 The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
 
-**Status: complete (13 November 2026).** The sandbox, the Builder, skills, web search for website references, guardrails, metering, images and the sandbox lifecycle are built, and the features dropped from the old Phases 5b and 5c were removed from the code, the database and the docs (§5.13). Lint, type check, 555 unit tests and 183 Playwright tests (Chromium, Firefox, WebKit) pass. Not run in this change: a live `agent:smoke` against E2B and the Inngest dev server.
+**Status: complete (13 November 2026).** The sandbox, the Builder, skills, web search for website references, guardrails, metering, images and the sandbox lifecycle are built, and the features dropped from the old Phases 5b and 5c were removed from the code, the database and the docs (§5.13). Lint, type check, 555 unit tests and 183 Playwright tests (Chromium, Firefox, WebKit) pass. Verified live the same day with `agent:smoke` on `openai/gpt-5.1-codex-mini`: a prompt naming a website ran the web search (5 sources), saved Version 1 with a reachable preview and one debit split into `builder` and `guard`; a prompt with a pasted key was redacted before any model call and stored nowhere; a phishing prompt was blocked. Neither blocked prompt was charged. A guard `review` verdict is carried across handoffs (`resume.handoff.restricted`).
 
 ### 5.1 E2B template
 
