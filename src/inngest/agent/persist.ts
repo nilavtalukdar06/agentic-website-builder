@@ -1,5 +1,4 @@
 import type { PrismaClient } from "@/generated/prisma/client";
-import type { AgentModeName } from "@/lib/agent/modes";
 import type { AgentPart } from "@/lib/agent/parts";
 import type { TokenUsage } from "@/server/billing/pricing";
 import type { RunCost } from "@/server/billing/run-cost";
@@ -88,28 +87,6 @@ export async function loadRestoreFiles(
   return (latest?.files ?? undefined) as SnapshotFiles | undefined;
 }
 
-export async function recordPausedReply(
-  db: Pick<PrismaClient, "message">,
-  input: {
-    projectId: string;
-    runId: string;
-    content: string;
-    parts: AgentPart[];
-  },
-) {
-  return db.message.upsert({
-    where: { id: replyId(input.runId) },
-    create: {
-      id: replyId(input.runId),
-      projectId: input.projectId,
-      role: "ASSISTANT",
-      content: input.content,
-      parts: input.parts,
-    },
-    update: {},
-  });
-}
-
 export async function saveRunResult(
   db: Db,
   input: {
@@ -187,10 +164,8 @@ export async function debitCredits(
     model: string;
     cost: RunCost;
     versionNumber: number | null;
-    paused?: boolean;
     handoff?: boolean;
     guard?: { input: string; output?: string };
-    mode?: AgentModeName;
   },
 ) {
   if (input.credits <= 0) return null;
@@ -211,10 +186,8 @@ export async function debitCredits(
         estimatedCalls: input.cost.estimatedCalls,
         generationIds: input.cost.generationIds,
         agents: input.cost.agents,
-        ...(input.paused ? { paused: true } : {}),
         ...(input.handoff ? { handoff: true } : {}),
         ...(input.guard ? { guard: input.guard } : {}),
-        ...(input.mode ? { mode: input.mode } : {}),
         ...input.usage,
       },
     },

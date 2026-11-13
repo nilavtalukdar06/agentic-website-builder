@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("e2b", () => ({ CommandExitError: class extends Error {} }));
 vi.mock("@/server/sandbox/sandbox", () => ({
-  extendSandbox: vi.fn().mockResolvedValue(undefined),
   snapshotSandbox: vi.fn().mockResolvedValue({ "app/page.tsx": "x" }),
   connectSandbox: vi.fn(async () => ({
     commands: { run: vi.fn() },
@@ -16,18 +15,6 @@ vi.mock("@/server/sandbox/sandbox", () => ({
   })),
 }));
 const dbMock = vi.hoisted(() => ({
-  projectSecret: {
-    findMany: vi.fn(),
-    updateMany: vi.fn(),
-    count: vi.fn(),
-  },
-  inputRequest: {
-    findMany: vi.fn(),
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    upsert: vi.fn(),
-    updateMany: vi.fn(),
-  },
   guardEvent: { create: vi.fn() },
   version: { upsert: vi.fn() },
 }));
@@ -39,6 +26,9 @@ const recover = vi.hoisted(() => ({
 vi.mock("@/server/sandbox/recover", () => recover);
 vi.mock("../publisher", () => ({
   createPublisher: () => vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/server/ai/gateway", () => ({
+  gateway: { tools: { parallelSearch: () => ({}) } },
 }));
 const runModelTurn = vi.fn();
 vi.mock("./model", () => ({ runModelTurn }));
@@ -56,7 +46,6 @@ const model = {
 
 const step = {
   run: vi.fn((_id: string, fn: () => unknown) => fn()),
-  waitForEvent: vi.fn(),
 };
 
 let callIndex = 0;
@@ -98,52 +87,27 @@ function turn(
 
 const budget = { balance: 1000, spentUsd: 0, searches: 0 };
 
-async function run(spec: string, options: Record<string, unknown> = {}) {
-  const { agentSpecs } = await import("./agents/index");
+async function run(
+  options: Record<string, unknown> & { search?: boolean } = {},
+) {
+  const { builderSpec } = await import("./agents");
+  const { search = false, ...rest } = options;
   return runAgentLoop({
     step: step as never,
-    spec: agentSpecs[spec as "builder"],
+    spec: builderSpec({ search }),
     projectId: "p1",
     sandboxId: "s1",
     model,
     messages: [{ role: "user", content: "Build it" }],
     installedSkills: [{ name: "shadcn", description: "UI" }],
     budget,
-    ...options,
+    ...rest,
   });
 }
-
-vi.mock("./agents/index", async () => {
-  const { builder } = await import("./agents/builder");
-  const { designer } = await import("./agents/designer");
-  const { reviewer } = await import("./agents/reviewer");
-  return {
-    agentSpecs: {
-      builder,
-      designer,
-      reviewer,
-      researcher: {
-        ...designer,
-        name: "researcher",
-        skills: [],
-        maxTurns: 6,
-        tools: { readFiles: designer.tools.readFiles, parallel_search: {} },
-      },
-    },
-  };
-});
 
 beforeEach(async () => {
   runModelTurn.mockReset();
   step.run.mockClear();
-  step.waitForEvent.mockReset();
-  dbMock.projectSecret.findMany.mockReset().mockResolvedValue([]);
-  dbMock.projectSecret.count.mockReset().mockResolvedValue(0);
-  dbMock.inputRequest.findMany.mockReset().mockResolvedValue([]);
-  dbMock.inputRequest.findFirst.mockReset().mockResolvedValue(null);
-  dbMock.inputRequest.findUnique.mockReset().mockResolvedValue(null);
-  dbMock.inputRequest.upsert.mockReset().mockResolvedValue({});
-  dbMock.inputRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
   dbMock.version.upsert.mockReset().mockResolvedValue({});
   const { connectSandbox } = await import("@/server/sandbox/sandbox");
   recover.connectOrRecover.mockReset().mockImplementation(async () => ({
@@ -153,12 +117,14 @@ beforeEach(async () => {
 });
 
 describe("runAgentLoop", () => {
-  test("namespaces steps by agent and stops when the agent answers", async () => {
-    runModelTurn.mockResolvedValueOnce(turn("<brief>Warm palette</brief>"));
-    const result = await run("designer");
-    expect(result).toMatchObject({ output: "Warm palette", finished: true });
-    expect(step.run.mock.calls.map(([id]) => id)).toEqual(["designer-model-0"]);
-    expect(result.calls[0]).toMatchObject({ agent: "designer", searches: 0 });
+  test("namespaces steps and stops when the builder answers", async () => {
+    runModelTurn.mockResolvedValueOnce(
+      turn("<task_summary>Done</task_summary>"),
+    );
+    const result = await run();
+    expect(result).toMatchObject({ output: "Done", finished: true });
+    expect(step.run.mock.calls.map(([id]) => id)).toEqual(["builder-model-0"]);
+    expect(result.calls[0]).toMatchObject({ agent: "builder", searches: 0 });
   });
 
   test("runs tools in their own steps and carries skill progress", async () => {
@@ -166,27 +132,27 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce(
         turn("", [{ toolName: "readFiles", input: { paths: ["AGENTS.md"] } }]),
       )
-      .mockResolvedValueOnce(turn("<brief>Done</brief>"));
-    const result = await run("designer");
+      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
+    const result = await run();
     expect(step.run.mock.calls.map(([id]) => id)).toEqual([
-      "designer-model-0",
-      "designer-tool-0-0",
-      "designer-model-1",
+      "builder-model-0",
+      "builder-tool-0-0",
+      "builder-model-1",
     ]);
     expect(result.progress.readAgentsMd).toBe(true);
   });
 
-  test("a read-only agent's untagged reply gets a nudge, then counts as unfinished", async () => {
-    runModelTurn.mockResolvedValue(
-      turn("I'm sorry, but I cannot assist with that request."),
-    );
-    const result = await run("designer");
-    expect(result.finished).toBe(false);
-    expect(result.output).toBeNull();
-    expect(runModelTurn).toHaveBeenCalledTimes(4);
-    const last = runModelTurn.mock.calls.at(-1)?.[0];
-    expect(last.toolChoice).toBe("none");
-    expect(last.tools).toHaveProperty("readFiles");
+  test("an askUser call is answered as an unknown tool", async () => {
+    runModelTurn
+      .mockResolvedValueOnce(
+        turn("", [
+          { toolName: "askUser", input: { kind: "text", question: "Name?" } },
+        ]),
+      )
+      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
+    const result = await run();
+    expect(JSON.stringify(result.messages)).toContain("Unknown tool: askUser");
+    expect(result.finished).toBe(true);
   });
 
   test("the builder is nudged once when it finishes without writing", async () => {
@@ -195,7 +161,7 @@ describe("runAgentLoop", () => {
       .mockResolvedValueOnce(
         turn("<task_summary>No change needed</task_summary>"),
       );
-    const result = await run("builder", { expectWrites: true });
+    const result = await run({ expectWrites: true });
     expect(runModelTurn).toHaveBeenCalledTimes(2);
     const second = runModelTurn.mock.calls[1][0];
     expect(JSON.stringify(second.messages)).toContain(
@@ -209,15 +175,34 @@ describe("runAgentLoop", () => {
 
   test("the builder falls back to its plain reply", async () => {
     runModelTurn.mockResolvedValueOnce(turn("All done."));
-    const result = await run("builder");
+    const result = await run();
     expect(result).toMatchObject({ output: "All done.", finished: true });
   });
 
+  test("offers web search only when the spec has it", async () => {
+    runModelTurn.mockResolvedValue(turn("<task_summary>Done</task_summary>"));
+    await run();
+    expect(runModelTurn.mock.calls[0][0].tools).not.toHaveProperty(
+      "parallel_search",
+    );
+    await run({ search: true });
+    expect(runModelTurn.mock.calls[1][0].tools).toHaveProperty(
+      "parallel_search",
+    );
+  });
+
   test("drops the search tool once the run used its searches", async () => {
-    runModelTurn.mockResolvedValueOnce(turn("<brief>Facts</brief>"));
-    await run("researcher", { budget: { ...budget, searches: 6 } });
+    runModelTurn.mockResolvedValueOnce(
+      turn("<task_summary>Done</task_summary>"),
+    );
+    await run({ search: true, budget: { ...budget, searches: 6 } });
     const call = runModelTurn.mock.calls[0][0];
-    expect(call.activeTools).toEqual(["readFiles"]);
+    expect(call.activeTools).toEqual([
+      "terminal",
+      "createOrUpdateFiles",
+      "readFiles",
+      "loadSkill",
+    ]);
     expect(JSON.stringify(call.messages)).toContain("all 6 web searches");
   });
 
@@ -227,7 +212,7 @@ describe("runAgentLoop", () => {
         estimatedUsd: 0.5,
       }),
     );
-    const result = await run("builder", {
+    const result = await run({
       budget: { balance: 10, spentUsd: 0, searches: 0 },
     });
     expect(result.outOfCredits).toBe(true);
@@ -235,148 +220,8 @@ describe("runAgentLoop", () => {
   });
 });
 
-describe("asking the user", () => {
-  const ask = {
-    toolName: "askUser",
-    input: {
-      kind: "text",
-      question: "What is the cafe called?",
-    },
-  };
-
-  async function runBuilder() {
-    const { createRunContext } = await import("./loop");
-    const runContext = createRunContext({
-      runId: "r1",
-      userId: "u1",
-      messageId: "m1",
-      sandboxId: "s1",
-    });
-    const result = await run("builder", { run: runContext });
-    return { result, runContext };
-  }
-
-  test("pauses on askUser, waits for the event and returns the answer", async () => {
-    runModelTurn
-      .mockResolvedValueOnce(turn("", [ask]))
-      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
-    step.waitForEvent.mockResolvedValue({
-      data: { requestId: "x", ok: true, answer: "Ember" },
-    });
-    dbMock.inputRequest.findUnique.mockResolvedValue({
-      status: "ANSWERED",
-      answer: { ok: true, answer: "Ember & Oak" },
-    });
-    const { result, runContext } = await runBuilder();
-    const id = "input_r1_builder_0_0";
-    expect(step.run.mock.calls.map(([name]) => name)).toEqual([
-      "builder-model-0",
-      "builder-tool-0-0",
-      "builder-ask-0-0",
-      "builder-answer-0-0",
-      "builder-model-1",
-    ]);
-    expect(step.waitForEvent).toHaveBeenCalledWith("builder-wait-0-0", {
-      event: expect.anything(),
-      timeout: "30m",
-      if: `async.data.requestId == "${id}"`,
-    });
-    expect(dbMock.inputRequest.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ id, kind: "TEXT", chainId: "r1" }),
-      }),
-    );
-    expect(dbMock.version.upsert).toHaveBeenCalled();
-    expect(runContext.questions).toBe(1);
-    const toolMessage = result.messages.find(
-      (message) => message.role === "tool",
-    );
-    expect(JSON.stringify(toolMessage)).toContain(
-      'The user answered \\"What is the cafe called?\\": Ember & Oak',
-    );
-    expect(result.toolParts).toEqual([
-      expect.objectContaining({ type: "input-request", requestId: id }),
-      {
-        type: "input-answer",
-        requestId: id,
-        kind: "text",
-        answer: "Ember & Oak",
-      },
-    ]);
-    expect(result).toMatchObject({ finished: true, paused: null });
-  });
-
-  test("ends as paused when nobody answers in time", async () => {
-    runModelTurn.mockResolvedValueOnce(turn("", [ask]));
-    step.waitForEvent.mockResolvedValue(null);
-    dbMock.inputRequest.updateMany.mockResolvedValue({ count: 1 });
-    const { result } = await runBuilder();
-    expect(result).toMatchObject({
-      paused: { requestId: "input_r1_builder_0_0" },
-      finished: false,
-    });
-    expect(runModelTurn).toHaveBeenCalledTimes(1);
-    expect(dbMock.inputRequest.updateMany).toHaveBeenCalledWith({
-      where: { id: "input_r1_builder_0_0", status: "PENDING" },
-      data: { status: "PAUSED" },
-    });
-  });
-
-  test("an answer that lands as the wait times out still counts", async () => {
-    runModelTurn
-      .mockResolvedValueOnce(turn("", [ask]))
-      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
-    step.waitForEvent.mockResolvedValue(null);
-    dbMock.inputRequest.updateMany.mockResolvedValue({ count: 0 });
-    dbMock.inputRequest.findUnique.mockResolvedValue({
-      status: "ANSWERED",
-      answer: { ok: true, answer: "Ember" },
-    });
-    const { result } = await runBuilder();
-    expect(result.paused).toBeNull();
-    expect(result.finished).toBe(true);
-  });
-
-  test("a question answered before is not asked again", async () => {
-    runModelTurn
-      .mockResolvedValueOnce(turn("", [ask]))
-      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
-    dbMock.inputRequest.findFirst.mockResolvedValue({
-      answer: { ok: true, answer: "Ember" },
-    });
-    const { result, runContext } = await runBuilder();
-    expect(step.waitForEvent).not.toHaveBeenCalled();
-    expect(dbMock.inputRequest.upsert).not.toHaveBeenCalled();
-    expect(runContext.questions).toBe(0);
-    expect(result.finished).toBe(true);
-  });
-
-  test("an approved confirmation re-runs the command", async () => {
-    runModelTurn
-      .mockResolvedValueOnce(
-        turn("", [
-          {
-            toolName: "terminal",
-            input: { command: "npx prisma migrate reset --force" },
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
-    step.waitForEvent.mockResolvedValue({ data: { requestId: "x", ok: true } });
-    dbMock.inputRequest.findUnique.mockResolvedValue({
-      status: "ANSWERED",
-      answer: { ok: true, answer: "approved" },
-    });
-    const { result } = await runBuilder();
-    expect(step.run.mock.calls.map(([name]) => name)).toContain(
-      "builder-tool-0-0-approved",
-    );
-    expect(JSON.stringify(result.messages)).toContain(
-      "The user approved: Run:",
-    );
-  });
-
-  test("writers save a checkpoint every 5 turns", async () => {
+describe("checkpoints", () => {
+  test("the builder saves a checkpoint every 5 turns", async () => {
     const write = {
       toolName: "createOrUpdateFiles",
       input: { files: [{ path: "app/page.tsx", content: "x" }] },
@@ -389,7 +234,7 @@ describe("asking the user", () => {
     runModelTurn.mockResolvedValueOnce(
       turn("<task_summary>Done</task_summary>"),
     );
-    await run("builder", {
+    await run({
       run: runContext,
       progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
     });
@@ -413,7 +258,7 @@ describe("no turn limit for the builder", () => {
     runModelTurn.mockResolvedValueOnce(
       turn("<task_summary>Finished the big site</task_summary>"),
     );
-    const result = await run("builder", {
+    const result = await run({
       progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
     });
     expect(runModelTurn).toHaveBeenCalledTimes(76);
@@ -433,7 +278,7 @@ describe("no turn limit for the builder", () => {
       .mockResolvedValueOnce(
         turn("Done: hero and menu. Left: footer, contact form."),
       );
-    const result = await run("builder", { run: runContext });
+    const result = await run({ run: runContext });
     expect(step.run.mock.calls.map(([name]) => name)).toEqual([
       "builder-model-0",
       "builder-tool-0-0",
@@ -451,7 +296,7 @@ describe("no turn limit for the builder", () => {
       await import("./loop");
     const runContext = createRunContext({ sandboxId: "s1" });
     runModelTurn.mockResolvedValueOnce(turn("<task_summary>x</task_summary>"));
-    await run("builder", {
+    await run({
       run: runContext,
       progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
     });

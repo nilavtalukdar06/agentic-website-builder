@@ -4,8 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("e2b", () => ({ CommandExitError: class extends Error {} }));
 
-const SECRET = "sk-proj-NoLeakValue-7f3a9c2e41";
-const SECRET_B64 = Buffer.from(SECRET).toString("base64");
+const SECRET = "sk-proj-NoLeakValue7f3a9c2e41Ab12Cd34Ef56Gh78";
 
 const published = vi.hoisted(() => [] as unknown[]);
 vi.mock("../client", () => ({
@@ -36,8 +35,8 @@ function makeSandbox(id: string) {
           }
           await options?.onStdout?.(`printing ${SECRET}`);
           return {
-            stdout: `${command}: ${SECRET} ${SECRET_B64}`,
-            stderr: `warn ${encodeURIComponent(SECRET)}`,
+            stdout: `${command}: ${SECRET}`,
+            stderr: `warn ${SECRET}`,
             exitCode: 0,
           };
         },
@@ -48,7 +47,6 @@ function makeSandbox(id: string) {
       write: vi.fn().mockResolvedValue({}),
       read: vi.fn().mockResolvedValue(`OPENAI_API_KEY=${SECRET}`),
     },
-    updateNetwork: vi.fn().mockResolvedValue(undefined),
   };
 }
 vi.mock("@/server/sandbox/sandbox", () => ({
@@ -58,24 +56,16 @@ vi.mock("@/server/sandbox/sandbox", () => ({
   ensureAgentInstructions: vi.fn().mockResolvedValue(true),
   previewUrlFor: (box: { sandboxId: string }) =>
     `https://3000-${box.sandboxId}.e2b.app`,
-  extendSandbox: vi.fn(),
   snapshotSandbox: vi.fn().mockResolvedValue({}),
 }));
 
 const dbMock = vi.hoisted(() => ({
-  projectSecret: {
-    findMany: vi.fn(),
-    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  version: {
+    findFirst: vi.fn().mockResolvedValue(null),
     findUnique: vi.fn().mockResolvedValue(null),
-    upsert: vi.fn().mockResolvedValue({}),
+    create: vi.fn().mockResolvedValue({}),
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  secretEvent: { create: vi.fn().mockResolvedValue({}) },
-  inputRequest: {
-    findMany: vi.fn().mockResolvedValue([]),
-    findFirst: vi.fn(),
-    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-  },
-  version: { findFirst: vi.fn().mockResolvedValue(null) },
   project: { update: vi.fn().mockResolvedValue({}) },
   guardEvent: { create: vi.fn().mockResolvedValue({}) },
   creditLedger: { upsert: vi.fn().mockResolvedValue({}) },
@@ -84,11 +74,9 @@ const dbMock = vi.hoisted(() => ({
 }));
 vi.mock("@/server/db", () => ({ db: dbMock }));
 
-const { encryptSecret } = await import("@/server/secrets/crypto");
-const { answerInputRequest } = await import("@/server/inputs/answer");
 const { runToolStep, RECOVERED_NOTE } = await import("./runtime");
-const { debitCredits, recordPausedReply } = await import("./persist");
-const { createRedactor } = await import("@/server/secrets/redact");
+const { debitCredits, saveRunResult } = await import("./persist");
+const { patternRedactor } = await import("./guardrails/redact");
 
 const logs: unknown[] = [];
 const run = {
@@ -100,14 +88,7 @@ const run = {
 };
 const base = {
   writtenPaths: [],
-  agent: "builder" as const,
-  tools: [
-    "terminal",
-    "createOrUpdateFiles",
-    "readFiles",
-    "loadSkill",
-    "askUser",
-  ],
+  tools: ["terminal", "createOrUpdateFiles", "readFiles", "loadSkill"],
   skills: { allowed: ["shadcn"], installed: ["shadcn"] },
   progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
 };
@@ -123,54 +104,14 @@ beforeEach(() => {
   dbMock.$transaction.mockImplementation((fn: (tx: typeof dbMock) => unknown) =>
     fn(dbMock),
   );
-  const sealed = encryptSecret({
-    projectId: "p1",
-    name: "OPENAI_API_KEY",
-    value: SECRET,
-  });
-  dbMock.projectSecret.findMany.mockResolvedValue([
-    { projectId: "p1", name: "OPENAI_API_KEY", ...sealed },
-  ]);
 });
 
 function expectNoSecret(value: unknown) {
   const text = JSON.stringify(value);
   expect(text).not.toContain(SECRET);
-  expect(text).not.toContain(SECRET_B64);
-  expect(text).not.toContain(encodeURIComponent(SECRET));
 }
 
-describe("a stored secret never leaks", () => {
-  test("the answer route stores it without putting it in the event or the request row", async () => {
-    dbMock.inputRequest.findFirst.mockResolvedValue({
-      id: "i1",
-      projectId: "p1",
-      messageId: "m1",
-      chainId: "r1",
-      status: "PENDING",
-      payload: {
-        request: {
-          kind: "secret",
-          name: "OPENAI_API_KEY",
-          label: "OpenAI API key",
-          reason: "Chat",
-        },
-      },
-    });
-    const send = vi.fn();
-    await answerInputRequest(
-      { db: dbMock as never, send },
-      { userId: "u1", requestId: "i1", body: { value: SECRET } },
-    );
-    expectNoSecret([
-      send.mock.calls,
-      dbMock.inputRequest.updateMany.mock.calls,
-      dbMock.secretEvent.create.mock.calls,
-      dbMock.projectSecret.upsert.mock.calls,
-      logs,
-    ]);
-  });
-
+describe("a pasted or printed key never leaks", () => {
   test("tool results, realtime events and logs are redacted", async () => {
     const terminal = await runToolStep({
       call: {
@@ -210,20 +151,21 @@ describe("a stored secret never leaks", () => {
       replay: [],
     });
     expect(write.writtenPaths).toEqual([]);
-    expect(write.output).toMatch(/contains the value of OPENAI_API_KEY/);
+    expect(write.output).toMatch(/contains what looks like a secret/);
     expectNoSecret([terminal, read, write, published, logs]);
-    expect(terminal.output).toContain("[secret OPENAI_API_KEY]");
+    expect(terminal.output).toContain("[secret removed]");
   });
 
   test("messages and the ledger only ever get redacted parts", async () => {
-    const redactor = createRedactor([
-      { name: "OPENAI_API_KEY", value: SECRET },
-    ]);
-    await recordPausedReply(dbMock as never, {
+    await saveRunResult(dbMock as never, {
       projectId: "p1",
       runId: "r1",
-      content: "Waiting",
-      parts: redactor.redactDeep([
+      title: "First version",
+      content: "Done",
+      files: {},
+      creditCost: 1,
+      previewUrl: "https://3000-s1.e2b.app",
+      parts: patternRedactor.redactDeep([
         { type: "text", text: `key ${SECRET}` },
         {
           type: "tool",
@@ -255,8 +197,7 @@ describe("a stored secret never leaks", () => {
         generationIds: [],
         agents: [],
       },
-      versionNumber: null,
-      paused: true,
+      versionNumber: 1,
     });
     expectNoSecret([
       dbMock.message.upsert.mock.calls,

@@ -26,18 +26,15 @@ test.describe("realtime token endpoint", () => {
     expect(response.status()).toBe(401);
   });
 
-  test("answering a question and setting a secret reject signed-out callers", async ({
-    request,
-  }) => {
+  test("the question and secret routes are gone", async ({ request }) => {
     const answer = await request.post("/api/inputs/anything", {
       data: { text: "x" },
     });
-    expect(answer.status()).toBe(401);
-    expect(answer.headers()["cache-control"]).toBe("no-store");
+    expect(answer.status()).toBe(404);
     const secret = await request.put("/api/projects/anything/secrets", {
       data: { name: "OPENAI_API_KEY", value: "sk-test" },
     });
-    expect(secret.status()).toBe(401);
+    expect(secret.status()).toBe(404);
   });
 });
 
@@ -121,32 +118,12 @@ test.describe("with a session", () => {
     await expect(page.getByText("reference.png")).toHaveCount(0);
   });
 
-  test("the composer switches between Standard and Fast mode", async ({
-    page,
-  }) => {
+  test("the composer has no mode select", async ({ page }) => {
     await page.goto("/");
-    const trigger = page.getByRole("combobox", {
-      name: "Mode: Standard. Change mode",
-    });
-    await expect(trigger).toBeVisible();
-    await trigger.click();
     await expect(
-      page.getByRole("option", { name: /Standard.*team of agents/ }),
+      page.getByRole("button", { name: /^Model: .+\. Change model$/ }),
     ).toBeVisible();
-    const popup = page.locator('[data-slot="select-content"]');
-    expect(
-      await popup.evaluate(
-        (element) => element.scrollWidth - element.clientWidth,
-      ),
-    ).toBeLessThanOrEqual(0);
-    await page.getByRole("option", { name: /Fast.*builder alone/ }).click();
-    await expect(
-      page.getByRole("combobox", { name: "Mode: Fast. Change mode" }),
-    ).toHaveText(/Fast/);
-    const opacity = await page
-      .locator('form [data-slot="input-group"]')
-      .evaluate((group) => getComputedStyle(group).opacity);
-    expect(opacity).toBe("1");
+    await expect(page.getByRole("combobox", { name: /^Mode:/ })).toHaveCount(0);
   });
 
   test("the microphone works where the browser supports speech recognition", async ({
@@ -240,92 +217,45 @@ test.describe("with a session", () => {
     await expect(page.getByRole("link", { name: "Refresh" })).toHaveCount(0);
   });
 
-  test("questions can only be answered by their owner, with a valid body", async ({
+  test("a reply saved before the simplification still loads", async ({
     page,
   }) => {
-    const missing = await page.request.post(`/api/inputs/missing-${suffix}`, {
-      data: { text: "x" },
-    });
-    expect(missing.status()).toBe(404);
-
     const projectId = await session.addProject({
-      slug: `ask-${suffix}`,
-      name: "Ask site",
-    });
-    const id = await session.addInputRequest({
-      projectId,
-      kind: "CHOICE",
-      status: "ANSWERED",
-      payload: {
-        request: {
-          kind: "choice",
-          question: "Which provider?",
-          options: ["Gemini", "Gateway"],
-        },
-      },
-    });
-    const answered = await page.request.post(`/api/inputs/${id}`, {
-      data: { selected: ["Gemini"] },
-    });
-    expect(answered.status()).toBe(409);
-
-    const secrets = await page.request.put(
-      `/api/projects/missing-${suffix}/secrets`,
-      { data: { name: "OPENAI_API_KEY", value: "sk-test" } },
-    );
-    expect(secrets.status()).toBe(404);
-    const invalid = await page.request.put(
-      `/api/projects/${projectId}/secrets`,
-      {
-        data: { name: "PATH", value: "x" },
-      },
-    );
-    expect(invalid.status()).toBe(400);
-  });
-
-  test("a paused run shows the question it is waiting on", async ({ page }) => {
-    const projectId = await session.addProject({
-      slug: `paused-${suffix}`,
-      name: "Paused site",
+      slug: `legacy-${suffix}`,
+      name: "Legacy site",
     });
     await session.addMessage({
       projectId,
       role: "USER",
-      content: "Add an AI chat to the site",
+      content: "Build a coffee site like stripe.com",
       createdAt: new Date(Date.now() - 60_000),
     });
     await session.addMessage({
       projectId,
       role: "ASSISTANT",
-      content:
-        "I need your answer to continue. The question is waiting for you in this project.",
-      parts: [],
-    });
-    const id = await session.addInputRequest({
-      projectId,
-      kind: "SECRET",
-      payload: {
-        request: {
-          kind: "secret",
-          name: "OPENAI_API_KEY",
-          label: "OpenAI API key",
-          reason: "For the chat feature",
+      content: "Built the site from the research brief.",
+      parts: [
+        {
+          type: "agent",
+          name: "researcher",
+          state: "done",
+          skills: [],
+          searches: 2,
         },
-      },
+        {
+          type: "input-request",
+          requestId: "i1",
+          payload: { kind: "text", question: "Name?" },
+        },
+        { type: "text", text: "Built the site from the research brief." },
+      ],
     });
 
-    await page.goto(`/p/paused-${suffix}`);
-    await expect(page.getByText("Waiting for your answer")).toBeVisible();
+    await page.goto(`/p/legacy-${suffix}`);
+    await expect(page.getByText("Built by the agent")).toBeVisible();
     await expect(
-      page.getByText(
-        "The agent paused to ask: OpenAI API key (OPENAI_API_KEY)",
-      ),
+      page.getByText("Built the site from the research brief."),
     ).toBeVisible();
-    await expect(page.getByRole("link", { name: "Refresh" })).toBeVisible();
-
-    const invalid = await page.request.post(`/api/inputs/${id}`, {
-      data: { value: "" },
-    });
-    expect(invalid.status()).toBe(400);
+    await expect(page.getByText("Waiting for your answer")).toHaveCount(0);
   });
 });

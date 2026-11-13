@@ -1,5 +1,6 @@
 import type { LanguageModelMiddleware } from "ai";
-import type { Redactor } from "@/server/secrets/redact";
+import type { Redactor } from "./redact";
+import { detectKnownSecrets } from "./secret-patterns";
 
 type WrapStream = NonNullable<LanguageModelMiddleware["wrapStream"]>;
 type StreamResult = Awaited<ReturnType<WrapStream>>;
@@ -7,14 +8,17 @@ type StreamPart =
   StreamResult["stream"] extends ReadableStream<infer Part> ? Part : never;
 
 export function createWindow(redactor: Redactor) {
-  const hold = Math.max(0, redactor.maxNeedleLength - 1);
+  const hold = Math.max(0, redactor.holdBack);
   const buffers = new Map<string, string>();
   return {
     push(id: string, delta: string) {
-      const redacted = redactor.redact((buffers.get(id) ?? "") + delta);
-      const cut = Math.max(0, redacted.length - hold);
-      buffers.set(id, redacted.slice(cut));
-      return redacted.slice(0, cut);
+      const raw = (buffers.get(id) ?? "") + delta;
+      let cut = Math.max(0, raw.length - hold);
+      for (const match of detectKnownSecrets(raw)) {
+        if (match.start < cut && match.end >= cut) cut = match.start;
+      }
+      buffers.set(id, raw.slice(cut));
+      return redactor.redact(raw.slice(0, cut));
     },
     flush(id: string) {
       const rest = redactor.redact(buffers.get(id) ?? "");
@@ -30,7 +34,6 @@ export function secretRedactionMiddleware(
   return {
     wrapGenerate: async ({ doGenerate }) => {
       const result = await doGenerate();
-      if (!redactor.active) return result;
       return {
         ...result,
         content: result.content.map((part) =>
@@ -42,7 +45,6 @@ export function secretRedactionMiddleware(
     },
     wrapStream: async ({ doStream }) => {
       const result = await doStream();
-      if (!redactor.active) return result;
       const window = createWindow(redactor);
       const stream = result.stream.pipeThrough(
         new TransformStream<StreamPart, StreamPart>({

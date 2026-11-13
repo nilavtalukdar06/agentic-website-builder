@@ -2,12 +2,10 @@ import "server-only";
 import {
   generateText,
   type ModelMessage,
-  Output,
   streamText,
   type ToolSet,
   wrapLanguageModel,
 } from "ai";
-import type { AgentName } from "@/lib/agent/parts";
 import type { AgentModel } from "@/lib/ai/models";
 import { gateway } from "@/server/ai/gateway";
 import {
@@ -15,14 +13,12 @@ import {
   type TokenUsage,
   toTokenUsage,
 } from "@/server/billing/pricing";
-import { noRedaction, type Redactor } from "@/server/secrets/redact";
 import { attachmentUrl } from "@/server/storage/attachments";
 import { secretRedactionMiddleware } from "./guardrails/middleware";
+import { patternRedactor, type Redactor } from "./guardrails/redact";
 import type { Publish } from "../publisher";
 import { resolveAttachments } from "./conversation";
-import { ROUTER_PROMPT } from "./prompts/router";
 import { TITLE_PROMPT } from "./prompts/summary";
-import { type RouteChoice, routeChoiceSchema } from "./router";
 import { SEARCH_TOOL, type SearchRecord, searchRecord } from "./search";
 
 const FLUSH_MS = 150;
@@ -83,19 +79,17 @@ export async function runModelTurn({
   turn,
   model,
   publish,
-  agent,
   instructions,
   tools,
   activeTools,
   toolChoice,
-  redactor = noRedaction,
+  redactor = patternRedactor,
 }: {
   redactor?: Redactor;
   messages: ModelMessage[];
   turn: number;
   model: AgentModel;
   publish: Publish;
-  agent: AgentName;
   instructions: string;
   tools: ToolSet;
   activeTools?: string[];
@@ -104,12 +98,10 @@ export async function runModelTurn({
   const generationIds: string[] = [];
   const searches: SearchRecord[] = [];
   const result = streamText({
-    model: redactor.active
-      ? wrapLanguageModel({
-          model: gateway(model.id),
-          middleware: secretRedactionMiddleware(redactor),
-        })
-      : gateway(model.id),
+    model: wrapLanguageModel({
+      model: gateway(model.id),
+      middleware: secretRedactionMiddleware(redactor),
+    }),
     instructions,
     messages: await resolveAttachments(messages, attachmentUrl),
     tools,
@@ -125,11 +117,9 @@ export async function runModelTurn({
   });
 
   const reasoning = createDeltaBuffer((delta) =>
-    publish("reasoning", { turn, delta, agent }),
+    publish("reasoning", { turn, delta }),
   );
-  const text = createDeltaBuffer((delta) =>
-    publish("text", { turn, delta, agent }),
-  );
+  const text = createDeltaBuffer((delta) => publish("text", { turn, delta }));
   let reasoningStart: number | null = null;
   let reasoningEnd: number | null = null;
   let announcedBuild = false;
@@ -141,17 +131,13 @@ export async function runModelTurn({
       await reasoning.push(part.text);
     } else if (part.type === "text-delta") {
       await text.push(part.text);
-    } else if (
-      part.type === "tool-input-start" &&
-      agent === "builder" &&
-      !announcedBuild
-    ) {
+    } else if (part.type === "tool-input-start" && !announcedBuild) {
       announcedBuild = true;
       await publish("status", { state: "building" });
     } else if (part.type === "tool-result" && part.toolName === SEARCH_TOOL) {
       const record = searchRecord(part.input, part.output);
       searches.push(record);
-      await publish("search", { agent, ...record });
+      await publish("search", record);
     } else if (part.type === "error") {
       throw part.error instanceof Error
         ? part.error
@@ -183,27 +169,6 @@ export async function runModelTurn({
     estimatedUsd: costOf(usage, model),
     generationIds,
     searches,
-  };
-}
-
-export async function classifyAgents(
-  model: AgentModel,
-  prompt: string,
-): Promise<ModelCall & { choice: RouteChoice }> {
-  const result = await generateText({
-    model: gateway(model.id),
-    instructions: ROUTER_PROMPT,
-    prompt,
-    output: Output.object({ schema: routeChoiceSchema }),
-    maxRetries: 2,
-  });
-  const usage = toTokenUsage(result.totalUsage);
-  const generationId = generationIdOf(result.providerMetadata);
-  return {
-    choice: result.output,
-    usage,
-    estimatedUsd: costOf(usage, model),
-    generationIds: generationId ? [generationId] : [],
   };
 }
 

@@ -1,8 +1,6 @@
 import "server-only";
 import type { Sandbox } from "e2b";
 import { db } from "@/server/db";
-import { prepareSandboxSecrets } from "@/server/secrets/inject";
-import type { SecretValue } from "@/server/secrets/redact";
 import { loadRestoreFiles } from "@/inngest/agent/persist";
 import { isSandboxGone } from "./errors";
 import { APP_DIR } from "./guards";
@@ -24,12 +22,10 @@ export async function recoverSandbox({
   projectId,
   chainId,
   replay,
-  secrets,
 }: {
   projectId: string;
   chainId: string;
   replay: readonly ReplayWrite[];
-  secrets: readonly SecretValue[];
 }) {
   const restore = await loadRestoreFiles(db, { projectId, chainId });
   const sandbox = await createSandbox(restore);
@@ -43,7 +39,6 @@ export async function recoverSandbox({
   }
   await ensureDevOrigins(sandbox);
   await ensureAgentInstructions(sandbox);
-  await prepareSandboxSecrets(sandbox, secrets, { restart: true });
   const previewUrl = previewUrlFor(sandbox);
   await db.project.update({
     where: { id: projectId },

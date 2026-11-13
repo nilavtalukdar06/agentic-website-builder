@@ -337,6 +337,15 @@ export function npqCommand(names: readonly string[]) {
   return `(command -v npq >/dev/null && npq install ${quoted} --json) || npx --yes npq@${NPQ_VERSION} install ${quoted} --json`;
 }
 
+export function npqClean(report: NpqReport | null) {
+  return (
+    report !== null &&
+    report.errors === 0 &&
+    report.warnings === 0 &&
+    report.packages.every((entry) => entry.findings.length === 0)
+  );
+}
+
 export function summarizeNpq(
   names: readonly string[],
   report: NpqReport | null,

@@ -106,7 +106,6 @@ describe("NewProjectPrompt", () => {
     expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
       prompt: "A coffee site",
       model: sonnet.id,
-      mode: "standard",
       attachmentIds: [],
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project"] });
@@ -235,7 +234,6 @@ describe("NewProjectPrompt", () => {
       expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
         prompt: "A coffee site",
         model: glm.id,
-        mode: "standard",
         attachmentIds: [],
       }),
     );
@@ -304,7 +302,6 @@ describe("NewProjectPrompt", () => {
       expect(trpcHandlers["project.create"]).toHaveBeenCalledWith({
         prompt: "Match this",
         model: sonnet.id,
-        mode: "standard",
         attachmentIds: ["a1"],
       }),
     );

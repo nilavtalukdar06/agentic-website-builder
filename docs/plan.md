@@ -357,7 +357,7 @@ This was the Phase 2 first pass; `prisma/schema.prisma` is the source of truth t
 
 The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
 
-**Status:** the sandbox, the Builder, skills, guardrails, metering, images and the sandbox lifecycle are built. The dropped features from the old Phases 5b and 5c are **still in the code**; removing them is the next task (§5.13). Until then this section describes the target, not the code.
+**Status: complete (13 November 2026).** The sandbox, the Builder, skills, web search for website references, guardrails, metering, images and the sandbox lifecycle are built, and the features dropped from the old Phases 5b and 5c were removed from the code, the database and the docs (§5.13). Lint, type check, 555 unit tests and 183 Playwright tests (Chromium, Firefox, WebKit) pass. Not run in this change: a live `agent:smoke` against E2B and the Inngest dev server.
 
 ### 5.1 E2B template
 
@@ -478,10 +478,10 @@ Layers run cheapest first, before any model call that could act on the request. 
 
 ### 5.10 Output guardrails
 
-- **Model text (LLM02):** AI SDK `wrapLanguageModel` middleware redacts secret patterns with a sliding window (it holds back enough text to catch a value split across chunks, while text still streams); pattern redaction runs again on the final reply before it is saved, then the classifier checks the final reply.
+- **Model text (LLM02):** AI SDK `wrapLanguageModel` middleware redacts secret patterns with a sliding window: it holds back the last 200 characters, and any pattern match that crosses the cut, so a key split across chunks is caught while text still streams (`src/inngest/agent/guardrails/middleware.ts`). The window uses the own patterns, which are synchronous; the full secretlint scan runs on the final reply before it is saved, then the classifier checks it. Message parts, realtime events and tool output go through the same pattern redactor (`guardrails/redact.ts`).
 - **Executor (LLM05, LLM06):** every tool call goes through it.
   - **Paths:** inside `/home/user/app`; no writes to `node_modules`, `.next`, `.git`, `.env*`, `.agents/`, `.claude/`.
-  - **Commands:** denylist (`sudo`, starting/stopping/building the dev server, `kill`, recursive deletes of `/`, `~`, `.` or `*`, `curl | sh`, `.env`), and environment dumps blocked (`printenv`, bare `env` / `set`, `export -p`, `declare -x`, `/proc/*/environ`, `node -e … process.env`).
+  - **Commands:** denylist (`sudo`, starting/stopping/building the dev server, `kill`, recursive deletes of `/`, `~`, `.` or `*`, `curl | sh`, `.env`), and environment dumps blocked (`printenv`, bare `env` / `set`, `export -p`, `declare -x`, `/proc/*/environ`, `node -e … process.env`). Destructive database commands (`prisma migrate reset`, `db push --force-reset`, `--accept-data-loss`, `DROP` / `TRUNCATE`, an unfiltered `DELETE`) and an `rm` that removes more than 10 files are blocked outright; before the simplification they asked for a confirmation.
   - **File writes:** rejected if the content matches a secret pattern ("read it from `process.env`") or the code tripwire (remote-code `eval`, `document.cookie` sent to another host, wallet-drainer and miner signatures; a tripwire, not a guarantee).
   - **Command output and file reads:** pattern-redacted and wrapped in `<untrusted>` before they reach the model, the realtime stream or a log.
 - **Packages (LLM03):** a vetted allowlist (`src/inngest/agent/guardrails/packages.ts`) installs with `--ignore-scripts` (except `sharp`, `esbuild`, `prisma`, `@prisma/client`, `@prisma/engines`); git, tarball, URL and `file:` specs are refused. Anything else (including unknown dependencies in `package.json` before a bare `npm install`, and unknown `npx` packages) runs `npq install … --json` in the sandbox: **no findings → installs**, **any finding → refused**, and the Builder is told to pick another package or build it without one. After a `review` verdict only the allowlist installs. 20 installs per run.
@@ -521,21 +521,21 @@ Layers run cheapest first, before any model call that could act on the request. 
 | Output text guardrail      | AI SDK `wrapLanguageModel` middleware                                 | Post-processing the finished reply (misses streamed leaks)                       |
 | Sandbox idle timeout       | E2B `lifecycle: { onTimeout: "pause" }`, `autoResume` off             | Kill and rebuild every time; `autoResume` on (bills preview traffic)             |
 
-### 5.13 Simplification: code to remove (next task)
+### 5.13 Simplification: code removed
 
-The code still contains the features dropped on 13 November 2026. The next task removes them, with lint, type check, unit tests and e2e, and the docs in the same change:
+Done on 13 November 2026, with lint, type check, unit tests and e2e, and the docs in the same change. Migration `20261113180000_phase_5_simplification` drops the tables and enums; it was applied to the development database, which held no input requests or secrets (one message lost its `FAST` flag).
 
-- [ ] **Agents:** delete the Researcher, Designer and Reviewer (`src/inngest/agent/agents/`, their prompts in `prompts/`), and the router (`router.ts`, `prompts/router.ts`) with their tests, moving `mentionsSite` to `search.ts`; `run-agent` runs input guard → Builder → output guard → persist → meter
-- [ ] **Human in the loop:** remove `askUser` from `tools.ts` and the executor, request handling and waits in `runtime.ts`, `src/server/inputs/`, `src/app/api/inputs/`, the "Waiting for your answer" state on `/p/[slug]` and `paused` in `project.bySlug`
-- [ ] **Secrets:** delete `src/server/secrets/`, `src/app/api/projects/[projectId]/secrets/`, secret injection, egress rules, `restartDevServer` and exact-value redaction (pattern redaction stays); remove `SECRETS_ENCRYPTION_KEY` from `src/config/env.ts`, `.env.example` and `vitest.config.mts`
-- [ ] **Web search:** give the Builder `parallel_search` when `mentionsSite` matches the triggering message, with the 6-search cap, the `search` topic and the `sources` part (§5.8); off after a `review` verdict
-- [ ] **Fast mode:** remove the composer's mode select and the `mode` input of `project.create`; fold the Fast block into the Builder prompt (§5.2)
-- [ ] **Database:** a Prisma migration dropping `InputRequest`, `ProjectSecret`, `SecretEvent`, the `InputKind`, `InputStatus`, `SecretAction` and `AgentMode` enums, and `Message.mode`
-- [ ] **Realtime and parts:** drop the `agent` and `input` topics and the `agent`, `input-request` and `input-answer` parts (`search` and `sources` stay); the parser keeps skipping them on old messages
-- [ ] **Packages:** replace the `confirm` path in `guardrails/packages.ts` with npq clean → install, findings → refuse (§5.10)
-- [ ] **Scripts and tests:** drop `--answer`, `--answer-paused` and `--secret` from `agent:smoke`; rework `no-secret-leak.test.ts` for pattern redaction; update `e2e/agent.spec.ts`
-- [ ] **Legal pages:** remove stored secrets from the Privacy Policy (the search provider stays), and connected keys and databases from the Terms; flag both to the owner
-- [ ] **Docs:** tick this list, update the Status line above and the checklist
+- [x] **Agents:** delete the Researcher, Designer and Reviewer (`src/inngest/agent/agents/`, their prompts in `prompts/`), and the router (`router.ts`, `prompts/router.ts`) with their tests, moving `mentionsSite` to `search.ts`; `run-agent` runs input guard → Builder → output guard → persist → meter
+- [x] **Human in the loop:** remove `askUser` from `tools.ts` and the executor, request handling and waits in `runtime.ts`, `src/server/inputs/`, `src/app/api/inputs/`, the "Waiting for your answer" state on `/p/[slug]` and `paused` in `project.bySlug`
+- [x] **Secrets:** delete `src/server/secrets/`, `src/app/api/projects/[projectId]/secrets/`, secret injection, egress rules, `restartDevServer` and exact-value redaction (pattern redaction stays); remove `SECRETS_ENCRYPTION_KEY` from `src/config/env.ts`, `.env.example` and `vitest.config.mts`
+- [x] **Web search:** give the Builder `parallel_search` when `mentionsSite` matches the triggering message, with the 6-search cap, the `search` topic and the `sources` part (§5.8); off after a `review` verdict
+- [x] **Fast mode:** remove the composer's mode select and the `mode` input of `project.create`; fold the Fast block into the Builder prompt (§5.2)
+- [x] **Database:** a Prisma migration dropping `InputRequest`, `ProjectSecret`, `SecretEvent`, the `InputKind`, `InputStatus`, `SecretAction` and `AgentMode` enums, and `Message.mode`
+- [x] **Realtime and parts:** drop the `agent` and `input` topics and the `agent`, `input-request` and `input-answer` parts (`search` and `sources` stay); the parser keeps skipping them on old messages
+- [x] **Packages:** replace the `confirm` path in `guardrails/packages.ts` with npq clean → install, findings → refuse (§5.10)
+- [x] **Scripts and tests:** drop `--answer`, `--answer-paused` and `--secret` from `agent:smoke`; rework `no-secret-leak.test.ts` for pattern redaction; update `e2e/agent.spec.ts`
+- [x] **Legal pages:** remove stored secrets from the Privacy Policy (the search provider stays), and connected keys and databases from the Terms; flag both to the owner
+- [x] **Docs:** tick this list, update the Status line above and the checklist
 
 **Done when:**
 
@@ -698,7 +698,7 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 ```
 
-**Being removed:** `SECRETS_ENCRYPTION_KEY` (project secrets, dropped in the Phase 5 simplification) is still in `src/config/env.ts`, `.env.example` and the test env until §5.13 removes it.
+`SECRETS_ENCRYPTION_KEY` was removed with project secrets in the Phase 5 simplification; a value left in a local `.env` is ignored.
 
 ---
 
@@ -724,7 +724,7 @@ STRIPE_WEBHOOK_SECRET=
 - [x] Phase 3: Better Auth (GitHub), sign-in, `proxy.ts`
 - [x] Phase 3.1: public pages (`/terms`, `/privacy`; `/docs`, `/contact` and `/status` were built, then removed at the owner's request)
 - [x] Phase 4: sidebar shell, Home, Projects
-- [x] Phase 5: E2B template with skills, the Builder (Inngest + AI SDK, AI Gateway models; web search when the user references a website), input and output guardrails, sandbox lifecycle (pause instead of kill, checkpoints, recovery), realtime events, metering, image attachments. Simplified on 13 November 2026; removing the dropped 5b/5c code (§5.13) is still to do
+- [x] Phase 5: E2B template with skills, the Builder (Inngest + AI SDK, AI Gateway models; web search when the user references a website), input and output guardrails, sandbox lifecycle (pause instead of kill, checkpoints, recovery), realtime events, metering, image attachments. Simplified on 13 November 2026 and the dropped 5b/5c code removed (§5.13)
 - [ ] Phase 6: workspace (chat, preview + overlay, read-only code) — only the route scaffold exists (`(workspace)/p/[slug]`: shell header, loading/error/not-found states); no chat, preview or code view yet
 - [ ] Phase 7: credits ledger, Stripe top-ups, usage page (credit ledger and balance card from Phase 5/3 only; no Stripe top-up or usage page)
 - [ ] Phase 8: Export to GitHub

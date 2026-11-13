@@ -44,7 +44,7 @@ const cost = {
   estimatedCalls: 0,
   generationIds: ["gen_1", "gen_2"],
   agents: [
-    { name: "researcher", model: "m", usd: 0.02, searches: 1 },
+    { name: "guard", model: "m", usd: 0.02, searches: 0 },
     { name: "builder", model: "m", usd: 0.4, searches: 0 },
   ],
 };
@@ -147,7 +147,7 @@ describe("debitCredits", () => {
           estimatedCalls: 0,
           generationIds: ["gen_1", "gen_2"],
           agents: [
-            { name: "researcher", model: "m", usd: 0.02, searches: 1 },
+            { name: "guard", model: "m", usd: 0.02, searches: 0 },
             { name: "builder", model: "m", usd: 0.4, searches: 0 },
           ],
           ...usage,
@@ -155,14 +155,6 @@ describe("debitCredits", () => {
       },
       update: {},
     });
-  });
-
-  test("records the mode when given", async () => {
-    const { db } = makeDb();
-    await debitCredits(db as never, { ...input, mode: "fast" });
-    expect(db.creditLedger.upsert.mock.calls[0][0].create.meta.mode).toBe(
-      "fast",
-    );
   });
 
   test("uses EDIT after the first version", async () => {
@@ -272,8 +264,8 @@ describe("checkpoints", () => {
   });
 });
 
-describe("paused debits", () => {
-  test("charge the work done and mark the run paused", async () => {
+describe("handoff debits", () => {
+  test("charge the work done and mark the run handed over", async () => {
     const db = { creditLedger: { upsert: vi.fn().mockResolvedValue({}) } };
     await debitCredits(db as never, {
       userId: "u1",
@@ -296,7 +288,7 @@ describe("paused debits", () => {
         agents: [],
       },
       versionNumber: null,
-      paused: true,
+      handoff: true,
       guard: { input: "allow" },
     });
     expect(db.creditLedger.upsert).toHaveBeenCalledWith(
@@ -304,7 +296,7 @@ describe("paused debits", () => {
         create: expect.objectContaining({
           delta: -3,
           meta: expect.objectContaining({
-            paused: true,
+            handoff: true,
             version: null,
             guard: { input: "allow" },
           }),

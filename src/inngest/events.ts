@@ -9,7 +9,6 @@ export const agentRun = eventType("agent/run", {
     resume: z
       .object({
         chainId: z.string().min(1),
-        requestId: z.string().min(1).optional(),
         handoff: z
           .object({
             note: z.string().max(8000),
@@ -17,17 +16,10 @@ export const agentRun = eventType("agent/run", {
             readAgentsMd: z.boolean(),
             loadedSkills: z.array(z.string()).max(20),
             installs: z.number().int().nonnegative(),
+            searches: z.number().int().nonnegative().optional(),
           })
           .optional(),
       })
       .optional(),
-  }),
-});
-
-export const agentInputProvided = eventType("agent/input.provided", {
-  schema: z.object({
-    requestId: z.string().min(1),
-    ok: z.boolean(),
-    answer: z.string().max(4000).optional(),
   }),
 });

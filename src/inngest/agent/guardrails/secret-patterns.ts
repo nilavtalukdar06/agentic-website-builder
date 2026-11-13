@@ -114,6 +114,15 @@ function merge(matches: SecretMatch[]) {
   return merged;
 }
 
+export function detectKnownSecrets(text: string): SecretMatch[] {
+  if (!text) return [];
+  return merge(
+    ownMatches(text).filter(
+      (match) => !placeholder.test(text.slice(match.start, match.end)),
+    ),
+  );
+}
+
 export async function detectSecrets(text: string): Promise<SecretMatch[]> {
   if (!text) return [];
   const found = [

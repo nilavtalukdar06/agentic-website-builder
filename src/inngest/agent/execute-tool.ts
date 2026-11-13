@@ -1,17 +1,9 @@
 import { CommandExitError, type Sandbox } from "e2b";
-import {
-  type AgentName,
-  type InputPayload,
-  inputPayloadSchema,
-  packagesFromInstall,
-  type TaskItem,
-} from "@/lib/agent/parts";
+import { packagesFromInstall, type TaskItem } from "@/lib/agent/parts";
 import { isSandboxGone } from "@/server/sandbox/errors";
-import { noRedaction, type Redactor } from "@/server/secrets/redact";
 import {
   APP_DIR,
   checkCommand,
-  checkReviewerCommand,
   countFilesCommand,
   countLines,
   destructiveAction,
@@ -23,18 +15,19 @@ import {
 import type { Publish } from "../publisher";
 import {
   MAX_INSTALLS_PER_RUN,
+  npqClean,
   npqCommand,
   parseNpqReport,
   planInstall,
   summarizeNpq,
   unknownDependencies,
 } from "./guardrails/packages";
+import { patternRedactor, type Redactor } from "./guardrails/redact";
 import { detectSecrets } from "./guardrails/secret-patterns";
 import { codeTripwire } from "./guardrails/tripwire";
 import { wrapUntrusted } from "./guardrails/untrusted";
 import { MAX_SKILL_CHARS, parseSkill, SKILLS_DIR } from "./skills";
 import {
-  askUserInput,
   isAgentTool,
   loadSkillInput,
   readFilesInput,
@@ -59,19 +52,12 @@ export type TerminalRecord = {
   exitCode: number | null;
 };
 
-export const MAX_QUESTIONS_PER_RUN = 5;
-export const MAX_FILES_BEFORE_CONFIRM = 10;
+export const MAX_FILES_PER_REMOVAL = 10;
 
 export type SkillProgress = {
   readAgentsMd: boolean;
   loadedSkills: string[];
   installs?: number;
-};
-
-export type PendingInput = {
-  payload: InputPayload;
-  resume: boolean;
-  packages?: string[];
 };
 
 export type GuardHit = {
@@ -92,7 +78,6 @@ export type ToolOutcome = {
   writtenPaths: string[];
   terminal: TerminalRecord | null;
   progress: SkillProgress;
-  pending?: PendingInput | null;
   guard?: GuardHit | null;
 };
 
@@ -100,16 +85,11 @@ export type ToolContext = {
   sandbox: Pick<Sandbox, "commands" | "files">;
   publish: Publish;
   writtenPaths: readonly string[];
-  agent: AgentName;
   tools: readonly string[];
   skills: { allowed: readonly string[]; installed: readonly string[] };
   progress: SkillProgress;
   redactor?: Redactor;
-  envs?: Record<string, string>;
-  approved?: boolean;
-  approvedPackages?: readonly string[];
   restricted?: boolean;
-  questionsLeft?: number;
 };
 
 export function skillGate(
@@ -145,24 +125,10 @@ function outcome(
   };
 }
 
-function confirmOutcome(
-  ctx: ToolContext,
-  payload: Extract<InputPayload, { kind: "confirm" }>,
-  packages?: string[],
-) {
-  if ((ctx.questionsLeft ?? MAX_QUESTIONS_PER_RUN) <= 0) {
-    return outcome(
-      ctx,
-      `Not run: this needs the user's approval (${payload.action}), but you have used all ${MAX_QUESTIONS_PER_RUN} questions for this request. Find another way, or explain in your summary that the user has to approve it.`,
-    );
-  }
-  return outcome(ctx, `Waiting for the user to approve: ${payload.action}`, {
-    pending: { payload, resume: true, packages },
+function blockedOutcome(ctx: ToolContext, command: string, message: string) {
+  return outcome(ctx, message, {
+    terminal: { command, output: message, exitCode: null },
   });
-}
-
-function shortCommand(command: string) {
-  return command.length > 160 ? `${command.slice(0, 159)}…` : command;
 }
 
 async function vetPackages(ctx: ToolContext, names: string[]) {
@@ -176,7 +142,7 @@ async function vetPackages(ctx: ToolContext, names: string[]) {
     .catch((error: unknown) =>
       error instanceof CommandExitError ? error.stdout : "",
     );
-  return summarizeNpq(names, parseNpqReport(result));
+  return parseNpqReport(result);
 }
 
 async function preflight(
@@ -184,71 +150,73 @@ async function preflight(
   ctx: ToolContext,
 ): Promise<{ command: string; installs: number } | ToolOutcome> {
   const destructive = destructiveAction(command);
-  if (destructive && !ctx.approved) {
-    return confirmOutcome(ctx, {
-      kind: "confirm",
-      action: `Run: ${shortCommand(command)}`,
-      risk: "high",
-      summary: destructive,
-    });
+  if (destructive) {
+    return blockedOutcome(
+      ctx,
+      command,
+      `Command blocked: it would ${destructive.charAt(0).toLowerCase()}${destructive.slice(1)} That isn't allowed in a Vibe project.`,
+    );
   }
 
   const targets = removalTargets(command);
-  if (targets && !ctx.approved) {
+  if (targets) {
     const counted = await ctx.sandbox.commands
       .run(countFilesCommand(targets), { cwd: APP_DIR, timeoutMs: 30_000 })
       .then((res) => Number.parseInt(res.stdout.trim(), 10))
       .catch(() => 0);
-    if (counted > MAX_FILES_BEFORE_CONFIRM) {
-      return confirmOutcome(ctx, {
-        kind: "confirm",
-        action: `Delete ${counted} files: ${shortCommand(command)}`,
-        risk: "high",
-        summary: `This removes ${counted} files from the project (${targets.join(", ")}). They come back only by restoring an earlier version.`,
-      });
+    if (counted > MAX_FILES_PER_REMOVAL) {
+      return blockedOutcome(
+        ctx,
+        command,
+        `Command blocked: it removes ${counted} files (${targets.join(", ")}), and at most ${MAX_FILES_PER_REMOVAL} can be removed at once. Remove only the files you mean to.`,
+      );
     }
   }
 
-  const approvedPackages = ctx.approvedPackages ?? [];
-  const plan = planInstall(command, approvedPackages);
+  const plan = planInstall(command);
   if (plan.action === "none") return { command, installs: 0 };
   if (plan.action === "refuse") {
-    return outcome(ctx, `Command blocked: ${plan.reason}.`, {
-      terminal: { command, output: plan.reason, exitCode: null },
-    });
+    return blockedOutcome(ctx, command, `Command blocked: ${plan.reason}.`);
   }
   const used = ctx.progress.installs ?? 0;
   if (used + plan.installs > MAX_INSTALLS_PER_RUN) {
-    const message = `Command blocked: this request already installed ${used} packages and the limit is ${MAX_INSTALLS_PER_RUN}. Use what is installed.`;
-    return outcome(ctx, message, {
-      terminal: { command, output: message, exitCode: null },
-    });
+    return blockedOutcome(
+      ctx,
+      command,
+      `Command blocked: this request already installed ${used} packages and the limit is ${MAX_INSTALLS_PER_RUN}. Use what is installed.`,
+    );
   }
   let unknown = plan.unknown;
   if (plan.bare) {
     const manifest = await ctx.sandbox.files
       .read(`${APP_DIR}/package.json`)
       .catch(() => "{}");
-    const deps = unknownDependencies(manifest, approvedPackages);
+    const deps = unknownDependencies(manifest);
     if (deps.refused) {
-      const message = `Command blocked: package.json has a dependency that isn't from the npm registry (${deps.refused}). Use a registry package instead.`;
-      return outcome(ctx, message, {
-        terminal: { command, output: message, exitCode: null },
-      });
+      return blockedOutcome(
+        ctx,
+        command,
+        `Command blocked: package.json has a dependency that isn't from the npm registry (${deps.refused}). Use a registry package instead.`,
+      );
     }
     unknown = [...new Set([...unknown, ...deps.unknown])].sort();
   }
-  if (unknown.length > 0 && !ctx.approved) {
-    return confirmOutcome(
-      ctx,
-      {
-        kind: "confirm",
-        action: `Install ${unknown.join(", ")}`,
-        risk: "medium",
-        summary: await vetPackages(ctx, unknown),
-      },
-      unknown,
-    );
+  if (unknown.length > 0) {
+    if (ctx.restricted) {
+      return blockedOutcome(
+        ctx,
+        command,
+        `Command blocked: ${unknown.join(", ")} ${unknown.length === 1 ? "isn't" : "aren't"} on the vetted package list, and only vetted packages can be installed for this request. Build it with what is installed.`,
+      );
+    }
+    const report = await vetPackages(ctx, unknown);
+    if (!npqClean(report)) {
+      return blockedOutcome(
+        ctx,
+        command,
+        `Command blocked: the package check didn't pass, so nothing was installed. Pick another package or build it without one.\n${summarizeNpq(unknown, report)}`,
+      );
+    }
   }
   return {
     command:
@@ -268,29 +236,22 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
     return outcome(ctx, `Invalid input: ${parsed.error.message}`);
   }
   const requested = parsed.data.command;
-  const blocked =
-    ctx.agent === "reviewer"
-      ? checkReviewerCommand(requested)
-      : checkCommand(requested);
+  const blocked = checkCommand(requested);
   if (blocked) {
     return outcome(ctx, blocked, {
       terminal: { command: requested, output: blocked, exitCode: null },
     });
   }
-  const checked =
-    ctx.agent === "reviewer"
-      ? { command: requested, installs: 0 }
-      : await preflight(requested, ctx);
+  const checked = await preflight(requested, ctx);
   if ("output" in checked) return checked;
   const { command } = checked;
-  const redactor = ctx.redactor ?? noRedaction;
+  const redactor = ctx.redactor ?? patternRedactor;
 
   await ctx.publish("tool", {
     phase: "call",
     callId: call.toolCallId,
     name: "terminal",
     command,
-    agent: ctx.agent,
   });
   const stream = (chunk: string) =>
     ctx.publish("tool", {
@@ -298,7 +259,6 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
       callId: call.toolCallId,
       name: "terminal",
       chunk: redactor.redact(chunk),
-      agent: ctx.agent,
     });
 
   let stdout = "";
@@ -310,9 +270,6 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
       timeoutMs: COMMAND_TIMEOUT_MS,
       onStdout: stream,
       onStderr: stream,
-      ...(ctx.envs && Object.keys(ctx.envs).length > 0
-        ? { envs: ctx.envs }
-        : {}),
     });
     stdout = result.stdout;
     stderr = result.stderr;
@@ -340,13 +297,12 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
     callId: call.toolCallId,
     name: "terminal",
     exitCode,
-    agent: ctx.agent,
   });
 
   const tasks: TaskItem[] = [];
   const packages = exitCode === 0 ? packagesFromInstall(command) : null;
   if (packages) {
-    const task: TaskItem = { kind: "install", packages, agent: ctx.agent };
+    const task: TaskItem = { kind: "install", packages };
     tasks.push(task);
     await ctx.publish("task", task);
   }
@@ -368,22 +324,11 @@ async function runTerminal(call: ToolCall, ctx: ToolContext) {
   );
 }
 
-async function writeContentCheck(
-  path: string,
-  content: string,
-  ctx: ToolContext,
-) {
-  const named = (ctx.redactor ?? noRedaction).contains(content);
-  if (named) {
-    return {
-      message: `Skipped ${path}: it contains the value of ${named}. Never write secret values into files; read it in code with process.env.${named}.`,
-      guard: null,
-    };
-  }
+async function writeContentCheck(path: string, content: string) {
   const found = await detectSecrets(content);
   if (found.length > 0) {
     return {
-      message: `Skipped ${path}: it contains what looks like a secret (${found[0].ruleId}). Never write keys, passwords or tokens into files; read them with process.env.NAME and ask for missing ones with askUser (kind secret).`,
+      message: `Skipped ${path}: it contains what looks like a secret (${found[0].ruleId}). Never write keys, passwords or tokens into files; read them with process.env.NAME and tell the user in your summary which variables to set.`,
       guard: null,
     };
   }
@@ -431,11 +376,7 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
       );
       continue;
     }
-    const rejected = await writeContentCheck(
-      target.relative,
-      file.content,
-      ctx,
-    );
+    const rejected = await writeContentCheck(target.relative, file.content);
     if (rejected) {
       results.push(rejected.message);
       guard ??= rejected.guard;
@@ -448,7 +389,6 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
       phase: "started",
       path: target.relative,
       verb,
-      agent: ctx.agent,
     });
     await ctx.sandbox.files.write(target.absolute, file.content);
     const lines = countLines(file.content);
@@ -457,14 +397,12 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
       path: target.relative,
       verb,
       lines,
-      agent: ctx.agent,
     });
     const task: TaskItem = {
       kind: "file",
       verb,
       path: target.relative,
       lines,
-      agent: ctx.agent,
     };
     await ctx.publish("task", task);
 
@@ -501,7 +439,7 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
         return {
           path: target.relative,
           content: truncateOutput(
-            (ctx.redactor ?? noRedaction).redact(content),
+            (ctx.redactor ?? patternRedactor).redact(content),
             limit,
           ),
         };
@@ -574,49 +512,6 @@ async function loadSkill(call: ToolCall, ctx: ToolContext) {
   );
 }
 
-function askUser(call: ToolCall, ctx: ToolContext) {
-  const parsed = askUserInput.safeParse(call.input);
-  if (!parsed.success) {
-    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
-  }
-  const { kind, ...fields } = parsed.data;
-  const payload = inputPayloadSchema.safeParse({
-    kind,
-    ...Object.fromEntries(
-      Object.entries(fields).filter(
-        ([, value]) => value !== undefined && value !== "",
-      ),
-    ),
-  });
-  if (!payload.success) {
-    const needs = {
-      choice: "question and 2 to 6 options",
-      text: "question",
-      secret: "name (like OPENAI_API_KEY), label and reason",
-      confirm: "action, risk and summary",
-    }[kind];
-    return outcome(
-      ctx,
-      `Not asked: a ${kind} question needs ${needs}. ${payload.error.issues[0]?.message ?? ""}`.trim(),
-    );
-  }
-  if (payload.data.kind === "secret" && ctx.restricted) {
-    return outcome(
-      ctx,
-      "Not asked: secrets can't be requested for this request. Build without the key and explain in your summary what the user needs to add.",
-    );
-  }
-  if ((ctx.questionsLeft ?? MAX_QUESTIONS_PER_RUN) <= 0) {
-    return outcome(
-      ctx,
-      `Not asked: you have used all ${MAX_QUESTIONS_PER_RUN} questions for this request. Decide yourself with a sensible default and mention it in your summary.`,
-    );
-  }
-  return outcome(ctx, "Waiting for the user's answer.", {
-    pending: { payload: payload.data, resume: false },
-  });
-}
-
 export async function executeTool(
   call: ToolCall,
   ctx: ToolContext,
@@ -627,6 +522,5 @@ export async function executeTool(
   if (call.toolName === "terminal") return runTerminal(call, ctx);
   if (call.toolName === "createOrUpdateFiles") return writeFiles(call, ctx);
   if (call.toolName === "loadSkill") return loadSkill(call, ctx);
-  if (call.toolName === "askUser") return askUser(call, ctx);
   return readFiles(call, ctx);
 }

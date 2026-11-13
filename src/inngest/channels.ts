@@ -1,23 +1,14 @@
 import { realtime } from "inngest";
 import { z } from "zod";
-import {
-  agentNameSchema,
-  fileVerbs,
-  inputKinds,
-  sourceSchema,
-  taskItemSchema,
-} from "@/lib/agent/parts";
+import { fileVerbs, sourceSchema, taskItemSchema } from "@/lib/agent/parts";
 
 export const agentStatuses = [
   "thinking",
   "building",
   "compiling",
   "done",
-  "paused",
   "error",
 ] as const;
-
-export const inputStates = ["open", "answered", "paused", "cancelled"] as const;
 
 export const projectTopics = [
   "status",
@@ -28,9 +19,7 @@ export const projectTopics = [
   "tool",
   "credits",
   "preview",
-  "agent",
   "search",
-  "input",
   "guard",
 ] as const;
 
@@ -47,14 +36,12 @@ export const projectChannel = realtime.channel({
       schema: z.object({
         turn: z.number(),
         delta: z.string(),
-        agent: agentNameSchema.optional(),
       }),
     },
     text: {
       schema: z.object({
         turn: z.number(),
         delta: z.string(),
-        agent: agentNameSchema.optional(),
       }),
     },
     task: { schema: taskItemSchema },
@@ -64,7 +51,6 @@ export const projectChannel = realtime.channel({
         path: z.string(),
         verb: z.enum(fileVerbs),
         lines: z.number().int().nonnegative().optional(),
-        agent: agentNameSchema.optional(),
       }),
     },
     tool: {
@@ -75,30 +61,14 @@ export const projectChannel = realtime.channel({
         command: z.string().optional(),
         chunk: z.string().optional(),
         exitCode: z.number().int().nullable().optional(),
-        agent: agentNameSchema.optional(),
       }),
     },
     credits: { schema: z.object({ used: z.number().int().nonnegative() }) },
     preview: { schema: z.object({ url: z.url() }) },
-    agent: {
-      schema: z.object({
-        name: agentNameSchema,
-        state: z.enum(["started", "done", "skipped"]),
-        summary: z.string().optional(),
-      }),
-    },
     search: {
       schema: z.object({
-        agent: agentNameSchema,
         query: z.string(),
         sources: z.array(sourceSchema),
-      }),
-    },
-    input: {
-      schema: z.object({
-        requestId: z.string(),
-        kind: z.enum(inputKinds),
-        status: z.enum(inputStates),
       }),
     },
     guard: {

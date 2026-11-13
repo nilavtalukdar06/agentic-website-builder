@@ -15,8 +15,6 @@ const dbMock = vi.hoisted(() => ({
   project: { update: vi.fn().mockResolvedValue({}) },
 }));
 vi.mock("@/server/db", () => ({ db: dbMock }));
-const inject = vi.hoisted(() => ({ prepareSandboxSecrets: vi.fn() }));
-vi.mock("@/server/secrets/inject", () => inject);
 
 const { connectOrRecover, isSandboxGone, recoverSandbox } =
   await import("./recover");
@@ -33,18 +31,16 @@ describe("sandbox recovery", () => {
     expect(isSandboxGone(new Error("socket hang up"))).toBe(false);
   });
 
-  test("restores the checkpoint, replays writes and re-injects secrets", async () => {
+  test("restores the checkpoint and replays writes", async () => {
     const files = { write: vi.fn().mockResolvedValue({}) };
     sandboxMocks.createSandbox.mockResolvedValue({ sandboxId: "new", files });
     dbMock.version.findFirst.mockResolvedValue({
       files: { "app/page.tsx": "old" },
     });
-    const secrets = [{ name: "A_KEY", value: "value-123" }];
     const result = await recoverSandbox({
       projectId: "p1",
       chainId: "r0",
       replay: [{ path: "app/page.tsx", content: "new" }],
-      secrets,
     });
     expect(sandboxMocks.createSandbox).toHaveBeenCalledWith({
       "app/page.tsx": "old",
@@ -52,11 +48,6 @@ describe("sandbox recovery", () => {
     expect(files.write).toHaveBeenCalledWith([
       { path: "/home/user/app/app/page.tsx", data: "new" },
     ]);
-    expect(inject.prepareSandboxSecrets).toHaveBeenCalledWith(
-      expect.anything(),
-      secrets,
-      { restart: true },
-    );
     expect(dbMock.project.update).toHaveBeenCalledWith({
       where: { id: "p1" },
       data: { sandboxId: "new", previewUrl: "https://3000-new.e2b.app" },

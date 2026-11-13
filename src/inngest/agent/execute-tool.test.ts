@@ -41,7 +41,6 @@ function makeSandbox() {
 function makeCtx(
   writtenPaths: string[] = [],
   overrides: Partial<{
-    agent: "builder" | "reviewer" | "designer";
     tools: string[];
     progress: { readAgentsMd: boolean; loadedSkills: string[] };
     installed: string[];
@@ -56,7 +55,6 @@ function makeCtx(
       sandbox: sandbox as never,
       publish: publish as never,
       writtenPaths,
-      agent: overrides.agent ?? "builder",
       tools: overrides.tools ?? builderToolNames,
       skills: {
         allowed: ["shadcn", "next-best-practices"],
@@ -110,14 +108,13 @@ describe("executeTool", () => {
       exitCode: 0,
     });
     expect(result.tasks).toEqual([
-      { kind: "install", packages: ["framer-motion"], agent: "builder" },
+      { kind: "install", packages: ["framer-motion"] },
     ]);
     expect(publish).toHaveBeenCalledWith("tool", {
       phase: "call",
       callId: "c1",
       name: "terminal",
       command: "npm install framer-motion --ignore-scripts",
-      agent: "builder",
     });
   });
 
@@ -174,14 +171,12 @@ describe("executeTool", () => {
         verb: "edited",
         path: "app/page.tsx",
         lines: 2,
-        agent: "builder",
       },
       {
         kind: "file",
         verb: "created",
         path: "components/hero.tsx",
         lines: 1,
-        agent: "builder",
       },
     ]);
     expect(result.output).toBe(
@@ -192,7 +187,6 @@ describe("executeTool", () => {
       path: "app/page.tsx",
       verb: "edited",
       lines: 2,
-      agent: "builder",
     });
   });
 
@@ -342,10 +336,9 @@ describe("skills before writing", () => {
   });
 });
 
-describe("agent tool sets", () => {
-  test("rejects a tool the agent doesn't have", async () => {
+describe("tool set", () => {
+  test("rejects a tool the builder doesn't have", async () => {
     const { ctx, sandbox } = makeCtx([], {
-      agent: "designer",
       tools: ["readFiles", "loadSkill"],
     });
     const result = await executeTool(call("terminal", { command: "ls" }), ctx);
@@ -353,41 +346,21 @@ describe("agent tool sets", () => {
     expect(result.output).toBe("Unknown tool: terminal");
   });
 
-  test("the reviewer can only run read-only commands", async () => {
-    const { ctx, sandbox } = makeCtx([], {
-      agent: "reviewer",
-      tools: ["terminal", "readFiles", "loadSkill"],
-    });
-    const blocked = await executeTool(
-      call("terminal", { command: "npm install zod" }),
+  test("askUser no longer exists", async () => {
+    const { ctx } = makeCtx([], { tools: [...builderToolNames, "askUser"] });
+    const result = await executeTool(
+      call("askUser", { kind: "text", question: "Name?" }),
       ctx,
     );
-    expect(blocked.output).toMatch(/^Command blocked/);
-    expect(sandbox.commands.run).not.toHaveBeenCalled();
-    await executeTool(call("terminal", { command: "npx tsc --noEmit" }), ctx);
-    expect(sandbox.commands.run).toHaveBeenCalledOnce();
+    expect(result.output).toBe("Unknown tool: askUser");
   });
 });
 
 describe("guardrails in the executor", () => {
-  const secret = "sk-proj-VerySecretValue123";
+  const secret = `sk-proj-${"VerySecretValue123".repeat(2)}`;
 
-  async function withSecret(extra: Record<string, unknown> = {}) {
-    const { createRedactor } = await import("@/server/secrets/redact");
-    const made = makeCtx();
-    return {
-      ...made,
-      ctx: {
-        ...made.ctx,
-        redactor: createRedactor([{ name: "OPENAI_API_KEY", value: secret }]),
-        envs: { OPENAI_API_KEY: secret },
-        ...extra,
-      },
-    };
-  }
-
-  test("rejects writes that contain a stored secret, a key pattern or malware", async () => {
-    const { ctx, sandbox } = await withSecret();
+  test("rejects writes that contain a key pattern or malware", async () => {
+    const { ctx, sandbox } = makeCtx();
     const result = await executeTool(
       call("createOrUpdateFiles", {
         files: [
@@ -404,7 +377,7 @@ describe("guardrails in the executor", () => {
       ctx,
     );
     expect(result.output).toContain(
-      "Skipped lib/ai.ts: it contains the value of OPENAI_API_KEY",
+      "Skipped lib/ai.ts: it contains what looks like a secret",
     );
     expect(result.output).toContain(
       "Skipped lib/db.ts: it contains what looks like a secret",
@@ -420,12 +393,12 @@ describe("guardrails in the executor", () => {
     expect(sandbox.files.write).toHaveBeenCalledTimes(1);
   });
 
-  test("redacts secrets from command output and the live stream, and passes envs", async () => {
-    const { ctx, sandbox, publish } = await withSecret();
+  test("redacts key patterns from command output and the live stream", async () => {
+    const { ctx, sandbox, publish } = makeCtx();
     sandbox.commands.run.mockImplementation(async (_cmd, options) => {
       await options.onStdout(`token=${secret}`);
       return {
-        stdout: `token=${secret} b64=${Buffer.from(secret).toString("base64")}`,
+        stdout: `token=${secret}`,
         stderr: "",
         exitCode: 0,
       };
@@ -436,15 +409,11 @@ describe("guardrails in the executor", () => {
     );
     const everything = JSON.stringify([result, publish.mock.calls]);
     expect(everything).not.toContain(secret);
-    expect(everything).not.toContain(Buffer.from(secret).toString("base64"));
-    expect(result.output).toContain("[secret OPENAI_API_KEY]");
-    expect(sandbox.commands.run.mock.calls[0][1]).toMatchObject({
-      envs: { OPENAI_API_KEY: secret },
-    });
+    expect(result.output).toContain("[secret removed]");
   });
 
-  test("redacts secrets from file reads", async () => {
-    const { ctx, sandbox } = await withSecret();
+  test("redacts key patterns from file reads", async () => {
+    const { ctx, sandbox } = makeCtx();
     sandbox.files.read.mockResolvedValue(`KEY=${secret}`);
     const result = await executeTool(
       call("readFiles", { paths: ["notes.txt"] }),
@@ -453,124 +422,97 @@ describe("guardrails in the executor", () => {
     expect(result.output).not.toContain(secret);
   });
 
-  test("askUser returns a pending question", async () => {
-    const { ctx } = makeCtx([], {
-      tools: [...builderToolNames, "askUser"],
-    });
-    const result = await executeTool(
-      call("askUser", {
-        kind: "choice",
-        question: "Call Gemini directly or through Vercel AI Gateway?",
-        options: ["Gemini API directly", "Vercel AI Gateway"],
-      }),
-      ctx,
-    );
-    expect(result.pending).toEqual({
-      payload: {
-        kind: "choice",
-        question: "Call Gemini directly or through Vercel AI Gateway?",
-        options: ["Gemini API directly", "Vercel AI Gateway"],
-      },
-      resume: false,
-    });
-  });
-
-  test("askUser explains what a malformed question needs", async () => {
-    const { ctx } = makeCtx([], { tools: [...builderToolNames, "askUser"] });
-    const result = await executeTool(
-      call("askUser", { kind: "secret", name: "lower" }),
-      ctx,
-    );
-    expect(result.pending).toBeUndefined();
-    expect(result.output).toMatch(/^Not asked: a secret question needs name/);
-  });
-
-  test("askUser respects restricted mode and the question cap", async () => {
-    const made = makeCtx([], { tools: [...builderToolNames, "askUser"] });
-    const secretAsk = call("askUser", {
-      kind: "secret",
-      name: "OPENAI_API_KEY",
-      label: "OpenAI API key",
-      reason: "Chat feature",
-    });
-    const restricted = await executeTool(secretAsk, {
-      ...made.ctx,
-      restricted: true,
-    });
-    expect(restricted.output).toMatch(/can't be requested/);
-    const capped = await executeTool(secretAsk, {
-      ...made.ctx,
-      questionsLeft: 0,
-    });
-    expect(capped.output).toMatch(/used all 5 questions/);
-  });
-
-  test("unknown packages are vetted with npq and need a confirmation", async () => {
-    const { ctx, sandbox } = makeCtx();
-    sandbox.commands.run.mockImplementation(async (command: string) => {
+  function npqSandbox(report: unknown) {
+    const made = makeCtx();
+    made.sandbox.commands.run.mockImplementation(async (command: string) => {
       if (command.includes("npq")) {
-        throw new FakeExitError(
-          JSON.stringify({
-            status: "findings",
-            summary: { errors: 1, warnings: 0 },
-            packages: [
-              {
-                requested: "left-pad@*",
-                findings: [
-                  {
-                    severity: "error",
-                    marshall: "deprecation",
-                    message: "Deprecated",
-                  },
-                ],
-              },
-            ],
-          }),
-          "",
-          1,
-        );
+        throw new FakeExitError(JSON.stringify(report), "", 1);
       }
       return { stdout: "added", stderr: "", exitCode: 0 };
     });
+    return made;
+  }
+
+  test("an unknown package with npq findings is refused", async () => {
+    const { ctx, sandbox } = npqSandbox({
+      status: "findings",
+      summary: { errors: 1, warnings: 0 },
+      packages: [
+        {
+          requested: "left-pad@*",
+          findings: [
+            {
+              severity: "error",
+              marshall: "deprecation",
+              message: "Deprecated",
+            },
+          ],
+        },
+      ],
+    });
     const result = await executeTool(
       call("terminal", { command: "npm install left-pad" }),
       ctx,
     );
-    expect(result.pending).toMatchObject({
-      resume: true,
-      packages: ["left-pad"],
-      payload: { kind: "confirm", risk: "medium", action: "Install left-pad" },
-    });
-    expect((result.pending?.payload as { summary: string }).summary).toContain(
-      "left-pad: error (deprecation) Deprecated",
-    );
+    expect(result.output).toMatch(/^Command blocked: the package check/);
+    expect(result.output).toContain("left-pad: error (deprecation) Deprecated");
     expect(sandbox.commands.run).toHaveBeenCalledTimes(1);
+  });
 
-    const approved = await executeTool(
+  test("an unknown package with a clean npq report installs without scripts", async () => {
+    const { ctx, sandbox } = npqSandbox({
+      status: "ok",
+      summary: { errors: 0, warnings: 0 },
+      packages: [{ requested: "left-pad@*", findings: [] }],
+    });
+    await executeTool(
       call("terminal", { command: "npm install left-pad" }),
-      { ...ctx, approved: true },
+      ctx,
     );
-    expect(approved.pending).toBeUndefined();
     expect(sandbox.commands.run).toHaveBeenLastCalledWith(
       "npm install left-pad --ignore-scripts",
       expect.anything(),
     );
   });
 
-  test("destructive database commands need a high-risk confirmation", async () => {
+  test("an unknown package is refused when npq can't run", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await executeTool(
+      call("terminal", { command: "npm install left-pad" }),
+      ctx,
+    );
+    expect(result.output).toMatch(/^Command blocked: the package check/);
+    expect(sandbox.commands.run).toHaveBeenCalledTimes(1);
+  });
+
+  test("after a review verdict only vetted packages install", async () => {
+    const { ctx, sandbox } = makeCtx();
+    const result = await executeTool(
+      call("terminal", { command: "npm install left-pad" }),
+      { ...ctx, restricted: true },
+    );
+    expect(result.output).toMatch(/only vetted packages/);
+    expect(sandbox.commands.run).not.toHaveBeenCalled();
+  });
+
+  test("destructive database commands are blocked", async () => {
     const { ctx, sandbox } = makeCtx();
     const result = await executeTool(
       call("terminal", { command: "npx prisma migrate reset --force" }),
       ctx,
     );
-    expect(result.pending?.payload).toMatchObject({
-      kind: "confirm",
-      risk: "high",
-    });
+    expect(result.output).toMatch(
+      /^Command blocked: it would reset the database/,
+    );
     expect(sandbox.commands.run).not.toHaveBeenCalled();
   });
 
-  test("deleting more than 10 files needs a confirmation", async () => {
+  test("deleting more than 10 files at once is blocked", async () => {
     const { ctx, sandbox } = makeCtx();
     sandbox.commands.run.mockResolvedValueOnce({
       stdout: "14\n",
@@ -581,11 +523,8 @@ describe("guardrails in the executor", () => {
       call("terminal", { command: "rm -r components/sections" }),
       ctx,
     );
-    expect(result.pending?.payload).toMatchObject({
-      kind: "confirm",
-      risk: "high",
-      action: "Delete 14 files: rm -r components/sections",
-    });
+    expect(result.output).toMatch(/^Command blocked: it removes 14 files/);
+    expect(sandbox.commands.run).toHaveBeenCalledTimes(1);
   });
 
   test("refuses git dependencies and caps installs per run", async () => {
@@ -600,15 +539,5 @@ describe("guardrails in the executor", () => {
       { ...ctx, progress: { ...ready, installs: 20 } },
     );
     expect(capped.output).toMatch(/limit is 20/);
-  });
-
-  test("a confirmation over the question cap is refused instead", async () => {
-    const { ctx } = makeCtx();
-    const result = await executeTool(
-      call("terminal", { command: "npx prisma migrate reset --force" }),
-      { ...ctx, questionsLeft: 0 },
-    );
-    expect(result.pending).toBeUndefined();
-    expect(result.output).toMatch(/^Not run: this needs the user's approval/);
   });
 });

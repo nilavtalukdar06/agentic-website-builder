@@ -88,16 +88,13 @@ export const termsSections: ArticleSection[] = [
           anyone&apos;s rights.
         </P>
         <P>
-          <Strong>Keys and databases you connect.</Strong> When you give the
-          agent an API key, token or database connection string, you are
-          responsible for it: that you are allowed to use it, the costs it runs
-          up with its provider, and the data in the database. We store it
-          encrypted and keep it from the AI, but the code in your project runs
-          with it, and preview links are not private, so anyone with a preview
-          link can use the app and its access. Use keys with spending limits and
-          a separate database branch with test data. The agent asks before
-          destructive actions such as resetting a database; you are responsible
-          for what you approve.
+          <Strong>Keys and services you use.</Strong> Vibe doesn&apos;t store
+          API keys, tokens or database connection strings, and the agent
+          won&apos;t ask for them. If you add one to your exported project
+          yourself, you are responsible for it: that you are allowed to use it,
+          the costs it runs up with its provider, and the data it reaches.
+          Preview links are not private, so anyone with a preview link can open
+          the app.
         </P>
       </>
     ),
@@ -129,7 +126,7 @@ export const termsSections: ArticleSection[] = [
           <li>
             put personal data of other people or regulated data (health, payment
             card or similar) in prompts or projects, or paste secrets into
-            prompts (add them through the secure field instead);
+            prompts;
           </li>
           <li>
             get around Vibe&apos;s safety checks, for example by hiding

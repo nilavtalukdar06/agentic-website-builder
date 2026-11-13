@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { searchQuery, searchRecord, uniqueSources } from "./search";
+import {
+  mentionsSite,
+  searchQuery,
+  searchRecord,
+  uniqueSources,
+} from "./search";
 
 describe("searchRecord", () => {
   test("takes the objective and the result titles and URLs", () => {
@@ -47,5 +52,16 @@ describe("searchRecord", () => {
         { query: "2", sources: [a, { url: "https://b.com", title: "B" }] },
       ]),
     ).toHaveLength(2);
+  });
+});
+
+describe("mentionsSite", () => {
+  test.each([
+    ["like stripe.com/pricing", true],
+    ["see https://example.org", true],
+    ["Make the heading bigger.", false],
+    ["Use Next.js and React", false],
+  ])("mentionsSite(%j) = %s", (prompt, expected) => {
+    expect(mentionsSite(prompt)).toBe(expected);
   });
 });

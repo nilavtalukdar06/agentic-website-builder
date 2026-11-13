@@ -250,6 +250,11 @@ _Superseded by the Phase 5 simplification (13 November 2026): kept as history._
 - **Unknown npm packages** → allowlisted packages install as before; anything else runs `npq` and installs only with no findings, otherwise it is refused and the Builder picks another package → allowlist only (drops a check that already works and blocks most real packages).
 - **Phases 5d, 5e and 5f** → dropped (full-stack projects, Firecrawl skill discovery, Supermemory, DeepEval); their planned env variables leave the plan.
 - **Order of work** → the plan is rewritten first; the code removal follows as its own task with a checklist in plan §5.13 → removing code and rewriting the plan in one change.
+- **Built (13 November 2026)** → code removed as listed in plan §5.13; the settled details:
+  - **Redaction without stored secrets** → one pattern redactor (`guardrails/redact.ts`, the own synchronous patterns) for tool output, realtime events and saved parts; the stream window holds back 200 characters plus any match that crosses the cut, and the final reply and files get the full secretlint scan → keeping the exact-value redactor (nothing to match once no secrets are stored); running secretlint on every streamed chunk (asynchronous and slow).
+  - **Actions that used to need a confirmation** → destructive database commands and an `rm` of more than 10 files are blocked; an unknown package installs only with a clean npq report, and is refused when npq finds anything or can't run → letting them through unconfirmed.
+  - **Search cap across a handoff** → the handoff event carries the searches used, so the 6-search cap covers the whole request, not each segment → resetting the count per run.
+  - **Old messages** → `parseAgentParts` drops part types it doesn't know (`agent`, `input-request`, `input-answer`) and zod strips the old `agent` tags, so replies saved before the change still load → a data migration rewriting stored parts.
 
 ## Shell and brand restyle (owner's request after Phase 5, Lovable reference)
 

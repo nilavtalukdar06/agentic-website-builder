@@ -40,17 +40,8 @@ export const privacySections: ArticleSection[] = [
             <Strong>Your projects.</Strong> Project names and slugs, your
             prompts and chat messages, the AI model you chose for each message,
             the images you attach as references, the files the agent writes,
-            saved versions, the preview address, the linked GitHub repository
-            after you export, and your answers to the questions the agent asks
-            while it works.
-          </li>
-          <li>
-            <Strong>Secrets you give the agent.</Strong> API keys, tokens and
-            database connection strings you add to a project. We store them
-            encrypted, never send them to an AI model, and only place them in
-            your project&apos;s sandbox while it runs. We also keep a log of
-            each secret&apos;s name, what changed (set, replaced or deleted) and
-            when, never the value.
+            saved versions, the preview address and the linked GitHub repository
+            after you export.
           </li>
           <li>
             <Strong>Safety checks.</Strong> When a prompt, a reply or the
@@ -135,17 +126,15 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             <Strong>Parallel</Strong>, the web search provider, through Vercel
-            AI Gateway: when a request needs outside facts (a real business, a
-            site you name, current information), the agent sends search queries
-            based on your prompt. Your account details and project code are not
-            sent.
+            AI Gateway: when your prompt names a website (an address such as
+            example.com), the agent sends search queries about that site based
+            on your prompt. Your account details and project code are not sent.
           </li>
           <li>
             <Strong>E2B</Strong>: runs the sandbox where your project is built
-            and previewed. Your project code runs there, and the secrets you add
-            are placed in its environment. When a sandbox has been idle for a
-            while, E2B pauses it and keeps its saved state (files, installed
-            packages and those secrets) until we resume or delete it.
+            and previewed. Your project code runs there. When a sandbox has been
+            idle for a while, E2B pauses it and keeps its saved state (files and
+            installed packages) until we resume or delete it.
           </li>
           <li>
             <Strong>Inngest</Strong>: runs the background jobs that drive the
@@ -164,10 +153,9 @@ export const privacySections: ArticleSection[] = [
           Don&apos;t put secrets or other people&apos;s personal data in
           prompts: prompts are sent to the providers above. If a prompt looks
           like it contains a key, Vibe removes it before any AI model sees it
-          and asks you to add it as a secret instead. Sandbox preview addresses
-          are not private: anyone with the link can use the preview, including
-          any database or API access you gave the project, so connect a database
-          with test data rather than production data.
+          and asks you to send the request again without it; Vibe doesn&apos;t
+          store keys. Sandbox preview addresses are not private: anyone with the
+          link can open the preview.
         </P>
       </>
     ),
@@ -202,10 +190,6 @@ export const privacySections: ArticleSection[] = [
         <li>
           Paused sandboxes: until the project is deleted, or until we clean up
           sandboxes of projects that have been idle for a long time.
-        </li>
-        <li>
-          Secrets: until you delete them, or the project or your account is
-          deleted. The audit log of secret names is deleted with the project.
         </li>
         <li>
           Safety-check records (fingerprints only): for as long as your account
@@ -249,11 +233,10 @@ export const privacySections: ArticleSection[] = [
     body: (
       <P>
         We use encrypted connections, keep access keys on the server only,
-        encrypt the secrets you add (AES-256-GCM) and remove them from
-        everything the AI sees, check project ownership on every request, and
-        limit what each provider receives. No system is perfectly secure, so we
-        can&apos;t guarantee absolute security. If a breach affects you we will
-        tell you promptly.
+        remove keys and tokens we detect from everything the AI sees, check
+        project ownership on every request, and limit what each provider
+        receives. No system is perfectly secure, so we can&apos;t guarantee
+        absolute security. If a breach affects you we will tell you promptly.
       </P>
     ),
   },

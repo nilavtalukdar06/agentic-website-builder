@@ -11,27 +11,15 @@ import {
   type TokenUsage,
 } from "@/server/billing/pricing";
 import { type BilledCall, estimateCallUsd } from "@/server/billing/run-cost";
-import {
-  describeAnswer,
-  INPUT_TIMEOUT,
-  inputRequestId,
-} from "@/server/inputs/requests";
 import type { inngest } from "../client";
-import { agentInputProvided } from "../events";
 import { createPublisher } from "../publisher";
 import type { AgentSpec } from "./agents/types";
 import { compactHistory, toolCallsFrom } from "./conversation";
-import {
-  MAX_QUESTIONS_PER_RUN,
-  type SkillProgress,
-  type ToolOutcome,
-} from "./execute-tool";
+import type { SkillProgress } from "./execute-tool";
+import { patternRedactor } from "./guardrails/redact";
 import { runModelTurn } from "./model";
 import {
-  loadRedactor,
-  openInput,
   replayOf,
-  resolveInput,
   type RunContext,
   runToolStep,
   takeCheckpoint,
@@ -44,13 +32,9 @@ type Step = GetStepTools<typeof inngest>;
 
 export const OUTPUT_LIMIT_NOTE =
   "(Your previous reply hit the output limit and was discarded. Take smaller steps: write at most a few files per createOrUpdateFiles call and keep replies short.)";
-const SEARCH_CAP_NOTE = `(You have used all ${MAX_SEARCHES_PER_RUN} web searches for this request. Write your brief from what you found.)`;
-const WRAP_UP_NOTE =
-  "(This is your last step, so don't call any tools. Reply now with your final answer in the tags your instructions describe, based on what you have found so far.)";
+const SEARCH_CAP_NOTE = `(You have used all ${MAX_SEARCHES_PER_RUN} web searches for this request. Carry on with what you found.)`;
 export const NO_WRITES_NOTE =
   "(You haven't written any files yet, so nothing has changed: the project is exactly as before. If the request needs code changes, make them now with createOrUpdateFiles, check the page compiles, then reply with the summary. If it truly needs no change, say so in the summary.)";
-const CONTINUE_NOTE =
-  "(Continue. When you have what you need, reply with your final answer in the tags your instructions describe.)";
 
 export const HANDOFF_NOTE =
   "(This run has used most of its room, so a fresh run takes over from here with the same files. Don't call any tools. Reply now with a short handoff note for yourself: what is done, what is left to do, in order, and anything you learned that matters (commands that failed, decisions you made). Don't write the task_summary yet.)";
@@ -76,17 +60,12 @@ function trackSteps(step: Step, run: RunContext): Step {
     ...step,
     run: (async (id: string, fn: () => unknown) =>
       count(await step.run(id, fn))) as unknown as Step["run"],
-    waitForEvent: (async (id: string, options: never) =>
-      count(
-        await step.waitForEvent(id, options),
-      )) as unknown as Step["waitForEvent"],
   };
 }
 
 export type Budget = { balance: number; spentUsd: number; searches: number };
 
 export type AgentRun = {
-  agent: AgentSpec["name"];
   output: string | null;
   finished: boolean;
   outOfCredits: boolean;
@@ -101,7 +80,6 @@ export type AgentRun = {
   searches: SearchRecord[];
   progress: SkillProgress;
   spentUsd: number;
-  paused: { requestId: string } | null;
   handoff: string | null;
 };
 
@@ -119,7 +97,6 @@ export function createRunContext(
       previewUrl: input.previewUrl ?? "",
     },
     pendingWrites: input.pendingWrites ?? new Map(),
-    questions: input.questions ?? 0,
     steps: input.steps ?? 0,
     stateBytes: input.stateBytes ?? 0,
   };
@@ -171,7 +148,6 @@ export async function runAgentLoop({
   installedSkills,
   budget,
   stepPrefix = spec.name,
-  maxTurns = spec.maxTurns,
   written: initialWritten = [],
   progress: initialProgress = { readAgentsMd: false, loadedSkills: [] },
   expectWrites = false,
@@ -186,7 +162,6 @@ export async function runAgentLoop({
   installedSkills: InstalledSkill[];
   budget: Budget;
   stepPrefix?: string;
-  maxTurns?: number;
   written?: string[];
   progress?: SkillProgress;
   expectWrites?: boolean;
@@ -218,15 +193,12 @@ export async function runAgentLoop({
   let output: string | null = null;
   let finished = false;
   let outOfCredits = false;
-  let paused: { requestId: string } | null = null;
   let handoff: string | null = null;
   const run = givenRun ?? createRunContext({ sandboxId: sandboxId ?? "" });
   const step = trackSteps(rawStep, run);
-  const writer = toolNames.includes("createOrUpdateFiles");
 
-  for (let turn = 0; turn < maxTurns; turn++) {
+  for (let turn = 0; ; turn++) {
     if (
-      writer &&
       turn > 0 &&
       turn % CHECKPOINT_EVERY_TURNS === 0 &&
       run.pendingWrites.size > 0
@@ -242,13 +214,9 @@ export async function runAgentLoop({
       capNoted = true;
       messages = [...messages, { role: "user", content: SEARCH_CAP_NOTE }];
     }
-    const handingOff = writer && turn > 0 && nearRunBudget(run);
-    const wrapUp =
-      handingOff || (spec.name !== "builder" && turn === maxTurns - 1);
+    const handingOff = turn > 0 && nearRunBudget(run);
     if (handingOff) {
       messages = [...messages, { role: "user", content: HANDOFF_NOTE }];
-    } else if (wrapUp) {
-      messages = [...messages, { role: "user", content: WRAP_UP_NOTE }];
     }
     const activeTools = searchesLeft
       ? undefined
@@ -258,23 +226,17 @@ export async function runAgentLoop({
       ? `${stepPrefix}-handoff-${turn}`
       : `${stepPrefix}-model-${turn}`;
     const result = await step.run(modelStep, async () => {
-      const redactor = await loadRedactor(projectId);
-      const publish = createPublisher(projectId, redactor);
-      if (turn === 0 && stepPrefix === spec.name) {
-        await publish("agent", { name: spec.name, state: "started" });
-      }
+      const publish = createPublisher(projectId, patternRedactor);
       if (turn > 0) await publish("status", { state: "thinking" });
       const turnOutput = await runModelTurn({
         messages: compactHistory(messages),
         turn,
         model,
         publish,
-        agent: spec.name,
         instructions,
         tools: spec.tools,
         activeTools,
-        toolChoice: wrapUp ? "none" : undefined,
-        redactor,
+        toolChoice: handingOff ? "none" : undefined,
       }).catch(failModelTurn);
       await publish("credits", {
         used: creditsForCost(
@@ -293,7 +255,7 @@ export async function runAgentLoop({
     const call: BilledCall = {
       generationIds: result.generationIds,
       estimatedUsd: result.estimatedUsd,
-      agent: spec.name,
+      agent: "builder",
       model: model.id,
       searches: result.searches.length,
     };
@@ -326,156 +288,31 @@ export async function runAgentLoop({
 
     if (toolCalls.length === 0) {
       output = spec.output(result.text);
-      if (
-        expectWrites &&
-        written.size === 0 &&
-        !writesNudged &&
-        turn + 1 < maxTurns
-      ) {
+      if (expectWrites && written.size === 0 && !writesNudged) {
         writesNudged = true;
         output = null;
         messages = [...messages, { role: "user", content: NO_WRITES_NOTE }];
         continue;
       }
-      if (output === null && !spec.textFallback && turn + 1 < maxTurns) {
-        messages = [...messages, { role: "user", content: CONTINUE_NOTE }];
-        continue;
-      }
-      if (output === null && spec.textFallback) {
-        output = result.text.trim() || null;
-      }
+      output ??= result.text.trim() || null;
       finished = output !== null;
       break;
     }
 
     const toolResults: ToolResultPart[] = [];
     for (const [index, toolCall] of toolCalls.entries()) {
-      if (paused) {
-        toolResults.push({
-          type: "tool-result",
-          toolCallId: toolCall.toolCallId,
-          toolName: toolCall.toolName,
-          output: {
-            type: "text",
-            value: "Not run: the request paused for the user's answer.",
-          },
-        });
-        continue;
-      }
-      const writtenPaths = [...written];
-      const before = progress;
       const base = {
-        writtenPaths,
-        agent: spec.name,
+        writtenPaths: [...written],
         tools: toolNames,
         skills,
-        progress: before,
-        questionsLeft: MAX_QUESTIONS_PER_RUN - run.questions,
+        progress,
       };
       const replay = replayOf(run);
-      const stepped = await step.run(
+      const outcome = await step.run(
         `${stepPrefix}-tool-${turn}-${index}`,
         () => runToolStep({ call: toolCall, projectId, run, base, replay }),
       );
-      if (stepped.sandbox) run.sandbox = stepped.sandbox;
-      let outcome: ToolOutcome = stepped;
-
-      if (stepped.pending) {
-        const pending = stepped.pending;
-        const requestId = inputRequestId(run.runId, stepPrefix, turn, index);
-        toolParts.push({
-          type: "input-request",
-          requestId,
-          agent: spec.name,
-          payload: pending.payload,
-        });
-        const opened = await step.run(
-          `${stepPrefix}-ask-${turn}-${index}`,
-          () =>
-            openInput({
-              id: requestId,
-              projectId,
-              agent: spec.name,
-              pending,
-              run,
-            }),
-        );
-        if (opened.checkpointed) run.pendingWrites.clear();
-        let answer = opened.immediate;
-        if (!answer) {
-          run.questions += 1;
-          const event = await step.waitForEvent(
-            `${stepPrefix}-wait-${turn}-${index}`,
-            {
-              event: agentInputProvided,
-              timeout: INPUT_TIMEOUT,
-              if: `async.data.requestId == "${requestId}"`,
-            },
-          );
-          const resolved = await step.run(
-            `${stepPrefix}-answer-${turn}-${index}`,
-            () =>
-              resolveInput({
-                id: requestId,
-                projectId,
-                payload: pending.payload,
-                timedOut: !event,
-                run,
-              }),
-          );
-          if (resolved.paused) {
-            paused = { requestId };
-            toolResults.push({
-              type: "tool-result",
-              toolCallId: toolCall.toolCallId,
-              toolName: toolCall.toolName,
-              output: { type: "text", value: "Waiting for the user's answer." },
-            });
-            continue;
-          }
-          if (resolved.sandbox) run.sandbox = resolved.sandbox;
-          answer = resolved.answer;
-        }
-        toolParts.push({
-          type: "input-answer",
-          requestId,
-          kind: pending.payload.kind,
-          answer: !answer.ok
-            ? "dismissed"
-            : pending.payload.kind === "secret"
-              ? "set"
-              : (answer.answer ?? ""),
-        });
-        const approved =
-          pending.resume &&
-          pending.payload.kind === "confirm" &&
-          answer.ok &&
-          answer.answer === "approved";
-        if (approved) {
-          const rerun = await step.run(
-            `${stepPrefix}-tool-${turn}-${index}-approved`,
-            () =>
-              runToolStep({
-                call: toolCall,
-                projectId,
-                run,
-                base,
-                approved: true,
-                replay: replayOf(run),
-              }),
-          );
-          if (rerun.sandbox) run.sandbox = rerun.sandbox;
-          outcome = {
-            ...rerun,
-            output: `${describeAnswer(pending.payload, answer)}\n${rerun.output}`,
-          };
-        } else {
-          outcome = {
-            ...stepped,
-            output: describeAnswer(pending.payload, answer),
-          };
-        }
-      }
+      if (outcome.sandbox) run.sandbox = outcome.sandbox;
 
       progress = outcome.progress;
       for (const path of outcome.writtenPaths) written.add(path);
@@ -492,7 +329,6 @@ export async function runAgentLoop({
           type: "tool",
           callId: toolCall.toolCallId,
           name: toolCall.toolName,
-          agent: spec.name,
           ...outcome.terminal,
         });
       }
@@ -504,7 +340,6 @@ export async function runAgentLoop({
       });
     }
     messages = [...messages, { role: "tool", content: toolResults }];
-    if (paused) break;
 
     if (
       budget.balance - creditsForCost(budget.spentUsd + spentUsd, creditRate) <=
@@ -516,7 +351,6 @@ export async function runAgentLoop({
   }
 
   return {
-    agent: spec.name,
     output,
     finished,
     outOfCredits,
@@ -531,22 +365,6 @@ export async function runAgentLoop({
     searches,
     progress,
     spentUsd,
-    paused,
     handoff,
   };
-}
-
-export async function publishAgentState(
-  step: Step,
-  projectId: string,
-  id: string,
-  data: {
-    name: AgentSpec["name"];
-    state: "done" | "skipped";
-    summary?: string;
-  },
-) {
-  await step.run(id, async () => {
-    await createPublisher(projectId)("agent", data);
-  });
 }

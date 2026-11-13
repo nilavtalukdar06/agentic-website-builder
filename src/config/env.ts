@@ -5,13 +5,6 @@ const postgresUrl = z
   .string()
   .regex(/^postgres(ql)?:\/\//, "Must be a postgres:// or postgresql:// URL");
 
-const encryptionKey = z
-  .string()
-  .refine(
-    (value) => Buffer.from(value, "base64").length === 32,
-    "Must be 32 random bytes, base64 encoded (openssl rand -base64 32)",
-  );
-
 export const env = createEnv({
   server: {
     NODE_ENV: z
@@ -27,7 +20,6 @@ export const env = createEnv({
     AI_GATEWAY_API_KEY: z.string().min(1),
     AI_DEFAULT_MODEL: z.string().min(1).default("anthropic/claude-sonnet-5.5"),
     AI_GUARD_MODEL: z.string().min(1).default("openai/gpt-oss-safeguard-20b"),
-    SECRETS_ENCRYPTION_KEY: encryptionKey,
     CREDITS_PER_USD: z.coerce.number().int().positive().default(100),
     CREDIT_MARKUP: z.coerce.number().min(1).default(1),
     E2B_API_KEY: z.string().min(1),
@@ -56,7 +48,6 @@ export const env = createEnv({
     AI_GATEWAY_API_KEY: process.env.AI_GATEWAY_API_KEY,
     AI_DEFAULT_MODEL: process.env.AI_DEFAULT_MODEL,
     AI_GUARD_MODEL: process.env.AI_GUARD_MODEL,
-    SECRETS_ENCRYPTION_KEY: process.env.SECRETS_ENCRYPTION_KEY,
     CREDITS_PER_USD: process.env.CREDITS_PER_USD,
     CREDIT_MARKUP: process.env.CREDIT_MARKUP,
     E2B_API_KEY: process.env.E2B_API_KEY,

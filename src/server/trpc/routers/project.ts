@@ -4,8 +4,7 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { inngest } from "@/inngest/client";
 import { agentRun } from "@/inngest/events";
-import { AGENT_MODES, DEFAULT_AGENT_MODE, toDbMode } from "@/lib/agent/modes";
-import { agentPartsSchema, inputQuestion } from "@/lib/agent/parts";
+import { parseAgentParts } from "@/lib/agent/parts";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import {
   projectNameFromPrompt,
@@ -14,7 +13,6 @@ import {
 } from "@/lib/project-name";
 import { projectFilters, projectSorts } from "@/lib/search-params/projects";
 import { findAgentModel } from "@/server/ai/gateway";
-import { storedPayloadSchema } from "@/server/inputs/requests";
 import { createTRPCRouter, protectedProcedure } from "../init";
 
 export const projectSelect = {
@@ -76,38 +74,18 @@ function isSlugConflict(error: unknown) {
     : String(target).includes("slug");
 }
 
-function openQuestion(request: { kind: string; payload: unknown } | null) {
-  if (!request) return null;
-  const stored = storedPayloadSchema.safeParse(request.payload);
-  if (!stored.success) return null;
-  return {
-    kind: stored.data.request.kind,
-    question: inputQuestion(stored.data.request),
-  };
-}
-
 function agentState(
   latest: {
     role: "USER" | "ASSISTANT";
     content: string;
     parts: unknown;
   } | null,
-  open: { kind: string; payload: unknown } | null,
 ) {
-  const question = openQuestion(open);
-  if (question) {
-    return {
-      status: "paused" as const,
-      reply: latest?.role === "ASSISTANT" ? latest.content : null,
-      question,
-    };
-  }
   if (!latest || latest.role === "USER") {
     return { status: "building" as const, reply: null };
   }
-  const parts = agentPartsSchema.safeParse(latest.parts);
-  const failed =
-    parts.success && parts.data.some((part) => part.type === "error");
+  const parts = parseAgentParts(latest.parts);
+  const failed = parts?.some((part) => part.type === "error") ?? false;
   return {
     status: failed ? ("failed" as const) : ("done" as const),
     reply: latest.content,
@@ -157,7 +135,7 @@ export const projectRouter = createTRPCRouter({
     .input(z.object({ slug: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
       const owner = { slug: input.slug, userId: ctx.session.user.id };
-      const [project, latest, open] = await Promise.all([
+      const [project, latest] = await Promise.all([
         ctx.db.project.findFirst({
           where: owner,
           select: {
@@ -176,14 +154,6 @@ export const projectRouter = createTRPCRouter({
           orderBy: { createdAt: "desc" },
           select: { role: true, content: true, parts: true },
         }),
-        ctx.db.inputRequest.findFirst({
-          where: {
-            project: owner,
-            status: { in: ["PENDING", "PAUSED"] },
-          },
-          orderBy: { createdAt: "desc" },
-          select: { kind: true, payload: true },
-        }),
       ]);
       if (!project) {
         throw new TRPCError({ code: "NOT_FOUND" });
@@ -192,7 +162,7 @@ export const projectRouter = createTRPCRouter({
       return {
         ...rest,
         prompt: messages[0]?.content ?? null,
-        agent: agentState(latest, open),
+        agent: agentState(latest),
       };
     }),
   create: protectedProcedure
@@ -200,7 +170,6 @@ export const projectRouter = createTRPCRouter({
       z.object({
         prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH),
         model: z.string().min(1).max(120).optional(),
-        mode: z.enum(AGENT_MODES).default(DEFAULT_AGENT_MODE),
         attachmentIds: z
           .array(z.string().min(1).max(64))
           .max(MAX_ATTACHMENTS)
@@ -262,7 +231,6 @@ export const projectRouter = createTRPCRouter({
                   role: "USER",
                   content: input.prompt,
                   model: model.id,
-                  mode: toDbMode(input.mode),
                   attachments: {
                     connect: attachmentIds.map((id) => ({ id })),
                   },

@@ -58,17 +58,6 @@ describe("env", () => {
     await expect(loadEnv()).rejects.toThrow(/Invalid environment variables/);
   });
 
-  test("requires a 32-byte secrets encryption key", async () => {
-    await expect(
-      loadEnv({
-        SECRETS_ENCRYPTION_KEY: Buffer.from("short").toString("base64"),
-      }),
-    ).rejects.toThrow(/Invalid environment variables/);
-    await expect(
-      loadEnv({ SECRETS_ENCRYPTION_KEY: undefined }),
-    ).rejects.toThrow(/Invalid environment variables/);
-  });
-
   test("defaults the guard model", async () => {
     const { env } = await loadEnv();
     expect(env.AI_GUARD_MODEL).toBe("openai/gpt-oss-safeguard-20b");

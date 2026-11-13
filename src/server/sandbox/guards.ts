@@ -83,26 +83,6 @@ export function checkCommand(command: string) {
   return blocked ? `Command blocked: ${blocked.reason}.` : null;
 }
 
-const reviewerCommands = [
-  /^npx\s+(--no-install\s+)?tsc(\s+(--noEmit|-p\s+\S+|--pretty(\s+false)?))*$/,
-  /^npx\s+(--no-install\s+)?eslint(\s+[\w./@*-]+)*$/,
-  /^npm\s+run\s+lint$/,
-  /^curl\s+(-[a-zA-Z]+\s+)*(--max-time\s+\d+\s+)?["']?(http:\/\/)?localhost:3000[\w./?=&%-]*["']?(\s*\|\s*head(\s+-[cn]\s*\d+)?)?$/,
-  /^(ls|cat|head|tail|wc|grep|find)\b[^><;&|`$]*(\|\s*(head|tail|wc|grep|sort)\b[^><;&|`$]*)*$/,
-];
-
-export function checkReviewerCommand(command: string) {
-  const blocked = checkCommand(command);
-  if (blocked) return blocked;
-  const trimmed = command.trim();
-  if (/\bfind\b.*\s-(exec|delete|fprint)/.test(trimmed)) {
-    return "Command blocked: the reviewer can only run read-only commands.";
-  }
-  return reviewerCommands.some((pattern) => pattern.test(trimmed))
-    ? null
-    : "Command blocked: the reviewer can only run read-only checks (npx tsc --noEmit, npx eslint, npm run lint, curl localhost:3000, ls, cat, grep, head, find).";
-}
-
 const destructivePatterns: { pattern: RegExp; summary: string }[] = [
   {
     pattern: /\bprisma\s+migrate\s+reset\b/,
