@@ -9,6 +9,7 @@ export const projectTopics = [
   "preview",
   "search",
   "guard",
+  "export",
 ] as const;
 
 export const projectChannelName = (projectId: string) => `project:${projectId}`;

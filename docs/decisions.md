@@ -348,6 +348,31 @@ _Superseded by the Phase 5 simplification (13 November 2026): kept as history._
 
 - **Project library** → only user projects appear in the sidebar, command menu and Home project views, per the owner’s scope change. No gallery or preset-site feature is planned. The E2B base image and its build infrastructure remain required for generation.
 
-## Phase 8 — durable GitHub export (planned)
+## Phase 8 — durable GitHub export (implementation below)
 
 - **Export execution** → a dedicated Inngest function, started by an authenticated tRPC mutation, with project-scoped realtime progress consumed by `useRealtime` → exporting synchronously in an API route. The owner requires sandbox resume before pushing; if resume fails, create a replacement from the latest READY Version snapshot. Publish "Pushed to GitHub" after successful push and persisted result. Keep GitHub credentials server-side under the existing secret boundary; evaluate Octokit inside the job when implementing.
+
+## Phase 8 implementation (14 November 2026)
+
+- **Prerequisite exception** → owner authorized starting Phase 8 while the Vercel preview check remains open; CI stays deferred → treating a local build as preview verification.
+- **GitHub SDK** → `@octokit/rest` 22.0.1 (MIT, Node >=20, updated July 2026) plus `@octokit/plugin-retry` 8.1.1 (MIT, updated August 2026) → typed Git Data endpoints and transient-request retries, server-only → `octokit` meta-package (unused GraphQL/App features, last updated October 2025), raw `fetch` wrappers, sandbox `git` (would expose credentials). React/Next boundaries are enforced with `server-only`.
+- **OAuth upgrade** → Better Auth's documented `linkSocial({ provider: "github", scopes })`; token decryption/refresh through its server API within each job step → decrypting Account values ourselves or returning tokens to the browser. The installed 1.7 source requires `{ accountId, userId }` for `getAccessToken`, unlike the indexed 1.6 docs' `{ providerId, userId }`; select the user's GitHub Account id server-side. Sources: [OAuth](https://www.better-auth.com/docs/concepts/oauth), [Git database guide](https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database).
+- **Job and operation state** → existing Prisma/Postgres transactions with row locks, persisted export attempts and project operation reservations; shared environment-scoped Inngest concurrency → an additional queue/lock vendor or in-memory mutexes that cannot coordinate server instances. Restore/wake reservations expire; durable export reservations do not silently expire while a push might still run.
+- **Commit idempotency** → retain repository/base commit/commit metadata on the export job and deterministic commit author/date, with non-forced ref updates → retrying a fresh push against whatever HEAD happens to be. New repositories carry a per-job description marker so a timed-out create can be safely recovered without adopting an unrelated repository.
+- **Export form and states** → existing canvas-backed shadcn Dialog/Input/ToggleGroup/Alert/Badge/Skeleton/Button patterns plus registry `Field` → a separate modal/form library or new visual system. Both visibility choices ship; private is the initial selection.
+
+- **Development database** → Neon `development` branch cloned from production, local `.env` / `.env.local` database URLs and `.neon` context aligned → migrating production during implementation. The Prisma launcher reads `.env`, so keeping only the app’s `.env.local` override would leave migration commands targeting the old branch.
+- **Durable payload budget** → reject export snapshots above 3.5 MB after JSON encoding, in addition to the existing raw snapshot limits → allowing binary base64/JSON expansion to exceed Inngest’s 4 MiB result limit after preparation. Source: [step.run results and limits](https://www.inngest.com/docs/durable-execution/primitives/step-run).
+- **Operation completion** → wait for dependency installation before releasing restore/export reservations, and fence wake pointer updates by operation id → background installs or late wake responses mutating a project after another operation starts. A replacement sandbox’s persisted URL supersedes earlier wake responses in the client.
+
+- **Legacy snapshots and npm metadata** → filter excluded agent/skills/env paths before restoring a legacy snapshot, while rejecting unsafe paths and scanning all exportable source; allow the generated `package-lock.json` up to 1 MiB under the total/payload limits → rejecting valid older versions for carrying bundled skills, or rejecting ordinary dependency lockfiles at the 200 KB source-text cap. Live verification found a 379 KB lockfile in a valid saved project.
+
+- **Safe GitHub failures** → strip provider request/error objects before durable failures; treat rate-limit responses as transient and permission failures as reconnectable → serializing credential-bearing Octokit request metadata or asking users to reconnect for a rate limit.
+
+- **Exact version preparation** → use a complete NUL-delimited source listing when removing stale files for restore/export, preserving the generated npm lockfile → applying snapshot size/file-count filters before deletion, which could leave old source outside the saved version.
+
+- **Mobile post-export actions** → an accessible outline GitHub icon link beside the existing re-export pill at narrow widths → overflowing a 320 px mobile bar with two text pills. The desktop retains the “On GitHub” label.
+
+- **Closed export modal** → mount the Base UI modal only while open, retaining status polling/realtime in the outer workspace hook → leaving a closed modal root mounted. WebKit traces showed the document intercepting otherwise-enabled workspace controls; both isolated repros passed after this lifecycle change, without forced clicks.
+
+- **Local runtime handoff** → point `INNGEST_DEV` at the owner’s existing server on port 8290, and stop only the task’s test services → stopping/restarting an independently started service or leaving the app pointed at a stopped temporary server. A full local URL is already supported by the installed SDK and existing env schema.

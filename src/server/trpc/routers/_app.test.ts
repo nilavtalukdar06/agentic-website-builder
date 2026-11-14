@@ -12,6 +12,10 @@ const workspace = vi.hoisted(() => ({
   wakeSandbox: vi.fn(),
   writeVersionToSandbox: vi.fn(),
 }));
+const exportPublish = vi.hoisted(() => vi.fn());
+vi.mock("@/inngest/publisher", () => ({
+  createPublisher: () => exportPublish,
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/inngest/client", () => ({ inngest: { send } }));
 vi.mock("@/server/sandbox/workspace", () => workspace);
@@ -78,6 +82,7 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     message: {
@@ -101,9 +106,18 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
       aggregate: vi.fn(),
     },
     guardEvent: { create: vi.fn().mockResolvedValue({}) },
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    account: {
+      findFirst: vi.fn().mockResolvedValue({ id: "a1", scope: "repo" }),
+    },
+    githubExport: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     $transaction: vi.fn(),
   };
-  Object.assign(db.project, { update: vi.fn().mockResolvedValue({}) });
   db.$transaction.mockImplementation(
     (fn: ((tx: typeof db) => unknown) | Promise<unknown>[]) =>
       Array.isArray(fn) ? Promise.all(fn) : fn(db),
@@ -251,6 +265,7 @@ describe("project.bySlug", () => {
       previewUrl: null,
       prompt: "Build a coffee site",
       building: true,
+      busy: null,
       version: 3,
     });
     expect(db.project.findFirst).toHaveBeenCalledWith(
@@ -751,6 +766,7 @@ describe("message.retry", () => {
   test("re-runs the prompt of the latest reply", async () => {
     const { ctx, db } = signedIn();
     db.message.findFirst.mockResolvedValue(reply);
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
     await expect(
       createCaller(ctx).message.retry({ messageId: "r1" }),
     ).resolves.toEqual({ messageId: "u1" });
@@ -777,6 +793,7 @@ describe("message.retry", () => {
   test("refuses an older reply or a busy project", async () => {
     const { ctx, db } = signedIn();
     db.message.findFirst.mockResolvedValue(reply);
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
     db.message.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
     await expect(
       createCaller(ctx).message.retry({ messageId: "r1" }),
@@ -860,12 +877,20 @@ describe("version.restore", () => {
         content: "Restored version 1 as version 4.",
       }),
     });
-    expect(workspace.writeVersionToSandbox).toHaveBeenCalledWith("sbx", {
-      a: "1",
-    });
+    expect(workspace.writeVersionToSandbox).toHaveBeenCalledWith(
+      "sbx",
+      { a: "1" },
+      { installInBackground: false },
+    );
     expect(ctx.db.project.update).toHaveBeenCalledWith({
       where: { id: "p1" },
-      data: { sandboxId: null, previewUrl: null, updatedAt: expect.any(Date) },
+      data: expect.objectContaining({
+        sandboxId: null,
+        previewUrl: null,
+        operationId: expect.any(String),
+        operationKind: "RESTORE",
+        updatedAt: expect.any(Date),
+      }),
     });
     expect(db.project.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
@@ -902,13 +927,29 @@ describe("version.restore", () => {
       ).resolves.toEqual({ number: 4, sandboxUpdated: false });
       expect(ctx.db.project.update).toHaveBeenCalledWith({
         where: { id: "p1" },
-        data: {
+        data: expect.objectContaining({
           sandboxId: null,
           previewUrl: null,
+          operationId: expect.any(String),
+          operationKind: "RESTORE",
           updatedAt: expect.any(Date),
-        },
+        }),
       });
-      expect(db.project.updateMany).not.toHaveBeenCalled();
+      expect(db.project.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ sandboxId: "sbx" }),
+        }),
+      );
+      expect(db.project.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "p1", operationId: expect.any(String) },
+          data: {
+            operationId: null,
+            operationKind: null,
+            operationStartedAt: null,
+          },
+        }),
+      );
       warn.mockRestore();
     },
   );
@@ -963,6 +1004,7 @@ describe("sandbox.wake", () => {
     expect(workspace.wakeSandbox).toHaveBeenCalledWith({
       projectId: "p1",
       sandboxId: "sbx",
+      operationId: expect.any(String),
     });
   });
 
@@ -981,5 +1023,209 @@ describe("sandbox.wake", () => {
       createCaller(ctx).sandbox.wake({ projectId: "p1" }),
     ).resolves.toEqual({ status: "empty", previewUrl: null });
     expect(workspace.wakeSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("GitHub exports", () => {
+  function exportContext() {
+    const result = signedIn();
+    result.db.project.findFirst.mockResolvedValue({
+      id: "p1",
+      githubRepo: null,
+    });
+    result.db.version.findFirst.mockResolvedValue({ id: "v1", number: 2 });
+    result.db.githubExport.create.mockResolvedValue({ id: "e1", attempt: 1 });
+    return result;
+  }
+  test("rejects credentials in repository names before persistence or enqueue", async () => {
+    const { ctx, db } = exportContext();
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: `ghp_${"x1Y2z3".repeat(6)}`,
+        private: true,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.githubExport.create).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+  test("enqueue failure releases only an unclaimed reservation with a safe error", async () => {
+    const { ctx, db } = exportContext();
+    send.mockRejectedValue(new Error("provider credential must not persist"));
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: "demo",
+        private: true,
+      }),
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+    expect(db.githubExport.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "e1", runId: null }),
+        data: {
+          status: "FAILED",
+          errorCode: "FAILED",
+          error: "Couldn't export this project. Retry the export.",
+        },
+      }),
+    );
+    expect(db.project.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", operationId: "e1" },
+      data: {
+        operationId: null,
+        operationKind: null,
+        operationStartedAt: null,
+      },
+    });
+  });
+  test("validates ownership, saves frozen inputs and reserves before enqueue", async () => {
+    const { ctx, db } = exportContext();
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: "demo",
+        private: true,
+      }),
+    ).resolves.toEqual({ id: "e1" });
+    expect(db.githubExport.create).toHaveBeenCalledWith({
+      data: {
+        projectId: "p1",
+        userId: "u1",
+        versionId: "v1",
+        versionNumber: 2,
+        name: "demo",
+        private: true,
+      },
+    });
+    expect(db.project.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          operationId: "e1",
+          operationKind: "EXPORT",
+        }),
+      }),
+    );
+    expect(send.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.project.update.mock.invocationCallOrder[0],
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "github/export",
+        data: {
+          projectId: "p1",
+          userId: "u1",
+          exportId: "e1",
+          attempt: 1,
+          requestId: "e1:1",
+        },
+      }),
+    );
+    db.project.findFirst.mockResolvedValue(null);
+    await expect(
+      createCaller(ctx).github.status({ projectId: "other" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+  test.each(["EXPORT", "RESTORE", "WAKE"])(
+    "refuses export and new prompts during %s",
+    async (kind) => {
+      const { ctx, db } = exportContext();
+      db.project.findFirst.mockResolvedValue({
+        id: "p1",
+        operationId: "op",
+        operationKind: kind,
+        operationStartedAt: new Date(),
+      });
+      await expect(
+        createCaller(ctx).github.start({
+          projectId: "p1",
+          name: "demo",
+          private: true,
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      await expect(
+        createCaller(ctx).message.send({
+          projectId: "p1",
+          prompt: "Build a footer",
+          attachmentIds: [],
+        }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(db.githubExport.create).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+  test("requires a complete version, no active generation, and the selected repository scope", async () => {
+    const { ctx, db } = exportContext();
+    db.version.findFirst.mockResolvedValue(null);
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: "demo",
+        private: true,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    db.version.findFirst.mockResolvedValue({ id: "v1", number: 1 });
+    db.message.count.mockResolvedValue(1);
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: "demo",
+        private: true,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    db.message.count.mockResolvedValue(0);
+    db.account.findFirst.mockResolvedValue({ id: "a1", scope: "public_repo" });
+    await expect(
+      createCaller(ctx).github.start({
+        projectId: "p1",
+        name: "demo",
+        private: true,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(send).not.toHaveBeenCalled();
+  });
+  test("retry retains frozen repository/commit inputs and uses a new delivery key", async () => {
+    const { ctx, db } = exportContext();
+    db.githubExport.findFirst.mockResolvedValue({
+      id: "e1",
+      private: true,
+      status: "FAILED",
+      repository: "owner/demo",
+      commitSha: "sha",
+      attempt: 1,
+    });
+    db.githubExport.update.mockResolvedValue({ id: "e1", attempt: 2 });
+    await createCaller(ctx).github.retry({ projectId: "p1", exportId: "e1" });
+    expect(db.githubExport.update).toHaveBeenCalledWith({
+      where: { id: "e1" },
+      data: {
+        attempt: { increment: 1 },
+        status: "QUEUED",
+        runId: null,
+        error: null,
+        errorCode: null,
+      },
+    });
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ requestId: "e1:2", attempt: 2 }),
+      }),
+    );
+  });
+  test("status returns only repository permissions and safe persisted job fields", async () => {
+    const { ctx, db } = exportContext();
+    db.account.findFirst.mockResolvedValue({ id: "a1", scope: "public_repo" });
+    await expect(
+      createCaller(ctx).github.status({ projectId: "p1" }),
+    ).resolves.toMatchObject({
+      permissions: { public: true, private: false },
+      job: null,
+      busy: null,
+    });
+    expect(db.githubExport.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: "p1", userId: "u1" },
+        select: expect.not.objectContaining({ accessToken: true }),
+      }),
+    );
   });
 });

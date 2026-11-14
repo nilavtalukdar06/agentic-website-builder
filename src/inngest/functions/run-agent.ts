@@ -106,7 +106,7 @@ export const runAgent = inngest.createFunction(
     triggers: [agentRun],
     concurrency: [
       { key: "event.data.userId", limit: 1 },
-      { key: "event.data.projectId", limit: 1 },
+      { key: "event.data.projectId", limit: 1, scope: "env" },
     ],
     retries: 2,
     onFailure: async ({ event, error, step }) => {

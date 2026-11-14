@@ -6,6 +6,10 @@ import { pendingPromptWhere, requestStop } from "@/inngest/agent/prompt-state";
 import { parseAgentParts } from "@/lib/agent/parts";
 import { orderConversation } from "@/lib/agent/conversation-order";
 import { attachmentUrl } from "@/server/storage/attachments";
+import {
+  assertProjectAvailable,
+  projectTransaction,
+} from "@/server/projects/operations";
 import { createTRPCRouter, protectedProcedure } from "../init";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
@@ -124,20 +128,29 @@ export const messageRouter = createTRPCRouter({
         userId,
         input,
       );
-      const message = await ctx.db.message.create({
-        data: {
-          projectId: input.projectId,
-          role: "USER",
-          content: input.prompt,
-          model: model.id,
-          attachments: { connect: attachmentIds.map((id) => ({ id })) },
+      const message = await projectTransaction(
+        ctx.db,
+        input.projectId,
+        userId,
+        async (tx, project) => {
+          assertProjectAvailable(project);
+          const message = await tx.message.create({
+            data: {
+              projectId: input.projectId,
+              role: "USER",
+              content: input.prompt,
+              model: model.id,
+              attachments: { connect: attachmentIds.map((id) => ({ id })) },
+            },
+            select: { id: true },
+          });
+          await tx.project.update({
+            where: { id: input.projectId },
+            data: { updatedAt: new Date() },
+          });
+          return message;
         },
-        select: { id: true },
-      });
-      await ctx.db.project.update({
-        where: { id: input.projectId },
-        data: { updatedAt: new Date() },
-      });
+      );
       await startAgent({
         projectId: input.projectId,
         userId,
@@ -164,45 +177,57 @@ export const messageRouter = createTRPCRouter({
         select: { projectId: true, replyToId: true, createdAt: true },
       });
       if (!reply) throw new TRPCError({ code: "NOT_FOUND" });
-      const [newer, pending] = await Promise.all([
-        ctx.db.message.count({
-          where: {
-            projectId: reply.projectId,
-            role: "ASSISTANT",
-            createdAt: { gt: reply.createdAt },
-          },
-        }),
-        ctx.db.message.count({
-          where: { projectId: reply.projectId, ...pendingPromptWhere },
-        }),
-      ]);
-      if (!reply.replyToId || newer > 0) {
+      const retryMessageId = reply.replyToId;
+      if (!retryMessageId)
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Only the latest reply can be retried.",
         });
-      }
-      if (pending > 0) {
-        throw new TRPCError({
-          code: "CONFLICT",
-          message: "Wait for the current request to finish, or stop it.",
-        });
-      }
-      await ctx.db.$transaction([
-        ctx.db.message.updateMany({
-          where: { replyToId: reply.replyToId },
-          data: { replyToId: null },
-        }),
-        ctx.db.message.update({
-          where: { id: reply.replyToId },
-          data: { startedAt: null, stopRequestedAt: null },
-        }),
-      ]);
+      await projectTransaction(
+        ctx.db,
+        reply.projectId,
+        userId,
+        async (tx, project) => {
+          assertProjectAvailable(project);
+          const [newer, pending] = await Promise.all([
+            tx.message.count({
+              where: {
+                projectId: reply.projectId,
+                role: "ASSISTANT",
+                createdAt: { gt: reply.createdAt },
+              },
+            }),
+            tx.message.count({
+              where: { projectId: reply.projectId, ...pendingPromptWhere },
+            }),
+          ]);
+          if (!reply.replyToId || newer > 0) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "Only the latest reply can be retried.",
+            });
+          }
+          if (pending > 0) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "Wait for the current request to finish, or stop it.",
+            });
+          }
+          await tx.message.updateMany({
+            where: { replyToId: reply.replyToId },
+            data: { replyToId: null },
+          });
+          await tx.message.update({
+            where: { id: reply.replyToId },
+            data: { startedAt: null, stopRequestedAt: null },
+          });
+        },
+      );
       await startAgent({
         projectId: reply.projectId,
         userId,
-        messageId: reply.replyToId,
+        messageId: retryMessageId,
       });
-      return { messageId: reply.replyToId };
+      return { messageId: retryMessageId };
     }),
 });

@@ -53,6 +53,7 @@ export type SendInput = {
 
 type ComposerProps = {
   building: boolean;
+  blocked?: boolean;
   stopping: boolean;
   creditsUsed: number | null;
   initialModel: string | null;
@@ -62,6 +63,7 @@ type ComposerProps = {
 
 function Composer({
   building,
+  blocked = false,
   stopping,
   creditsUsed,
   initialModel,
@@ -94,7 +96,7 @@ function Composer({
               key={suggestion}
               suggestion={suggestion}
               onClick={applySuggestion}
-              disabled={sending}
+              disabled={sending || blocked}
               variant="accent"
               size="chip"
               className="px-2.5"
@@ -120,7 +122,7 @@ function Composer({
         }
         onSubmit={async ({ text, files }) => {
           const prompt = text.trim();
-          if (!prompt || sending) return;
+          if (!prompt || sending || blocked) return;
           if (files.length > 0 && selectedModel && !selectedModel.vision) {
             toast.add({
               type: "error",
@@ -171,7 +173,7 @@ function Composer({
             }
             maxLength={4000}
             className="min-h-14"
-            disabled={sending}
+            disabled={sending || blocked}
           />
         </PromptInputBody>
         <PromptInputFooter>
@@ -198,13 +200,13 @@ function Composer({
                 value={modelId}
                 onChange={setModelId}
                 needsVision={hasImages}
-                disabled={sending}
+                disabled={sending || blocked}
               />
             )}
           </PromptInputTools>
           <PromptInputTools>
             <PromptInputSpeechButton
-              disabled={sending}
+              disabled={sending || blocked}
               onSpeechError={(message) =>
                 toast.add({
                   type: "error",
@@ -226,7 +228,7 @@ function Composer({
                 className="rounded-full"
                 aria-label={building ? "Queue message" : "Send message"}
                 status={sending ? "submitted" : undefined}
-                disabled={empty || sending}
+                disabled={empty || sending || blocked}
               >
                 {sending ? undefined : <ArrowUpIcon />}
               </PromptInputSubmit>

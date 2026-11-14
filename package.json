@@ -32,6 +32,8 @@
     "@aws-sdk/s3-request-presigner": "^3.1166.0",
     "@base-ui/react": "^1.9.0",
     "@neondatabase/serverless": "^1.2.0",
+    "@octokit/plugin-retry": "8.1.1",
+    "@octokit/rest": "22.0.1",
     "@prisma/adapter-neon": "7.10.1",
     "@prisma/client": "7.10.1",
     "@radix-ui/react-use-controllable-state": "^1.3.0",

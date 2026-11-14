@@ -10,6 +10,7 @@ import {
 } from "@/lib/project-name";
 import { projectFilters, projectSorts } from "@/lib/search-params/projects";
 import { createTRPCRouter, protectedProcedure } from "../init";
+import { projectOperation } from "@/server/projects/operations";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
 export const projectSelect = {
@@ -107,6 +108,9 @@ export const projectRouter = createTRPCRouter({
           select: {
             ...projectSelect,
             previewUrl: true,
+            operationId: true,
+            operationKind: true,
+            operationStartedAt: true,
             messages: {
               where: { role: "USER" },
               orderBy: { createdAt: "asc" },
@@ -127,11 +131,22 @@ export const projectRouter = createTRPCRouter({
       if (!project) {
         throw new TRPCError({ code: "NOT_FOUND" });
       }
-      const { messages, ...rest } = project;
+      const {
+        messages,
+        operationId,
+        operationKind,
+        operationStartedAt,
+        ...rest
+      } = project;
       return {
         ...rest,
         prompt: messages[0]?.content ?? null,
         building: pending > 0,
+        busy: projectOperation({
+          operationId,
+          operationKind,
+          operationStartedAt,
+        }),
         version: latest?.number ?? null,
       };
     }),

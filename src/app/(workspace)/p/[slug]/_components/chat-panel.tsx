@@ -25,12 +25,14 @@ export function ChatPanel({
   building,
   live,
   onViewCode,
+  operationBusy = false,
 }: {
   projectId: string;
   projectName: string;
   building: boolean;
   live: LiveRun;
   onViewCode?: (number: number) => void;
+  operationBusy?: boolean;
 }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
@@ -76,7 +78,7 @@ export function ChatPanel({
   const lastReply = messages.findLast(
     (message) => message.role === "ASSISTANT",
   );
-  const busy = building || restore.isPending;
+  const busy = building || restore.isPending || operationBusy;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -116,6 +118,7 @@ export function ChatPanel({
       <div className="p-2 pt-0">
         <ChatComposer
           building={building}
+          blocked={operationBusy}
           stopping={stopping || stop.isPending}
           creditsUsed={live.credits}
           initialModel={

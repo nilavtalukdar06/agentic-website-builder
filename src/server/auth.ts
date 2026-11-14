@@ -10,6 +10,7 @@ export const auth = betterAuth({
   appName: "Vibe",
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
+  disabledPaths: ["/get-access-token", "/refresh-token"],
   database: prismaAdapter(db, { provider: "postgresql" }),
   socialProviders: {
     github: {

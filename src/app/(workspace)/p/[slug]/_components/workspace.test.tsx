@@ -4,10 +4,7 @@ import { ThemeProvider } from "@/components/theme/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatHeader } from "@/components/workspace/chat-header";
 import { MobileBar } from "@/components/workspace/mobile-bar";
-import {
-  EXPORT_SOON,
-  WorkspaceToolbar,
-} from "@/components/workspace/workspace-toolbar";
+import { WorkspaceToolbar } from "@/components/workspace/workspace-toolbar";
 import { ChatMessage, type ConversationMessage } from "./chat-message";
 import { pickDefaultFile } from "./code-panel";
 import { overlaySteps } from "./preview-panel";
@@ -217,13 +214,18 @@ describe("WorkspaceToolbar", () => {
   function renderToolbar(
     props: Partial<React.ComponentProps<typeof WorkspaceToolbar>> = {},
   ) {
-    const handlers = { onViewChange: vi.fn(), onReload: vi.fn() };
+    const handlers = {
+      onViewChange: vi.fn(),
+      onReload: vi.fn(),
+      onExport: vi.fn(),
+    };
     render(
       <ThemeProvider>
         <TooltipProvider>
           <WorkspaceToolbar
             view="preview"
             onViewChange={handlers.onViewChange}
+            onExport={handlers.onExport}
             preview={{
               url: "https://3000-sbx.e2b.app/",
               device: "desktop",
@@ -249,8 +251,9 @@ describe("WorkspaceToolbar", () => {
     expect(handlers.onReload).toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: /Export to GitHub/ }),
-    ).toHaveAttribute("aria-disabled", "true");
-    expect(EXPORT_SOON).toMatch(/later update/);
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /Export to GitHub/ }));
+    expect(handlers.onExport).toHaveBeenCalled();
   });
 
   test("code view hides the preview controls and the tab switches views", () => {
@@ -262,11 +265,22 @@ describe("WorkspaceToolbar", () => {
 });
 
 describe("MobileBar", () => {
+  test("keeps an accessible repository link and re-export after a push", () => {
+    const handlers = renderBar({ githubRepo: "owner/demo" });
+    expect(screen.getByRole("link", { name: "On GitHub" })).toHaveAttribute(
+      "href",
+      "https://github.com/owner/demo",
+    );
+    expect(screen.getByText("On GitHub")).toHaveClass("sr-only");
+    fireEvent.click(screen.getByRole("button", { name: "Re-export" }));
+    expect(handlers.onExport).toHaveBeenCalled();
+  });
   function renderBar(
     props: Partial<React.ComponentProps<typeof MobileBar>> = {},
   ) {
     const handlers = {
       onOpenChat: vi.fn(),
+      onExport: vi.fn(),
       onReload: vi.fn(),
     };
     render(
@@ -282,14 +296,12 @@ describe("MobileBar", () => {
     return handlers;
   }
 
-  test("opens the chat and keeps Export disabled until Phase 8", () => {
+  test("opens chat and the shared export flow", () => {
     const handlers = renderBar();
     fireEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(handlers.onOpenChat).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Export/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    fireEvent.click(screen.getByRole("button", { name: /Export/ }));
+    expect(handlers.onExport).toHaveBeenCalled();
   });
 
   test("links to the repository once it is exported", () => {

@@ -88,13 +88,22 @@ export const termsSections: ArticleSection[] = [
           anyone&apos;s rights.
         </P>
         <P>
-          <Strong>Keys and services you use.</Strong> Vibe doesn&apos;t store
-          API keys, tokens or database connection strings, and the agent
-          won&apos;t ask for them. If you add one to your exported project
+          <Strong>Keys and services you use.</Strong> Vibe rejects API keys,
+          tokens and database connection strings pasted into prompts, and the
+          agent won&apos;t ask for them. If you add one to your exported project
           yourself, you are responsible for it: that you are allowed to use it,
           the costs it runs up with its provider, and the data it reaches.
           Preview links are not private, so anyone with a preview link can open
           the app.
+        </P>
+        <P>
+          <Strong>GitHub export.</Strong> When you connect GitHub for export,
+          you authorize Vibe to create a repository and push project files using
+          the repository access you grant. We keep your GitHub OAuth credentials
+          encrypted on our servers. Review your code and the public or private
+          visibility before exporting. GitHub&apos;s terms apply to the exported
+          repository; deleting the project in Vibe does not delete that
+          repository.
         </P>
       </>
     ),

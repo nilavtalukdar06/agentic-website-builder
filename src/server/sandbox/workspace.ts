@@ -9,7 +9,6 @@ import {
   ensureAgentInstructions,
   ensureDevOrigins,
   getOrCreateSandbox,
-  pickSnapshotEntries,
   PREVIEW_PORT,
   previewUrlFor,
   snapshotListCommand,
@@ -25,9 +24,11 @@ function quote(value: string) {
 export async function wakeSandbox({
   projectId,
   sandboxId,
+  operationId,
 }: {
   projectId: string;
   sandboxId: string | null;
+  operationId?: string;
 }) {
   const { sandbox, created } = await getOrCreateSandbox(sandboxId, () =>
     loadRestoreFiles(db, { projectId }),
@@ -35,10 +36,18 @@ export async function wakeSandbox({
   await ensureDevOrigins(sandbox);
   if (created) await ensureAgentInstructions(sandbox);
   const previewUrl = previewUrlFor(sandbox);
-  await db.project.update({
-    where: { id: projectId },
-    data: { sandboxId: sandbox.sandboxId, previewUrl },
-  });
+  if (operationId) {
+    const updated = await db.project.updateMany({
+      where: { id: projectId, operationId },
+      data: { sandboxId: sandbox.sandboxId, previewUrl },
+    });
+    if (!updated.count) throw new Error("The preview operation expired.");
+  } else {
+    await db.project.update({
+      where: { id: projectId },
+      data: { sandboxId: sandbox.sandboxId, previewUrl },
+    });
+  }
   await sandbox.commands.run(
     `curl -fsS -o /dev/null --max-time ${WAKE_WAIT_SECONDS} http://localhost:${PREVIEW_PORT}/`,
     { cwd: APP_DIR, timeoutMs: (WAKE_WAIT_SECONDS + 10) * 1000 },
@@ -47,14 +56,22 @@ export async function wakeSandbox({
 }
 
 export function staleFiles(listing: string, files: SnapshotFiles) {
-  return pickSnapshotEntries(listing)
-    .map((entry) => entry.path)
-    .filter((path) => !(path in files));
+  return listing
+    .split(listing.includes("\0") ? "\0" : "\n")
+    .flatMap((record) => {
+      const tab = record.indexOf("\t");
+      if (tab < 0) return [];
+      const path = record.slice(tab + 1).replace(/^\.\//, "");
+      return path && path !== "package-lock.json" && !(path in files)
+        ? [path]
+        : [];
+    });
 }
 
 export async function writeVersionToSandbox(
   sandboxId: string,
   files: SnapshotFiles,
+  { installInBackground = true } = {},
 ) {
   let sandbox;
   try {
@@ -63,10 +80,13 @@ export async function writeVersionToSandbox(
     if (isSandboxGone(error)) return { written: false };
     throw error;
   }
-  const listing = await sandbox.commands.run(snapshotListCommand(), {
-    cwd: APP_DIR,
-    timeoutMs: 60_000,
-  });
+  const listing = await sandbox.commands.run(
+    snapshotListCommand({ complete: true }),
+    {
+      cwd: APP_DIR,
+      timeoutMs: 60_000,
+    },
+  );
   const stale = staleFiles(listing.stdout, files);
   if (stale.length > 0) {
     await sandbox.commands.run(`rm -f -- ${stale.map(quote).join(" ")}`, {
@@ -91,7 +111,8 @@ export async function writeVersionToSandbox(
   if (files["package.json"] && files["package.json"] !== previousManifest) {
     await sandbox.commands.run("npm install --no-audit --no-fund", {
       cwd: APP_DIR,
-      background: true,
+      background: installInBackground,
+      timeoutMs: 4 * 60_000,
     });
   }
   return { written: true };

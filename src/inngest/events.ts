@@ -24,3 +24,13 @@ export const agentRun = eventType("agent/run", {
       .optional(),
   }),
 });
+
+export const githubExport = eventType("github/export", {
+  schema: z.object({
+    exportId: z.string().min(1),
+    projectId: z.string().min(1),
+    userId: z.string().min(1),
+    attempt: z.number().int().positive(),
+    requestId: z.string().min(1),
+  }),
+});

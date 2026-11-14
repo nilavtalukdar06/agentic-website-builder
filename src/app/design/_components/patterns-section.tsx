@@ -8,6 +8,15 @@ import { AppSidebar } from "@/components/shell/app-sidebar";
 import { RecentProjectsMenu } from "@/components/shell/recent-projects-menu";
 import { Button } from "@/components/ui/button";
 import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -37,6 +46,7 @@ import { DesignSection, Example } from "./section";
 export function PatternsSection() {
   const [view, setView] = useState<WorkspaceView>("preview");
   const [device, setDevice] = useState<PreviewDevice>("desktop");
+  const [visibility, setVisibility] = useState(["private"]);
   const preview = {
     url: "https://3000-sbx8f2a1c.e2b.app/",
     device,
@@ -49,6 +59,39 @@ export function PatternsSection() {
       id="patterns"
       description="Our compositions, built only from the tokens and components above."
     >
+      <Example
+        title="Export fields"
+        description="Workspace export dialog, using the existing form and segmented control patterns."
+      >
+        <FieldGroup className="max-w-sm">
+          <Field>
+            <FieldLabel htmlFor="design-export-name">
+              Repository name
+            </FieldLabel>
+            <Input id="design-export-name" defaultValue="ember-and-oak" />
+          </Field>
+          <Field>
+            <FieldTitle id="design-export-visibility">Visibility</FieldTitle>
+            <ToggleGroup
+              aria-labelledby="design-export-visibility"
+              variant="outline"
+              value={visibility}
+              onValueChange={(value) => {
+                if (value.length) setVisibility(value);
+              }}
+            >
+              <ToggleGroupItem value="private">Private</ToggleGroupItem>
+              <ToggleGroupItem value="public">Public</ToggleGroupItem>
+            </ToggleGroup>
+            <FieldDescription>
+              {visibility[0] === "private"
+                ? "Only people with access to your repository can see its code."
+                : "Anyone can see this repository and its code."}
+            </FieldDescription>
+          </Field>
+          <Button variant="accent">Create repository and export</Button>
+        </FieldGroup>
+      </Example>
       <Example title="ProjectCard" description="Home and Projects grids.">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {sampleProjects.slice(0, 3).map((project) => (
@@ -122,6 +165,7 @@ export function PatternsSection() {
                   onViewChange={setView}
                   preview={preview}
                   building={false}
+                  onExport={() => {}}
                   user={sampleUser}
                 />
               </div>
@@ -135,6 +179,7 @@ export function PatternsSection() {
                   view="code"
                   building={false}
                   githubRepo="nilav/lumen-analytics"
+                  onExport={() => {}}
                   onExpandChat={() => {}}
                   user={sampleUser}
                 />

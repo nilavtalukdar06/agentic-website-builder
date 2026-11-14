@@ -9,9 +9,8 @@ import {
   RotateCwIcon,
   SunIcon,
 } from "lucide-react";
-import { GithubIcon } from "@/components/icons/github-icon";
 import { useTheme } from "@/components/theme/theme-provider";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,13 +22,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import {
   VersionHistoryItems,
   type VersionHistoryItemsProps,
 } from "./chat-header";
-import { EXPORT_SOON } from "./workspace-toolbar";
+import { ExportAction } from "./export-action";
 
 export type MobileBarProps = {
   onOpenChat: () => void;
@@ -38,6 +36,9 @@ export type MobileBarProps = {
   reloadDisabled?: boolean;
   building: boolean;
   githubRepo?: string | null;
+  onExport?: () => void;
+  exporting?: boolean;
+  exportDisabled?: boolean;
   version?: number | null;
   versions?: VersionHistoryItemsProps["versions"];
   onRestoreVersion?: (number: number) => void;
@@ -52,6 +53,9 @@ export function MobileBar({
   reloadDisabled,
   building,
   githubRepo,
+  onExport,
+  exporting,
+  exportDisabled,
   version,
   versions,
   onRestoreVersion,
@@ -131,32 +135,13 @@ export function MobileBar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {githubRepo ? (
-          <a
-            href={`https://github.com/${githubRepo}`}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(
-              buttonVariants({ variant: "outline", size: "chip" }),
-              "rounded-full",
-            )}
-          >
-            <GithubIcon data-icon="inline-start" />
-            On GitHub
-          </a>
-        ) : (
-          <Button
-            variant="accent"
-            size="chip"
-            className="px-2.5 has-data-[icon=inline-start]:pl-2.5"
-            disabled={building}
-            aria-disabled
-            onClick={() => toast.add({ title: EXPORT_SOON })}
-          >
-            <GithubIcon data-icon="inline-start" />
-            Export
-          </Button>
-        )}
+        <ExportAction
+          compact
+          githubRepo={githubRepo}
+          onExport={onExport}
+          exporting={exporting}
+          disabled={building || exportDisabled}
+        />
       </div>
     </div>
   );

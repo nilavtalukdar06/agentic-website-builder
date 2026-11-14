@@ -1,4 +1,5 @@
 import {
+  parseAsBoolean,
   parseAsInteger,
   parseAsString,
   parseAsStringLiteral,
@@ -11,6 +12,8 @@ export const previewDevices = ["desktop", "tablet", "mobile"] as const;
 export type PreviewDevice = (typeof previewDevices)[number];
 
 export const workspaceSearchParams = {
+  export: parseAsBoolean.withDefault(false),
+  exportError: parseAsBoolean.withDefault(false),
   view: parseAsStringLiteral(workspaceViews).withDefault("preview"),
   file: parseAsString,
   device: parseAsStringLiteral(previewDevices).withDefault("desktop"),

@@ -101,6 +101,36 @@ export async function createTestSession(name: string) {
         await sql`SELECT "sandboxId", "previewUrl" FROM "Project" WHERE id = ${projectId} AND "userId" = ${userId}`;
       return row as { sandboxId: string | null; previewUrl: string | null };
     },
+    addGithubAccount: async (scope = "repo") => {
+      await sql`INSERT INTO "account" (id, "accountId", "providerId", "userId", scope, "createdAt", "updatedAt") VALUES (${randomUUID()}, ${randomUUID()}, 'github', ${userId}, ${scope}, now(), now())`;
+    },
+    exportState: async (projectId: string) => {
+      const [row] =
+        await sql`SELECT id, status, attempt, private, name, "versionId", "versionNumber", repository, "commitSha" FROM "GithubExport" WHERE "projectId" = ${projectId} AND "userId" = ${userId} ORDER BY "createdAt" DESC LIMIT 1`;
+      return row as
+        | {
+            id: string;
+            status: string;
+            attempt: number;
+            private: boolean;
+            name: string;
+            versionId: string;
+            versionNumber: number;
+            repository: string | null;
+            commitSha: string | null;
+          }
+        | undefined;
+    },
+    setExportStatus: async (
+      exportId: string,
+      status: "RECOVERING" | "PREPARING" | "PUSHING" | "SUCCEEDED" | "FAILED",
+    ) => {
+      await sql`UPDATE "GithubExport" SET status = ${status}::"GithubExportStatus", repository = 'vibe-test/demo', "repositoryUrl" = 'https://github.com/vibe-test/demo', "commitSha" = '0123456789abcdef', error = CASE WHEN ${status} = 'FAILED' THEN 'GitHub is temporarily unavailable. Retry the export.' ELSE NULL END, "updatedAt" = now() WHERE id = ${exportId} AND "userId" = ${userId}`;
+      if (status === "SUCCEEDED")
+        await sql`UPDATE "Project" SET "githubRepo" = 'vibe-test/demo', "operationId" = NULL, "operationKind" = NULL, "operationStartedAt" = NULL WHERE "operationId" = ${exportId} AND "userId" = ${userId}`;
+      if (status === "FAILED")
+        await sql`UPDATE "Project" SET "operationId" = NULL, "operationKind" = NULL, "operationStartedAt" = NULL WHERE "operationId" = ${exportId} AND "userId" = ${userId}`;
+    },
     cleanup: async () => {
       await sql`DELETE FROM "GuardEvent" WHERE "userId" = ${userId}`;
       await sql`DELETE FROM "user" WHERE id = ${userId}`;

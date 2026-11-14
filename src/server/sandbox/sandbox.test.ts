@@ -195,3 +195,57 @@ describe("ensureAgentInstructions", () => {
     await expect(ensureAgentInstructions(sandbox as never)).resolves.toBe(true);
   });
 });
+
+describe("strict export snapshots", () => {
+  test("includes npm lockfiles and refuses oversized files before reading", async () => {
+    const { snapshotForExport, SnapshotLimitError } = await import("./sandbox");
+    const sandbox = {
+      commands: {
+        run: vi.fn().mockResolvedValue({ stdout: "10\t./package-lock.json\0" }),
+      },
+      files: { read: vi.fn().mockResolvedValue("lock") },
+    };
+    await expect(snapshotForExport(sandbox as never)).resolves.toEqual({
+      "package-lock.json": "lock",
+    });
+    expect(sandbox.commands.run.mock.calls[0][0]).not.toContain(
+      "! -name 'package-lock.json'",
+    );
+    sandbox.files.read.mockClear();
+    sandbox.commands.run.mockResolvedValue({ stdout: "200001\t./big.ts\0" });
+    await expect(snapshotForExport(sandbox as never)).rejects.toBeInstanceOf(
+      SnapshotLimitError,
+    );
+    expect(sandbox.files.read).not.toHaveBeenCalled();
+    sandbox.commands.run.mockResolvedValue({
+      stdout: "379046\t./package-lock.json\0",
+    });
+    await expect(snapshotForExport(sandbox as never)).resolves.toEqual({
+      "package-lock.json": "lock",
+    });
+    sandbox.commands.run.mockResolvedValue({
+      stdout: "1048577\t./package-lock.json\0",
+    });
+    await expect(snapshotForExport(sandbox as never)).rejects.toBeInstanceOf(
+      SnapshotLimitError,
+    );
+  });
+  test.each([
+    Array.from({ length: 401 }, (_, i) => `1\t./f${i}.ts`).join("\0"),
+    Array.from({ length: 5 }, (_, i) => `1000000\t./f${i}.png`).join("\0"),
+  ])(
+    "refuses incomplete file-count or total-size snapshots",
+    async (stdout) => {
+      const { snapshotForExport, SnapshotLimitError } =
+        await import("./sandbox");
+      const read = vi.fn();
+      await expect(
+        snapshotForExport({
+          commands: { run: vi.fn().mockResolvedValue({ stdout }) },
+          files: { read },
+        } as never),
+      ).rejects.toBeInstanceOf(SnapshotLimitError);
+      expect(read).not.toHaveBeenCalled();
+    },
+  );
+});

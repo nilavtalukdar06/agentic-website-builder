@@ -16,6 +16,8 @@ import { WorkspaceToolbar } from "@/components/workspace/workspace-toolbar";
 import { workspaceSearchParams } from "@/lib/search-params/workspace";
 import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
+import { ExportDialog } from "./export-dialog";
+import { useGithubExport } from "./use-github-export";
 import { ChatPanel } from "./chat-panel";
 import { CodePanel } from "./code-panel";
 import { PreviewPanel } from "./preview-panel";
@@ -33,16 +35,19 @@ export function Workspace({
   const trpc = useTRPC();
   const { data: project } = useSuspenseQuery({
     ...trpc.project.bySlug.queryOptions({ slug }),
-    refetchInterval: (query) => (query.state.data?.building ? 5000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.building || query.state.data?.busy ? 5000 : false,
   });
   const recent = useQuery(trpc.project.recent.queryOptions({ limit: 8 }));
   const versions = useQuery(
     trpc.version.list.queryOptions({ projectId: project.id }),
   );
   const restore = useRestoreVersion();
-  const [{ view: urlView, device }, setParams] = useQueryStates(
-    workspaceSearchParams,
-  );
+  const githubExport = useGithubExport(project.id);
+  const [
+    { view: urlView, device, export: exportOpen, exportError },
+    setParams,
+  ] = useQueryStates(workspaceSearchParams);
   const [chatOpen, setChatOpen] = useState(true);
   const [mobilePane, setMobilePane] = useState<"chat" | "main">("chat");
   const isMobile = useIsMobile();
@@ -57,9 +62,32 @@ export function Workspace({
     version: project.version,
     savedPreviewUrl: project.previewUrl,
     livePreviewUrl: previewUrl,
+    busy: !!project.busy,
   });
 
-  const restoreDisabled = project.building || restore.isPending;
+  const restoreDisabled =
+    project.building ||
+    restore.isPending ||
+    !!project.busy ||
+    githubExport.active;
+  const exportDialog = (
+    <ExportDialog
+      open={exportOpen}
+      onOpenChange={(open) =>
+        void setParams({ export: open, exportError: false })
+      }
+      projectId={project.id}
+      slug={slug}
+      building={project.building}
+      oauthError={exportError}
+      state={githubExport}
+    />
+  );
+  const exportProps = {
+    onExport: () => void setParams({ export: true, exportError: false }),
+    exporting: githubExport.active || githubExport.pending,
+    exportDisabled: !!project.busy,
+  };
   const restoreVersion = (number: number) =>
     restore.mutate({ projectId: project.id, number });
   const chatHeader = (
@@ -83,6 +111,7 @@ export function Workspace({
       projectName={project.name}
       building={project.building}
       live={live}
+      operationBusy={!!project.busy || githubExport.active}
       onViewCode={isMobile ? undefined : viewCode}
     />
   );
@@ -136,6 +165,7 @@ export function Workspace({
         }}
         building={project.building}
         githubRepo={project.githubRepo}
+        {...exportProps}
         onExpandChat={chatOpen ? undefined : () => setChatOpen(true)}
         user={user}
       />
@@ -146,6 +176,7 @@ export function Workspace({
   if (isMobile) {
     return (
       <div className="flex h-svh flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+        {exportDialog}
         <div
           className={cn(
             "flex min-h-0 flex-1 flex-col",
@@ -169,6 +200,7 @@ export function Workspace({
             reloadDisabled={!preview.url || project.building}
             building={project.building}
             githubRepo={project.githubRepo}
+            {...exportProps}
             version={project.version}
             versions={versions.data}
             onRestoreVersion={restoreVersion}
@@ -181,6 +213,7 @@ export function Workspace({
 
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+      {exportDialog}
       {chatOpen ? (
         <ResizablePanelGroup orientation="horizontal" className="min-h-0">
           <ResizablePanel defaultSize="30%" minSize="22%" maxSize="50%">

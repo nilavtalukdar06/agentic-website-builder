@@ -5,7 +5,9 @@ import { Inngest, type Realtime } from "inngest";
 import { projectChannel } from "../src/inngest/channels";
 import { createTestSession } from "./fixtures/session";
 
-const devServer = "http://localhost:8288";
+const devServer = process.env.INNGEST_DEV?.startsWith("http")
+  ? process.env.INNGEST_DEV
+  : "http://localhost:8288";
 
 async function devServerUp() {
   try {

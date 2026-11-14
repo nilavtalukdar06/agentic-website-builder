@@ -32,6 +32,21 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum ProjectOperation {
+  EXPORT
+  RESTORE
+  WAKE
+}
+
+enum GithubExportStatus {
+  QUEUED
+  RECOVERING
+  PREPARING
+  PUSHING
+  SUCCEEDED
+  FAILED
+}
+
 model User {
   id            String       @id
   name          String
@@ -96,21 +111,52 @@ model Verification {
 }
 
 model Project {
-  id          String    @id @default(cuid())
-  slug        String    @unique
-  name        String
-  description String?
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sandboxId   String?
-  previewUrl  String?
-  githubRepo  String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  messages    Message[]
-  versions    Version[]
+  id                 String            @id @default(cuid())
+  slug               String            @unique
+  name               String
+  description        String?
+  userId             String
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sandboxId          String?
+  previewUrl         String?
+  githubRepo         String?
+  operationId        String?
+  operationKind      ProjectOperation?
+  operationStartedAt DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  messages           Message[]
+  versions           Version[]
+  githubExports      GithubExport[]
 
   @@index([userId, updatedAt])
+}
+
+model GithubExport {
+  id            String             @id @default(cuid())
+  projectId     String
+  project       Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId        String
+  versionId     String
+  versionNumber Int
+  name          String
+  private       Boolean
+  status        GithubExportStatus @default(QUEUED)
+  attempt       Int                @default(1)
+  runId         String?
+  repository    String?
+  repositoryUrl String?
+  branch        String?
+  baseCommit    String?
+  commitSha     String?
+  error         String?
+  errorCode     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  completedAt   DateTime?
+
+  @@index([projectId, createdAt])
+  @@index([userId, status])
 }
 
 model Message {

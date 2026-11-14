@@ -2,6 +2,7 @@ import { realtime } from "inngest";
 import { z } from "zod";
 import { fileVerbs, sourceSchema, taskItemSchema } from "@/lib/agent/parts";
 import { projectChannelName } from "@/lib/agent/realtime-topics";
+import { exportEventSchema } from "@/lib/github-export";
 
 export const agentStatuses = [
   "thinking",
@@ -17,6 +18,7 @@ export { projectTopics } from "@/lib/agent/realtime-topics";
 export const projectChannel = realtime.channel({
   name: ({ projectId }: { projectId: string }) => projectChannelName(projectId),
   topics: {
+    export: { schema: exportEventSchema },
     status: {
       schema: z.object({
         state: z.enum(agentStatuses),

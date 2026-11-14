@@ -490,10 +490,7 @@ test.describe("on a phone", () => {
     await expect(
       page.getByText("Build a landing page for Ember & Oak"),
     ).toBeHidden();
-    await expect(page.getByRole("button", { name: /Export/ })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    await expect(page.getByRole("button", { name: /Export/ })).toBeEnabled();
 
     await page.getByRole("button", { name: "More actions" }).click();
     await expect(

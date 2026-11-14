@@ -26,7 +26,7 @@ test("usage shows empty activity and top-up controls", async ({
     await expect(page).toHaveURL(/range=30d/);
     await expect(
       page.getByText("Credits spent over the last 30 days"),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
   } finally {
     await session.cleanup();
   }

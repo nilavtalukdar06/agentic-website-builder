@@ -1,5 +1,6 @@
 import { createCallerFactory, createTRPCRouter } from "../init";
 import { creditsRouter } from "./credits";
+import { githubRouter } from "./github";
 import { messageRouter } from "./message";
 import { modelRouter } from "./model";
 import { projectRouter } from "./project";
@@ -9,6 +10,7 @@ import { versionRouter } from "./version";
 export const appRouter = createTRPCRouter({
   project: projectRouter,
   credits: creditsRouter,
+  github: githubRouter,
   model: modelRouter,
   message: messageRouter,
   version: versionRouter,

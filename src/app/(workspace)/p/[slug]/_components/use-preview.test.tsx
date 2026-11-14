@@ -51,3 +51,37 @@ describe("usePreview", () => {
     expect(result.current.reloadKey).toBeGreaterThan(0);
   });
 });
+
+test("does not wake while exporting, and a replacement URL supersedes a stale wake result", async () => {
+  const client = new QueryClient({
+    defaultOptions: { mutations: { retry: false } },
+  });
+  wake
+    .mockReset()
+    .mockResolvedValue({ status: "ready", previewUrl: "https://old.e2b.app" });
+  const { result, rerender } = renderHook(
+    ({ busy, savedPreviewUrl }) =>
+      usePreview({
+        projectId: "p1",
+        building: false,
+        version: 2,
+        livePreviewUrl: null,
+        busy,
+        savedPreviewUrl,
+      }),
+    {
+      initialProps: { busy: true, savedPreviewUrl: "https://old.e2b.app" },
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
+  );
+  expect(wake).not.toHaveBeenCalled();
+  rerender({ busy: false, savedPreviewUrl: "https://old.e2b.app" });
+  await waitFor(() => expect(wake).toHaveBeenCalledOnce());
+  await waitFor(() => expect(result.current.waking).toBe(false));
+  rerender({ busy: true, savedPreviewUrl: "https://old.e2b.app" });
+  rerender({ busy: false, savedPreviewUrl: "https://replacement.e2b.app" });
+  expect(result.current.url).toBe("https://replacement.e2b.app");
+  expect(wake).toHaveBeenCalledOnce();
+});

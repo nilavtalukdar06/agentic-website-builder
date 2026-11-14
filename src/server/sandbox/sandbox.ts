@@ -124,15 +124,72 @@ function quote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function snapshotListCommand() {
+export function snapshotListCommand({ complete = false } = {}) {
   const prune = [
     ...SNAPSHOT_EXCLUDED_DIRS.map((dir) => `-name ${quote(dir)}`),
     ...SNAPSHOT_EXCLUDED_PATHS.map((path) => `-path ${quote(path)}`),
   ].join(" -o ");
-  const skip = SNAPSHOT_EXCLUDED_FILES.map(
-    (name) => `! -name ${quote(name)}`,
-  ).join(" ");
-  return `find . \\( ${prune} \\) -prune -o -type f ${skip} -size -${SNAPSHOT_MAX_BINARY_BYTES + 1}c -printf '%s\\t%p\\n'`;
+  const skip = SNAPSHOT_EXCLUDED_FILES.filter(
+    (name) => !complete || name !== "package-lock.json",
+  )
+    .map((name) => `! -name ${quote(name)}`)
+    .join(" ");
+  const size = complete ? "" : ` -size -${SNAPSHOT_MAX_BINARY_BYTES + 1}c`;
+  return `find . \\( ${prune} \\) -prune -o -type f ${skip}${size} -printf '%s\\t%p${complete ? "\\0" : "\\n"}'`;
+}
+
+export class SnapshotLimitError extends Error {}
+
+export async function snapshotForExport(
+  sandbox: Pick<Sandbox, "commands" | "files">,
+) {
+  const listing = await sandbox.commands.run(
+    snapshotListCommand({ complete: true }),
+    { cwd: APP_DIR, timeoutMs: 60_000 },
+  );
+  const records = listing.stdout.split("\0").filter(Boolean);
+  if (records.length > SNAPSHOT_MAX_FILES) throw new SnapshotLimitError();
+  const entries = records
+    .map((record) => {
+      const tab = record.indexOf("\t");
+      const size = Number(record.slice(0, tab));
+      const path = record.slice(tab + 1).replace(/^\.\//, "");
+      const binary = isBinaryPath(path);
+      const limit =
+        binary || path === "package-lock.json"
+          ? SNAPSHOT_MAX_BINARY_BYTES
+          : SNAPSHOT_MAX_FILE_BYTES;
+      if (
+        tab < 0 ||
+        !path ||
+        !Number.isSafeInteger(size) ||
+        size < 0 ||
+        size > limit
+      )
+        throw new SnapshotLimitError();
+      return { path, size, binary };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+  if (
+    entries.reduce((sum, entry) => sum + entry.size, 0) >
+    SNAPSHOT_MAX_TOTAL_BYTES
+  )
+    throw new SnapshotLimitError();
+  const files: SnapshotFiles = {};
+  for (let index = 0; index < entries.length; index += 16) {
+    await Promise.all(
+      entries.slice(index, index + 16).map(async ({ path, binary }) => {
+        const absolute = `${APP_DIR}/${path}`;
+        files[path] = binary
+          ? encodeBinaryFile(
+              path,
+              await sandbox.files.read(absolute, { format: "bytes" }),
+            )
+          : await sandbox.files.read(absolute);
+      }),
+    );
+  }
+  return files;
 }
 
 export type SnapshotEntry = { path: string; size: number; binary: boolean };

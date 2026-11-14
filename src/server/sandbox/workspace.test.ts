@@ -23,6 +23,17 @@ beforeEach(() => {
 });
 
 describe("staleFiles", () => {
+  test("removes stale oversized files beyond the snapshot cap and retains the npm lockfile", () => {
+    const listing = [
+      ...Array.from({ length: 401 }, (_, i) => `200000\t./old-${i}.tsx`),
+      "379046\t./package-lock.json",
+      "10\t./app/page.tsx",
+    ].join("\0");
+    const stale = staleFiles(listing, { "app/page.tsx": "current" });
+    expect(stale).toHaveLength(401);
+    expect(stale).toContain("old-400.tsx");
+    expect(stale).not.toContain("package-lock.json");
+  });
   test("lists source files that the restored version doesn't have", () => {
     const listing = [
       "120\t./app/page.tsx",

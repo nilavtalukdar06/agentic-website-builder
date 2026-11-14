@@ -22,6 +22,7 @@ export function useRefreshWorkspace() {
         queryClient.invalidateQueries(trpc.message.pathFilter()),
         queryClient.invalidateQueries(trpc.version.pathFilter()),
         queryClient.invalidateQueries(trpc.credits.pathFilter()),
+        queryClient.invalidateQueries(trpc.github.pathFilter()),
       ]),
     [queryClient, trpc],
   );
@@ -31,7 +32,7 @@ export function useProjectRealtime(projectId: string, building: boolean) {
   const refresh = useRefreshWorkspace();
   const realtime = useRealtime({
     channel: projectChannelName(projectId),
-    topics: projectTopics,
+    topics: projectTopics.filter((topic) => topic !== "export"),
     token: () => fetchRealtimeToken(projectId),
     key: projectId,
     enabled: building,

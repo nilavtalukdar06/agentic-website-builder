@@ -10,10 +10,9 @@ import {
   SmartphoneIcon,
   TabletIcon,
 } from "lucide-react";
-import { GithubIcon } from "@/components/icons/github-icon";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,7 +29,6 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "@/components/ui/toast";
 import {
   Tooltip,
   TooltipContent,
@@ -40,9 +38,9 @@ import { initials } from "@/lib/initials";
 import type { PreviewDevice } from "@/lib/search-params/workspace";
 import { cn } from "@/lib/utils";
 
-export type WorkspaceView = "preview" | "code";
+import { ExportAction } from "./export-action";
 
-export const EXPORT_SOON = "Export to GitHub is coming in a later update";
+export type WorkspaceView = "preview" | "code";
 
 const viewTabs = [
   { value: "preview", label: "Preview", icon: EyeIcon },
@@ -70,6 +68,8 @@ export type WorkspaceToolbarProps = {
   building: boolean;
   githubRepo?: string | null;
   onExport?: () => void;
+  exporting?: boolean;
+  exportDisabled?: boolean;
   onExpandChat?: () => void;
   user: { name: string; image?: string | null };
   className?: string;
@@ -177,23 +177,12 @@ export function WorkspaceToolbar({
   building,
   githubRepo,
   onExport,
+  exporting,
+  exportDisabled,
   onExpandChat,
   user,
   className,
 }: WorkspaceToolbarProps) {
-  const exportButton = (
-    <Button
-      variant="accent"
-      size="chip"
-      disabled={building}
-      aria-disabled={!onExport || undefined}
-      onClick={onExport ?? (() => toast.add({ title: EXPORT_SOON }))}
-    >
-      <GithubIcon data-icon="inline-start" />
-      Export to GitHub
-    </Button>
-  );
-
   return (
     <div
       data-slot="workspace-toolbar"
@@ -249,29 +238,12 @@ export function WorkspaceToolbar({
       )}
       <div className="flex items-center gap-2">
         <ThemeToggle />
-        {githubRepo ? (
-          <a
-            href={`https://github.com/${githubRepo}`}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(
-              buttonVariants({ variant: "outline", size: "chip" }),
-              "rounded-full",
-            )}
-          >
-            <GithubIcon data-icon="inline-start" />
-            On GitHub
-          </a>
-        ) : onExport ? (
-          exportButton
-        ) : (
-          <Tooltip>
-            <TooltipTrigger render={<span tabIndex={0} />}>
-              {exportButton}
-            </TooltipTrigger>
-            <TooltipContent>{EXPORT_SOON}</TooltipContent>
-          </Tooltip>
-        )}
+        <ExportAction
+          githubRepo={githubRepo}
+          onExport={onExport}
+          exporting={exporting}
+          disabled={building || exportDisabled}
+        />
         <Avatar className="size-8">
           {user.image ? <AvatarImage src={user.image} alt={user.name} /> : null}
           <AvatarFallback>{initials(user.name)}</AvatarFallback>

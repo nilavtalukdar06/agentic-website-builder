@@ -45,6 +45,13 @@ export const privacySections: ArticleSection[] = [
             stopped it.
           </li>
           <li>
+            <Strong>GitHub exports.</Strong> Repository name and visibility, the
+            saved version you selected, export progress, retry attempts, errors,
+            repository address and commit identifier. GitHub OAuth credentials
+            are encrypted in our account database and used only on our servers.
+            They are never placed in your project sandbox.
+          </li>
+          <li>
             <Strong>Safety checks.</Strong> When a prompt, a reply or the
             agent&apos;s code is blocked or flagged, we record the time, the
             kind of check, the result and a one-way fingerprint (hash) of the
@@ -105,6 +112,10 @@ export const privacySections: ArticleSection[] = [
         <UL>
           <li>
             <Strong>GitHub</Strong>: sign-in, and repository creation when you
+            export. Exporting sends your project files to GitHub. Public
+            repositories can be read by anyone; private repositories follow
+            GitHub&apos;s access controls. We request public repository access,
+            or public and private repository access, when you connect for
             export.
           </li>
           <li>
@@ -139,7 +150,10 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             <Strong>Inngest</Strong>: runs the background jobs that drive the
-            agent.
+            agent and GitHub exports. Export jobs process a scanned copy of
+            project files and repository/commit metadata so interrupted work can
+            resume. GitHub credentials are not included in job results or
+            realtime messages.
           </li>
           <li>
             <Strong>Stripe</Strong>: processes top-up payments.
@@ -155,8 +169,8 @@ export const privacySections: ArticleSection[] = [
           prompts: prompts are sent to the providers above. If a prompt looks
           like it contains a key, Vibe rejects it before storing the message or
           sending it to an AI model, and asks you to send the request again
-          without it. Vibe doesn&apos;t store keys. Sandbox preview addresses
-          are not private: anyone with the link can open the preview.
+          without it. We do not store keys pasted into prompts. Sandbox preview
+          addresses are not private: anyone with the link can open the preview.
         </P>
       </>
     ),
@@ -188,6 +202,11 @@ export const privacySections: ArticleSection[] = [
           accounting or legal reasons.
         </li>
         <li>Sessions: until they expire or you sign out.</li>
+        <li>
+          Export records: for as long as the project exists. Deleting a project
+          in Vibe does not delete its exported GitHub repository. You can revoke
+          Vibe&apos;s GitHub access in your GitHub application settings.
+        </li>
         <li>
           Paused sandboxes: until the project is deleted, or until we clean up
           sandboxes of projects that have been idle for a long time.

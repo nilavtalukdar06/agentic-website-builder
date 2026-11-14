@@ -36,3 +36,13 @@ The sandbox template is built once with `bun run sandbox:build`; paste the print
 
 - `/` home with the prompt box and recent projects, `/projects`, `/usage`, `/p/[slug]` the workspace (signed in)
 - `/sign-in`, `/terms`, `/privacy`, `/design` (public; `/design` is the design system)
+
+## GitHub export
+
+From a completed workspace, choose **Export to GitHub**. Connect GitHub to grant public repository access, or public and private access for private repositories. Review the repository name and visibility, then start the export. Private is selected initially. Re-export pushes the latest saved complete version to the same repository.
+
+Exports run as durable Inngest jobs: they resume or recover the sandbox, prepare and scan files, create the repository, and push without putting GitHub credentials in the sandbox. Progress survives reloads; failed jobs can be retried. A repository link appears after the result is persisted. Both desktop and mobile use the same flow.
+
+Apply `bun run db:deploy` to your development branch before running this version. Local development currently targets the Neon `development` branch; production has not been migrated. Keep local database URL overrides aligned in `.env` and `.env.local`, since Prisma and Next.js load their environments differently. No additional GitHub environment variables are needed.
+
+If the local Inngest server uses a port other than 8288, set `INNGEST_DEV` to its full address (for example `http://localhost:8290`). The local configuration currently points to the existing server on port 8290.
