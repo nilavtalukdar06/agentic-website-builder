@@ -231,8 +231,15 @@ export const termsSections: ArticleSection[] = [
         <P>
           Sandboxes are paused when idle and resumed when you come back. A
           paused sandbox can still be lost, in which case it is recreated from
-          your latest saved version. Download or export anything you can&apos;t
-          afford to lose.
+          your latest saved version. Sandboxes of projects you haven&apos;t
+          opened for 14 days are deleted; your saved versions stay, and the
+          preview is rebuilt the next time you open the project. Download or
+          export anything you can&apos;t afford to lose.
+        </P>
+        <P>
+          To keep Vibe fast and fair, we limit how often you can start builds,
+          create projects, upload images and start checkouts. If you reach a
+          limit, wait a few minutes and try again.
         </P>
       </>
     ),

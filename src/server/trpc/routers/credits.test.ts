@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TRPCContext } from "../init";
 import { createCallerFactory } from "../init";
 const createCheckout = vi.hoisted(() =>
@@ -10,10 +10,16 @@ vi.mock("@/server/billing/payments", () => ({
 }));
 import { creditsRouter } from "./credits";
 const caller = createCallerFactory(creditsRouter);
+const upsert = vi.hoisted(() => vi.fn());
+const db = { throttleWindow: { upsert } };
 const signedIn = caller({
   session: { user: { id: "user_1" } },
-  db: {},
-} as TRPCContext);
+  db,
+} as unknown as TRPCContext);
+beforeEach(() => {
+  upsert.mockReset().mockResolvedValue({ count: 1 });
+  createCheckout.mockClear();
+});
 describe("checkout", () => {
   it.each([0, 4, 101, 5.5, -1])("rejects amount %s", async (amount) => {
     await expect(signedIn.checkout({ amount })).rejects.toMatchObject({
@@ -25,6 +31,16 @@ describe("checkout", () => {
       url: "https://checkout.stripe.com/test",
     });
     expect(createCheckout).toHaveBeenCalledWith(2500, "user_1");
+  });
+  it("is rate limited per user", async () => {
+    upsert.mockResolvedValue({ count: 11 });
+    await expect(signedIn.checkout({ amount: 5 })).rejects.toMatchObject({
+      code: "TOO_MANY_REQUESTS",
+    });
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(upsert.mock.calls[0][0].where.key_windowStart.key).toBe(
+      "checkout:user_1",
+    );
   });
   it("requires a session", async () => {
     await expect(

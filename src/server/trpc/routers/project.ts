@@ -9,7 +9,12 @@ import {
   withSlugSuffix,
 } from "@/lib/project-name";
 import { projectFilters, projectSorts } from "@/lib/search-params/projects";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  rateLimitedProcedure,
+} from "../init";
 import { projectOperation } from "@/server/projects/operations";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
@@ -150,7 +155,7 @@ export const projectRouter = createTRPCRouter({
         version: latest?.number ?? null,
       };
     }),
-  create: protectedProcedure
+  create: rateLimitedProcedure(rateRules.projectCreate, rateRules.agent)
     .input(z.object(promptFields))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;

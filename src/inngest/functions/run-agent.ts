@@ -17,6 +17,7 @@ import {
 } from "@/server/billing/pricing";
 import { type BilledCall, resolveRunCost } from "@/server/billing/run-cost";
 import { db } from "@/server/db";
+import { recordSandboxEvent } from "@/server/ops/sandbox-events";
 import { APP_DIR } from "@/server/sandbox/guards";
 import { connectOrRecover, recoverSandbox } from "@/server/sandbox/recover";
 import {
@@ -300,12 +301,18 @@ export const runAgent = inngest.createFunction(
     const search = !restricted && mentionsSite(setup.prompt);
 
     const sandbox = await step.run("sandbox", async () => {
-      const result = await getOrCreateSandbox(setup.sandboxId, () =>
-        loadRestoreFiles(db, {
-          projectId,
-          chainId: resume ? chainId : null,
-        }),
-      );
+      const result = await getOrCreateSandbox(
+        setup.sandboxId,
+        () =>
+          loadRestoreFiles(db, {
+            projectId,
+            chainId: resume ? chainId : null,
+          }),
+        (outcome) => recordSandboxEvent(db, projectId, outcome),
+      ).catch(async (error: unknown) => {
+        await recordSandboxEvent(db, projectId, "FAILED");
+        throw error;
+      });
       await ensureDevOrigins(result.sandbox);
       await ensureAgentInstructions(result.sandbox);
       const skills = await listInstalledSkills(result.sandbox);

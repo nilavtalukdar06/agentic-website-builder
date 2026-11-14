@@ -11,7 +11,12 @@ import {
   projectOperation,
   projectTransaction,
 } from "@/server/projects/operations";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  rateLimitedProcedure,
+} from "../init";
 
 const projectId = z.string().min(1).max(64);
 const jobSelect = {
@@ -85,7 +90,7 @@ export const githubRouter = createTRPCRouter({
         },
       };
     }),
-  start: protectedProcedure
+  start: rateLimitedProcedure(rateRules.githubExport)
     .input(z.object({ projectId, name: repositoryName, private: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
       if ((await detectSecrets(input.name)).length)
@@ -159,7 +164,7 @@ export const githubRouter = createTRPCRouter({
       });
       return { id: job.id };
     }),
-  retry: protectedProcedure
+  retry: rateLimitedProcedure(rateRules.githubExport)
     .input(z.object({ projectId, exportId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;

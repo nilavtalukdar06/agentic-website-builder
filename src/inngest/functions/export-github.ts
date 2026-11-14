@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "@/server/db";
+import { recordSandboxEvent } from "@/server/ops/sandbox-events";
 import { githubClient } from "@/server/github/client";
 import { ExportError, githubRequest } from "@/server/github/errors";
 import {
@@ -73,6 +74,7 @@ export const exportGithub = inngest.createFunction(
         const { sandbox } = await getOrCreateSandbox(
           project.sandboxId,
           async () => files,
+          (outcome) => recordSandboxEvent(db, job.projectId, outcome),
         );
         const restored = await writeVersionToSandbox(sandbox.sandboxId, files, {
           installInBackground: false,

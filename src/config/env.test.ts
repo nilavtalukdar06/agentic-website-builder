@@ -30,6 +30,19 @@ describe("env", () => {
     expect(env.DIRECT_URL).toBe(valid.DIRECT_URL);
   });
 
+  test("accepts an optional alert webhook and rejects a malformed one", async () => {
+    const { env } = await loadEnv({
+      ALERT_WEBHOOK_URL: "https://hooks.example.com/abc",
+    });
+    expect(env.ALERT_WEBHOOK_URL).toBe("https://hooks.example.com/abc");
+    await expect(loadEnv({ ALERT_WEBHOOK_URL: "not a url" })).rejects.toThrow(
+      /Invalid environment variables/,
+    );
+    expect(
+      (await loadEnv({ ALERT_WEBHOOK_URL: "" })).env.ALERT_WEBHOOK_URL,
+    ).toBeUndefined();
+  });
+
   test("defaults the app URL when it is empty", async () => {
     const { env } = await loadEnv();
     expect(env.NEXT_PUBLIC_APP_URL).toBe("http://localhost:3000");

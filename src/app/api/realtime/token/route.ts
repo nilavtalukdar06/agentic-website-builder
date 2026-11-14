@@ -3,6 +3,7 @@ import { z } from "zod";
 import { projectChannel, projectTopics } from "@/inngest/channels";
 import { inngest } from "@/inngest/client";
 import { db } from "@/server/db";
+import { consumeRateLimit, rateRules } from "@/server/rate-limit";
 import { getSession } from "@/server/session";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +14,21 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const decision = await consumeRateLimit(
+    db,
+    rateRules.realtimeToken,
+    session.user.id,
+  );
+  if (!decision.allowed) {
+    return Response.json(
+      { error: "Too many requests" },
+      {
+        status: 429,
+        headers: { "Retry-After": String(decision.retryAfterSeconds) },
+      },
+    );
   }
 
   const parsed = body.safeParse(await request.json().catch(() => null));

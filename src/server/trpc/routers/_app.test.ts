@@ -106,6 +106,7 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
       aggregate: vi.fn(),
     },
     guardEvent: { create: vi.fn().mockResolvedValue({}) },
+    throttleWindow: { upsert: vi.fn().mockResolvedValue({ count: 1 }) },
     $queryRaw: vi.fn().mockResolvedValue([]),
     account: {
       findFirst: vi.fn().mockResolvedValue({ id: "a1", scope: "repo" }),

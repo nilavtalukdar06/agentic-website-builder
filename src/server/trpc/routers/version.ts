@@ -11,7 +11,12 @@ import {
   clearOperation,
   projectTransaction,
 } from "@/server/projects/operations";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  rateLimitedProcedure,
+} from "../init";
 
 const projectId = z.string().min(1).max(64);
 const versionNumber = z.number().int().positive();
@@ -82,7 +87,7 @@ export const versionRouter = createTRPCRouter({
         ),
       };
     }),
-  restore: protectedProcedure
+  restore: rateLimitedProcedure(rateRules.restore)
     .input(z.object({ projectId, number: versionNumber }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;

@@ -52,15 +52,12 @@ export function UserMenu({ user }: { user: ShellUser }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={
-          <SidebarMenuButton
-            size="lg"
-            className="border bg-card"
-            aria-label="Account menu"
-          />
-        }
+        render={<SidebarMenuButton size="lg" className="border bg-card" />}
       >
-        <Avatar className="size-8 group-data-[collapsible=icon]:size-7.5">
+        <Avatar
+          aria-hidden
+          className="size-8 group-data-[collapsible=icon]:size-7.5"
+        >
           {user.image ? <AvatarImage src={user.image} alt="" /> : null}
           <AvatarFallback>{initials(user.name)}</AvatarFallback>
         </Avatar>
@@ -71,6 +68,7 @@ export function UserMenu({ user }: { user: ShellUser }) {
           </span>
         </span>
         <ChevronsUpDownIcon className="ml-auto text-muted-foreground" />
+        <span className="sr-only">Account menu</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="min-w-56">
         <DropdownMenuGroup>

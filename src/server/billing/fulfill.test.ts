@@ -45,6 +45,14 @@ describe("checkout fulfillment", () => {
       }),
     );
   });
+  it("waits long enough for a cold database connection", async () => {
+    const { db } = database();
+    await fulfillCheckout(db, session);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 15_000,
+      timeout: 30_000,
+    });
+  });
   it.each([
     { payment_status: "unpaid" },
     { amount_total: 499 },

@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AuthSession } from "@/server/auth";
+import { enforceRateLimit, type RateRule } from "@/server/rate-limit";
 
 export type Session = AuthSession;
 
@@ -24,3 +25,11 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   }
   return next({ ctx: { ...ctx, session: ctx.session } });
 });
+
+export const rateLimitedProcedure = (...rules: RateRule[]) =>
+  protectedProcedure.use(async ({ ctx, next }) => {
+    for (const rule of rules) {
+      await enforceRateLimit(ctx.db, rule, ctx.session.user.id);
+    }
+    return next();
+  });

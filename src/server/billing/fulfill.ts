@@ -23,35 +23,38 @@ export async function fulfillCheckout(
   ) {
     throw new Error("Invalid paid checkout session");
   }
-  await db.$transaction(async (tx) => {
-    const payment = await tx.payment.upsert({
-      where: { providerRef: session.id },
-      create: {
-        userId,
-        provider: "stripe",
-        providerRef: session.id,
-        amountCents: amount,
-        currency: "usd",
-        status: "SUCCEEDED",
-      },
-      update: {},
-    });
-    if (
-      payment.userId !== userId ||
-      payment.amountCents !== amount ||
-      payment.status !== "SUCCEEDED"
-    )
-      throw new Error("Payment does not match checkout");
-    await tx.creditLedger.upsert({
-      where: { paymentId: payment.id },
-      create: {
-        userId,
-        delta: credits,
-        reason: "TOPUP",
-        paymentId: payment.id,
-        meta: { amountCents: amount, currency: "usd" },
-      },
-      update: {},
-    });
-  });
+  await db.$transaction(
+    async (tx) => {
+      const payment = await tx.payment.upsert({
+        where: { providerRef: session.id },
+        create: {
+          userId,
+          provider: "stripe",
+          providerRef: session.id,
+          amountCents: amount,
+          currency: "usd",
+          status: "SUCCEEDED",
+        },
+        update: {},
+      });
+      if (
+        payment.userId !== userId ||
+        payment.amountCents !== amount ||
+        payment.status !== "SUCCEEDED"
+      )
+        throw new Error("Payment does not match checkout");
+      await tx.creditLedger.upsert({
+        where: { paymentId: payment.id },
+        create: {
+          userId,
+          delta: credits,
+          reason: "TOPUP",
+          paymentId: payment.id,
+          meta: { amountCents: amount, currency: "usd" },
+        },
+        update: {},
+      });
+    },
+    { maxWait: 15_000, timeout: 30_000 },
+  );
 }

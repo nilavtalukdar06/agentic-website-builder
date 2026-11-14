@@ -10,7 +10,12 @@ import {
   assertProjectAvailable,
   projectTransaction,
 } from "@/server/projects/operations";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  rateLimitedProcedure,
+} from "../init";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
 const projectId = z.string().min(1).max(64);
@@ -118,7 +123,7 @@ export const messageRouter = createTRPCRouter({
         latestVersion: latestVersion || null,
       };
     }),
-  send: protectedProcedure
+  send: rateLimitedProcedure(rateRules.agent)
     .input(z.object({ projectId, ...promptFields }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;
@@ -164,7 +169,7 @@ export const messageRouter = createTRPCRouter({
       await ownedProject(ctx.db, input.projectId, ctx.session.user.id);
       return requestStop(ctx.db, input.projectId);
     }),
-  retry: protectedProcedure
+  retry: rateLimitedProcedure(rateRules.agent)
     .input(z.object({ messageId }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.session.user.id;

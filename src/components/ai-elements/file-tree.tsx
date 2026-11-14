@@ -174,6 +174,7 @@ export const FileTreeFolder = ({
             <CollapsibleTrigger
               render={
                 <button
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${name}`}
                   className="flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0"
                   type="button"
                 />
@@ -202,7 +203,9 @@ export const FileTreeFolder = ({
             </button>
           </div>
           <CollapsibleContent>
-            <div className="ml-4 border-l pl-2">{children}</div>
+            <div className="ml-4 border-l pl-2" role="group">
+              {children}
+            </div>
           </CollapsibleContent>
         </div>
       </Collapsible>

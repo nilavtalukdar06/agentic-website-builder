@@ -8,6 +8,11 @@ const handler = (req: Request) =>
     req,
     router: appRouter,
     createContext: () => createTRPCContext(),
+    onError: ({ error, path }) => {
+      if (error.code === "INTERNAL_SERVER_ERROR") {
+        console.error(`[trpc] ${path ?? "unknown"} failed`, error);
+      }
+    },
   });
 
 export const maxDuration = 300;

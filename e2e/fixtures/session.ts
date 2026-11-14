@@ -131,7 +131,42 @@ export async function createTestSession(name: string) {
       if (status === "FAILED")
         await sql`UPDATE "Project" SET "operationId" = NULL, "operationKind" = NULL, "operationStartedAt" = NULL WHERE "operationId" = ${exportId} AND "userId" = ${userId}`;
     },
+    projectIdBySlug: async (slug: string) => {
+      const [row] =
+        await sql`SELECT id FROM "Project" WHERE slug = ${slug} AND "userId" = ${userId}`;
+      return row?.id as string | undefined;
+    },
+    firstMessageId: async (projectId: string) => {
+      const [row] =
+        await sql`SELECT id FROM "Message" WHERE "projectId" = ${projectId} AND role = 'USER' ORDER BY "createdAt" ASC LIMIT 1`;
+      return row.id as string;
+    },
+    setPreview: async (projectId: string, previewUrl: string) => {
+      await sql`UPDATE "Project" SET "previewUrl" = ${previewUrl}, "sandboxId" = 'e2e-sandbox' WHERE id = ${projectId} AND "userId" = ${userId}`;
+    },
+    creditBalance: async () => {
+      const [row] =
+        await sql`SELECT COALESCE(SUM(delta), 0)::int AS total FROM "CreditLedger" WHERE "userId" = ${userId}`;
+      return row.total as number;
+    },
+    paymentCount: async () => {
+      const [row] =
+        await sql`SELECT count(*)::int AS count FROM "Payment" WHERE "userId" = ${userId}`;
+      return row.count as number;
+    },
+    exhaustRateLimit: async (rule: string, windowMs: number) => {
+      const current = Math.floor(Date.now() / windowMs) * windowMs;
+      for (const start of [current, current + windowMs]) {
+        await sql`
+          INSERT INTO "ThrottleWindow" (key, "windowStart", count)
+          VALUES (${`${rule}:${userId}`}, ${new Date(start).toISOString()}, 100000)
+          ON CONFLICT (key, "windowStart") DO UPDATE SET count = 100000`;
+      }
+    },
     cleanup: async () => {
+      await sql`DELETE FROM "ThrottleWindow" WHERE key LIKE ${`%:${userId}`}`;
+      await sql`DELETE FROM "CreditLedger" WHERE "userId" = ${userId}`;
+      await sql`DELETE FROM "Payment" WHERE "userId" = ${userId}`;
       await sql`DELETE FROM "GuardEvent" WHERE "userId" = ${userId}`;
       await sql`DELETE FROM "user" WHERE id = ${userId}`;
     },

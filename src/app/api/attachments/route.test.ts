@@ -5,11 +5,16 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   create: vi.fn(),
   storeAttachment: vi.fn(),
+  consume: vi.fn(),
 }));
 
 vi.mock("@/server/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/server/db", () => ({
   db: { attachment: { create: mocks.create } },
+}));
+vi.mock("@/server/rate-limit", () => ({
+  consumeRateLimit: mocks.consume,
+  rateRules: { upload: { name: "upload", limit: 40, windowMs: 600_000 } },
 }));
 vi.mock("@/server/storage/attachments", () => ({
   storeAttachment: mocks.storeAttachment,
@@ -42,12 +47,22 @@ beforeEach(() => {
     }),
   );
   mocks.storeAttachment.mockReset().mockResolvedValue(undefined);
+  mocks.consume.mockReset().mockResolvedValue({ allowed: true, remaining: 39 });
 });
 
 describe("POST /api/attachments", () => {
   test("rejects signed-out callers", async () => {
     mocks.getSession.mockResolvedValue(null);
     expect((await POST(upload(png()))).status).toBe(401);
+  });
+
+  test("answers 429 with Retry-After when the upload limit is spent", async () => {
+    mocks.consume.mockResolvedValue({ allowed: false, retryAfterSeconds: 120 });
+    const response = await POST(upload(png()));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("120");
+    expect(mocks.storeAttachment).not.toHaveBeenCalled();
+    expect(mocks.consume.mock.calls[0][2]).toBe("u1");
   });
 
   test("requires a file", async () => {

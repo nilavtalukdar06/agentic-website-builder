@@ -2,6 +2,7 @@ import "server-only";
 import { loadRestoreFiles } from "@/inngest/agent/persist";
 import { decodeSnapshotFile } from "@/lib/snapshot-files";
 import { db } from "@/server/db";
+import { recordSandboxEvent } from "@/server/ops/sandbox-events";
 import { isSandboxGone } from "./errors";
 import { APP_DIR } from "./guards";
 import {
@@ -30,29 +31,36 @@ export async function wakeSandbox({
   sandboxId: string | null;
   operationId?: string;
 }) {
-  const { sandbox, created } = await getOrCreateSandbox(sandboxId, () =>
-    loadRestoreFiles(db, { projectId }),
-  );
-  await ensureDevOrigins(sandbox);
-  if (created) await ensureAgentInstructions(sandbox);
-  const previewUrl = previewUrlFor(sandbox);
-  if (operationId) {
-    const updated = await db.project.updateMany({
-      where: { id: projectId, operationId },
-      data: { sandboxId: sandbox.sandboxId, previewUrl },
-    });
-    if (!updated.count) throw new Error("The preview operation expired.");
-  } else {
-    await db.project.update({
-      where: { id: projectId },
-      data: { sandboxId: sandbox.sandboxId, previewUrl },
-    });
+  try {
+    const { sandbox, created } = await getOrCreateSandbox(
+      sandboxId,
+      () => loadRestoreFiles(db, { projectId }),
+      (outcome) => recordSandboxEvent(db, projectId, outcome),
+    );
+    await ensureDevOrigins(sandbox);
+    if (created) await ensureAgentInstructions(sandbox);
+    const previewUrl = previewUrlFor(sandbox);
+    if (operationId) {
+      const updated = await db.project.updateMany({
+        where: { id: projectId, operationId },
+        data: { sandboxId: sandbox.sandboxId, previewUrl },
+      });
+      if (!updated.count) throw new Error("The preview operation expired.");
+    } else {
+      await db.project.update({
+        where: { id: projectId },
+        data: { sandboxId: sandbox.sandboxId, previewUrl },
+      });
+    }
+    await sandbox.commands.run(
+      `curl -fsS -o /dev/null --max-time ${WAKE_WAIT_SECONDS} http://localhost:${PREVIEW_PORT}/`,
+      { cwd: APP_DIR, timeoutMs: (WAKE_WAIT_SECONDS + 10) * 1000 },
+    );
+    return { previewUrl, created };
+  } catch (error) {
+    await recordSandboxEvent(db, projectId, "FAILED");
+    throw error;
   }
-  await sandbox.commands.run(
-    `curl -fsS -o /dev/null --max-time ${WAKE_WAIT_SECONDS} http://localhost:${PREVIEW_PORT}/`,
-    { cwd: APP_DIR, timeoutMs: (WAKE_WAIT_SECONDS + 10) * 1000 },
-  );
-  return { previewUrl, created };
 }
 
 export function staleFiles(listing: string, files: SnapshotFiles) {

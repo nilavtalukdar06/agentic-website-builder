@@ -46,3 +46,11 @@ Exports run as durable Inngest jobs: they resume or recover the sandbox, prepare
 Apply `bun run db:deploy` to your development branch before running this version. Local development currently targets the Neon `development` branch; production has not been migrated. Keep local database URL overrides aligned in `.env` and `.env.local`, since Prisma and Next.js load their environments differently. No additional GitHub environment variables are needed.
 
 If the local Inngest server uses a port other than 8288, set `INNGEST_DEV` to its full address (for example `http://localhost:8290`). The local configuration currently points to the existing server on port 8290.
+
+## Operations
+
+- **Rate limits.** Per user and enforced in Postgres: starting builds (20 per 10 minutes, shared by creating a project, sending and retrying a message), creating projects (10 per hour), checkouts and GitHub exports (10 per hour each), waking previews, restoring versions, uploads and realtime tokens. Sign-in endpoints use Better Auth's database-backed limiter in production.
+- **Nightly cleanup** (Inngest cron, 04:00 UTC): deletes sandboxes of projects idle for 14 days (they rebuild from the latest saved version when opened), unreferenced paused sandboxes of this database (tagged with a hash of the database host), uploads never sent with a message after a day, and expired counters.
+- **Alerts.** Set `ALERT_WEBHOOK_URL` to a Slack- or Discord-compatible incoming webhook to receive them; without it they are only written to the server log as `[alert]` lines. They fire when a paid Stripe session can't be credited, when sandbox resumes fail or fall back to rebuilds, and when the nightly cleanup can't remove something.
+- **Where to look.** The Inngest dashboard shows agent runs, exports and the two scheduled functions; the server log has `[alert]`, `[trpc]` and `[run-agent]` lines.
+- **Apply the migration** `20261114180945_phase_9_hardening` with `bun run db:deploy` before deploying this version.

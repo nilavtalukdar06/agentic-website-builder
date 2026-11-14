@@ -38,6 +38,12 @@ enum ProjectOperation {
   WAKE
 }
 
+enum SandboxOutcome {
+  RESUMED
+  REBUILT
+  FAILED
+}
+
 enum GithubExportStatus {
   QUEUED
   RECOVERING
@@ -250,4 +256,31 @@ model Payment {
   createdAt   DateTime      @default(now())
 
   @@index([userId, createdAt])
+}
+
+model ThrottleWindow {
+  key         String
+  windowStart DateTime
+  count       Int      @default(1)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+}
+
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rateLimit")
+}
+
+model SandboxEvent {
+  id        String         @id @default(cuid())
+  projectId String?
+  outcome   SandboxOutcome
+  createdAt DateTime       @default(now())
+
+  @@index([createdAt])
 }

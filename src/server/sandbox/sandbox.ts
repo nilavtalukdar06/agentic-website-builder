@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { Sandbox } from "e2b";
 import { env } from "@/config/env";
 import {
@@ -45,6 +46,15 @@ export type SnapshotFiles = Record<string, string>;
 
 const connectionOpts = { apiKey: env.E2B_API_KEY };
 
+export function databaseTag(connectionString = env.DATABASE_URL) {
+  const host = new URL(connectionString).hostname.replace("-pooler", "");
+  return createHash("sha256").update(host).digest("hex").slice(0, 16);
+}
+
+export function sandboxMetadata() {
+  return { app: "vibe", database: databaseTag() };
+}
+
 export async function ensureDevOrigins(sandbox: Pick<Sandbox, "files">) {
   const path = `${APP_DIR}/next.config.ts`;
   const source = await sandbox.files.read(path).catch(() => null);
@@ -84,6 +94,7 @@ export async function createSandbox(restore?: SnapshotFiles) {
     ...connectionOpts,
     timeoutMs: SANDBOX_TIMEOUT_MS,
     lifecycle: SANDBOX_LIFECYCLE,
+    metadata: sandboxMetadata(),
   });
   const entries = Object.entries(restore ?? {});
   if (entries.length > 0) {
@@ -104,17 +115,25 @@ export async function createSandbox(restore?: SnapshotFiles) {
   return sandbox;
 }
 
+export type ResumeOutcome = "RESUMED" | "REBUILT";
+
 export async function getOrCreateSandbox(
   sandboxId: string | null,
   loadRestore: () => Promise<SnapshotFiles | undefined>,
+  onResume?: (outcome: ResumeOutcome) => Promise<void>,
 ) {
   if (sandboxId) {
     const existing = await connectSandbox(sandboxId).catch(() => null);
-    if (existing) return { sandbox: existing, created: false, restored: 0 };
+    if (existing) {
+      await onResume?.("RESUMED");
+      return { sandbox: existing, created: false, restored: 0 };
+    }
   }
   const restore = await loadRestore();
+  const sandbox = await createSandbox(restore);
+  if (sandboxId) await onResume?.("REBUILT");
   return {
-    sandbox: await createSandbox(restore),
+    sandbox,
     created: true,
     restored: Object.keys(restore ?? {}).length,
   };

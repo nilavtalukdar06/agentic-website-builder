@@ -8,10 +8,11 @@ import {
   projectOperation,
   projectTransaction,
 } from "@/server/projects/operations";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import { createTRPCRouter, rateLimitedProcedure } from "../init";
 
 export const sandboxRouter = createTRPCRouter({
-  wake: protectedProcedure
+  wake: rateLimitedProcedure(rateRules.sandbox)
     .input(z.object({ projectId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
       const operationId = `wake-${nanoid(12)}`;

@@ -3,13 +3,18 @@ import { z } from "zod";
 import { env } from "@/config/env";
 import { getCreditBalance } from "@/server/billing/balance";
 import { stripeProvider } from "@/server/billing/payments";
-import { createTRPCRouter, protectedProcedure } from "../init";
+import { rateRules } from "@/server/rate-limit";
+import {
+  createTRPCRouter,
+  protectedProcedure,
+  rateLimitedProcedure,
+} from "../init";
 
 export const creditsRouter = createTRPCRouter({
   balance: protectedProcedure.query(({ ctx }) =>
     getCreditBalance(ctx.db, ctx.session.user.id),
   ),
-  checkout: protectedProcedure
+  checkout: rateLimitedProcedure(rateRules.checkout)
     .input(z.object({ amount: z.number().int().min(5).max(100) }))
     .mutation(async ({ ctx, input }) => {
       try {

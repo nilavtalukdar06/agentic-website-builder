@@ -5,6 +5,7 @@ import {
   isAttachmentType,
 } from "@/lib/attachments";
 import { db } from "@/server/db";
+import { consumeRateLimit, rateRules } from "@/server/rate-limit";
 import { getSession } from "@/server/session";
 import { attachmentKey, storeAttachment } from "@/server/storage/attachments";
 
@@ -14,6 +15,21 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const decision = await consumeRateLimit(
+    db,
+    rateRules.upload,
+    session.user.id,
+  );
+  if (!decision.allowed) {
+    return Response.json(
+      { error: "Too many uploads. Try again in a few minutes." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(decision.retryAfterSeconds) },
+      },
+    );
   }
 
   const form = await request.formData().catch(() => null);

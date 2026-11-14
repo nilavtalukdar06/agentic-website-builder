@@ -3,13 +3,17 @@ import { describe, expect, test, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 const create = vi.hoisted(() => vi.fn());
-vi.mock("e2b", () => ({ Sandbox: { create } }));
+const connect = vi.hoisted(() => vi.fn());
+vi.mock("e2b", () => ({ Sandbox: { create, connect } }));
 
 const {
   createSandbox,
   ensureAgentInstructions,
   ensureDevOrigins,
   pickSnapshotEntries,
+  databaseTag,
+  getOrCreateSandbox,
+  sandboxMetadata,
   SANDBOX_LIFECYCLE,
   snapshotListCommand,
   snapshotSandbox,
@@ -111,6 +115,69 @@ describe("createSandbox", () => {
     expect(Array.from(entries[1].data as Uint8Array)).toEqual([
       137, 80, 78, 71,
     ]);
+  });
+});
+
+describe("sandbox ownership tag", () => {
+  test("is the same for the pooled and direct hosts of one database", () => {
+    expect(databaseTag("postgresql://u:p@ep-a-1-pooler.neon.tech/db")).toBe(
+      databaseTag("postgresql://u:p@ep-a-1.neon.tech/db"),
+    );
+  });
+  test("differs between databases and hides the host", () => {
+    const tag = databaseTag("postgresql://u:p@ep-a-1.neon.tech/db");
+    expect(tag).not.toBe(databaseTag("postgresql://u:p@ep-b-2.neon.tech/db"));
+    expect(tag).toMatch(/^[0-9a-f]{16}$/);
+  });
+  test("new sandboxes carry it as metadata", async () => {
+    create.mockResolvedValue({
+      files: { write: vi.fn() },
+      commands: { run: vi.fn() },
+    });
+    await createSandbox();
+    expect(create).toHaveBeenLastCalledWith(
+      "test-template",
+      expect.objectContaining({ metadata: sandboxMetadata() }),
+    );
+    expect(sandboxMetadata()).toMatchObject({ app: "vibe" });
+  });
+});
+
+describe("getOrCreateSandbox", () => {
+  test("reports a resume of the stored sandbox", async () => {
+    connect.mockResolvedValue({ sandboxId: "old" });
+    const onResume = vi.fn().mockResolvedValue(undefined);
+    const result = await getOrCreateSandbox(
+      "old",
+      async () => undefined,
+      onResume,
+    );
+    expect(result.created).toBe(false);
+    expect(onResume).toHaveBeenCalledWith("RESUMED");
+  });
+  test("reports a rebuild when the stored sandbox is gone", async () => {
+    connect.mockRejectedValue(new Error("gone"));
+    create.mockResolvedValue({
+      files: { write: vi.fn() },
+      commands: { run: vi.fn() },
+    });
+    const onResume = vi.fn().mockResolvedValue(undefined);
+    const result = await getOrCreateSandbox(
+      "old",
+      async () => undefined,
+      onResume,
+    );
+    expect(result.created).toBe(true);
+    expect(onResume).toHaveBeenCalledWith("REBUILT");
+  });
+  test("reports nothing for a project without a sandbox", async () => {
+    create.mockResolvedValue({
+      files: { write: vi.fn() },
+      commands: { run: vi.fn() },
+    });
+    const onResume = vi.fn();
+    await getOrCreateSandbox(null, async () => undefined, onResume);
+    expect(onResume).not.toHaveBeenCalled();
   });
 });
 

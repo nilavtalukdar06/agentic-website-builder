@@ -75,6 +75,16 @@ export const privacySections: ArticleSection[] = [
             hosting provider (such as IP address, requested page and errors),
             and the preference you pick for light or dark theme.
           </li>
+          <li>
+            <Strong>Rate limits and reliability.</Strong> Short-lived counters
+            of how often your account (or, for sign-in requests, your IP
+            address) calls a limited action, so we can protect Vibe from abuse.
+            We also record whether a project&apos;s preview resumed or had to be
+            rebuilt (project ID and result only), and send technical alerts
+            about failures, such as a payment that couldn&apos;t be credited, to
+            a private channel run by the operator. Alerts contain technical
+            references such as a payment-session ID, not your name or email.
+          </li>
         </UL>
         <P>
           We don&apos;t run advertising or cross-site tracking, and we
@@ -208,8 +218,16 @@ export const privacySections: ArticleSection[] = [
           Vibe&apos;s GitHub access in your GitHub application settings.
         </li>
         <li>
-          Paused sandboxes: until the project is deleted, or until we clean up
-          sandboxes of projects that have been idle for a long time.
+          Sandboxes: deleted automatically once a project has been idle for 14
+          days, or when no project uses them any more. Your saved versions stay
+          and the preview is rebuilt when you open the project.
+        </li>
+        <li>
+          Images you attach but never send with a message: deleted after 24
+          hours.
+        </li>
+        <li>
+          Rate-limit counters: about a day. Preview resume records: 30 days.
         </li>
         <li>
           Safety-check records (fingerprints only): for as long as your account

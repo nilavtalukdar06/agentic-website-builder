@@ -336,13 +336,22 @@ export function CodePanel({
               <TabsList variant="line" className="h-11 gap-0 overflow-x-auto">
                 {tabs.map((path) => (
                   <div key={path} className="flex items-center">
-                    <TabsTrigger value={path} className="gap-1.5 px-3">
+                    <TabsTrigger
+                      value={path}
+                      className="gap-1.5 px-3"
+                      aria-keyshortcuts="Delete"
+                      onKeyDown={(event) => {
+                        if (event.key === "Delete") close(path);
+                      }}
+                    >
                       <FileIcon path={path} />
                       {path.split("/").pop()}
                     </TabsTrigger>
                     <Button
                       variant="ghost"
                       size="icon-xs"
+                      aria-hidden
+                      tabIndex={-1}
                       aria-label={`Close ${path}`}
                       onClick={() => close(path)}
                     >
