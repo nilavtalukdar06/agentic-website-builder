@@ -2,6 +2,10 @@
 
 Package-first log (see `docs/plan.md` §0.1). One line per decision: feature → package → why → rejected alternatives.
 
+## Documentation (15 November 2026)
+
+- **README diagrams** → Excalidraw: each diagram is committed as an editable `.excalidraw` source plus a rendered `.svg` in `docs/diagrams/`, embedded in `README.md` as images → Mermaid in Markdown (GitHub renders it, but the owner asked for Excalidraw, and Mermaid ER and sequence layouts can't show field-level FK anchors or annotated side notes), PNG exports (blurry when zoomed, larger) or diagrams in an external tool (drift from the repo). No new package; nothing is added to `package.json`.
+
 ## Phase 8 readiness fixes (14 November 2026)
 
 - **Runtime pin** → Node 24 in `.nvmrc` and `package.json` engines → matches the existing sandbox major and supports Prisma 7 / Next.js 16 → leaving the host's Node version implicit. No new runtime package.
