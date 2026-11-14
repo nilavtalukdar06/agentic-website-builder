@@ -31,13 +31,10 @@ import { builderSpec } from "../agent/agents";
 import { cleanTitle, historyToMessages } from "../agent/conversation";
 import { classifyText } from "../agent/guardrails/classifier";
 import { recordGuardEvent } from "../agent/guardrails/events";
+import { guardStoredPrompt, sanitizeHistory } from "../agent/guardrails/input";
 import { patternRedactor } from "../agent/guardrails/redact";
 import { scanFiles, scanFixPrompt } from "../agent/guardrails/scan";
-import {
-  detectSecrets,
-  redactMatches,
-  redactPatterns,
-} from "../agent/guardrails/secret-patterns";
+import { redactPatterns } from "../agent/guardrails/secret-patterns";
 import {
   type AgentRun,
   type Budget,
@@ -133,6 +130,24 @@ export const runAgent = inngest.createFunction(
     const { projectId, userId, messageId, resume } = event.data;
     const chainId = resume?.chainId ?? runId;
 
+    const secretHit = await step.run("guard-input", async () => {
+      if (
+        !(await guardStoredPrompt(db, { userId, projectId, messageId, runId }))
+      )
+        return false;
+      await recordAssistantError(db, {
+        projectId,
+        runId,
+        message: SECRET_IN_PROMPT,
+        replyToId: messageId,
+      });
+      const publish = createPublisher(projectId);
+      await publish("guard", { stage: "input", verdict: "secret" });
+      await publish("status", { state: "error", message: SECRET_IN_PROMPT });
+      return true;
+    });
+    if (secretHit) return { status: "secret-in-prompt" as const };
+
     if (!resume) {
       const claimed = await step.run("claim", async () => {
         if (await claimPrompt(db, messageId)) return true;
@@ -147,7 +162,7 @@ export const runAgent = inngest.createFunction(
       const [project, trigger] = await Promise.all([
         db.project.findFirst({
           where: { id: projectId, userId },
-          select: { name: true, sandboxId: true },
+          select: { sandboxId: true },
         }),
         db.message.findFirst({
           where: { id: messageId, projectId, role: "USER" },
@@ -161,18 +176,21 @@ export const runAgent = inngest.createFunction(
         findAgentModel(trigger.model).then(
           async (found) => found ?? (await findAgentModel(null)),
         ),
-        db.message.findMany({
-          where: { projectId, createdAt: { lte: trigger.createdAt } },
-          orderBy: { createdAt: "asc" },
-          select: {
-            role: true,
-            content: true,
-            attachments: {
-              orderBy: { createdAt: "asc" },
-              select: { key: true, contentType: true },
+        db.message
+          .findMany({
+            where: { projectId, createdAt: { lte: trigger.createdAt } },
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              role: true,
+              content: true,
+              attachments: {
+                orderBy: { createdAt: "asc" },
+                select: { key: true, contentType: true },
+              },
             },
-          },
-        }),
+          })
+          .then((messages) => sanitizeHistory(db, messages)),
         db.version.findFirst({
           where: { projectId, ...READY },
           orderBy: { number: "desc" },
@@ -188,9 +206,8 @@ export const runAgent = inngest.createFunction(
       }
       return {
         model,
-        projectName: project.name,
         sandboxId: project.sandboxId,
-        prompt: trigger.content,
+        prompt: await redactPatterns(trigger.content),
         history,
         balance,
         hasVersion: latest !== null,
@@ -212,42 +229,6 @@ export const runAgent = inngest.createFunction(
         });
       });
       return { status: "out-of-credits" as const };
-    }
-
-    if (!resume) {
-      const secretHit = await step.run("guard-input", async () => {
-        const matches = await detectSecrets(setup.prompt);
-        if (matches.length === 0) return false;
-        const redacted = redactMatches(setup.prompt, matches);
-        await db.message.update({
-          where: { id: messageId },
-          data: { content: redacted },
-        });
-        await db.project.updateMany({
-          where: { id: projectId, description: setup.prompt },
-          data: { description: redacted },
-        });
-        await recordGuardEvent(db, {
-          userId,
-          projectId,
-          runId,
-          stage: "input",
-          verdict: "secret",
-          categories: ["secret"],
-          text: setup.prompt,
-        });
-        await recordAssistantError(db, {
-          projectId,
-          runId,
-          message: SECRET_IN_PROMPT,
-          replyToId: messageId,
-        });
-        const publish = createPublisher(projectId);
-        await publish("guard", { stage: "input", verdict: "secret" });
-        await publish("status", { state: "error", message: SECRET_IN_PROMPT });
-        return true;
-      });
-      if (secretHit) return { status: "secret-in-prompt" as const };
     }
 
     const model = setup.model;
@@ -487,9 +468,14 @@ export const runAgent = inngest.createFunction(
         readAgentsMd: false,
         loadedSkills: [],
       };
-      await step.run("handoff-checkpoint", () =>
+      const checkpointSaved = await step.run("handoff-checkpoint", () =>
         takeCheckpoint({ projectId, run: runContext }),
       );
+      if (!checkpointSaved) {
+        throw new NonRetriableError(
+          "Couldn't save a safe checkpoint, so this request wasn't continued.",
+        );
+      }
       const cost = await step.run("cost", () =>
         resolveRunCost(calls, lookupGenerationCost),
       );

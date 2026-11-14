@@ -112,13 +112,12 @@ export async function takeCheckpoint({
   try {
     const box = await connectSandbox(run.sandbox.id);
     const files = await snapshotSandbox(box);
-    await saveCheckpoint(db, {
+    return await saveCheckpoint(db, {
       projectId,
       chainId: run.chainId,
       runId: run.runId,
       files,
     });
-    return true;
   } catch (error) {
     console.warn("[run-agent] checkpoint failed", error);
     return false;

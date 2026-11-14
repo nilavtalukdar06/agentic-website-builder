@@ -3,6 +3,7 @@ import type { AgentPart } from "@/lib/agent/parts";
 import type { TokenUsage } from "@/server/billing/pricing";
 import type { RunCost } from "@/server/billing/run-cost";
 import type { SnapshotFiles } from "@/server/sandbox/sandbox";
+import { scanFiles } from "./guardrails/scan";
 
 export const TRANSACTION_OPTIONS = { maxWait: 15_000, timeout: 30_000 };
 
@@ -55,6 +56,7 @@ export async function saveCheckpoint(
     files: SnapshotFiles;
   },
 ) {
+  if ((await scanFiles(input.files)).length > 0) return false;
   const data = {
     runId: input.runId,
     files: input.files,
@@ -72,6 +74,7 @@ export async function saveCheckpoint(
     },
     update: data,
   });
+  return true;
 }
 
 export async function loadRestoreFiles(

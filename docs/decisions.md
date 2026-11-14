@@ -2,6 +2,17 @@
 
 Package-first log (see `docs/plan.md` §0.1). One line per decision: feature → package → why → rejected alternatives.
 
+## Phase 8 readiness fixes (14 November 2026)
+
+- **Runtime pin** → Node 24 in `.nvmrc` and `package.json` engines → matches the existing sandbox major and supports Prisma 7 / Next.js 16 → leaving the host's Node version implicit. No new runtime package.
+- **Incoming secrets** → reuse the existing secretlint + own-pattern detector in the shared prompt resolver, before model lookup or project/message writes; reject through existing composer errors and retain a hash-only GuardEvent → asynchronous redaction after queueing (stopped and zero-credit prompts could persist secrets). The smoke script uses the same resolver.
+- **Legacy model context** → reuse the same redactor to repair historical message content before a load step returns it; check older secret-bearing triggers before claim and balance handling → sanitizing only the current prompt after the history has already entered durable state. No new vendor or package.
+- **Draft checkpoints** → scan inside the shared checkpoint persistence helper and refuse unsafe upserts; handoffs require a successful checkpoint before charging or continuing → scanning only the final READY Version.
+- **Restore recovery** → clear the sandbox reference in the restored-Version transaction, reattach only after a successful rewrite if no newer restore/build supersedes it, and wake whenever the active Version changes → retaining the old reference after a best-effort write (the next wake could reuse stale files). Reuse existing E2B and Prisma helpers; no schema or package change.
+- **Preview readiness** → propagate `curl -f` failures through the existing wake error/retry state → returning a ready URL after a timeout or HTTP error.
+- **Documentation** → reconcile built Phase 7 billing paths and the existing ThemeProvider / Base UI toast choices; remove the retired uptime-retention sentence and describe pre-storage prompt rejection in the Privacy Policy → leaving the plan and legal copy out of sync. Privacy wording is flagged to the owner for review.
+- **Validation** → Node 24.22.3 production build, lint, TypeScript, 651 unit tests and 231 browser tests pass, including live realtime checks; Next.js runtime diagnostics are clean. A read-only scan found no detected secrets in current project text, messages or draft snapshots. Preview-deployment acceptance remains open because Vercel is unconnected and no preview URL was supplied; the CI exception remains unchanged.
+
 ## Phase 0 (recorded retroactively)
 
 - **UI primitives** → shadcn/ui `base-nova` style (Base UI, `@base-ui/react`) → set at bootstrap; AI Elements ships a Base UI build → Radix (`new-york`) not used.

@@ -64,6 +64,7 @@ const dbMock = vi.hoisted(() => ({
     findFirst: vi.fn().mockResolvedValue(null),
     findUnique: vi.fn().mockResolvedValue(null),
     create: vi.fn().mockResolvedValue({}),
+    upsert: vi.fn().mockResolvedValue({}),
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
   project: { update: vi.fn().mockResolvedValue({}) },
@@ -74,7 +75,9 @@ const dbMock = vi.hoisted(() => ({
 }));
 vi.mock("@/server/db", () => ({ db: dbMock }));
 
-const { runToolStep, RECOVERED_NOTE } = await import("./runtime");
+const { runToolStep, takeCheckpoint, RECOVERED_NOTE } =
+  await import("./runtime");
+const { snapshotSandbox } = await import("@/server/sandbox/sandbox");
 const { debitCredits, saveRunResult } = await import("./persist");
 const { patternRedactor } = await import("./guardrails/redact");
 
@@ -112,6 +115,14 @@ function expectNoSecret(value: unknown) {
 }
 
 describe("a pasted or printed key never leaks", () => {
+  test("a secret in the working tree never enters a draft checkpoint", async () => {
+    vi.mocked(snapshotSandbox).mockResolvedValueOnce({
+      "config.ts": `export const key = "${SECRET}"`,
+    });
+    await expect(takeCheckpoint({ projectId: "p1", run })).resolves.toBe(false);
+    expect(dbMock.version.upsert).not.toHaveBeenCalled();
+    expectNoSecret([published, logs]);
+  });
   test("tool results, realtime events and logs are redacted", async () => {
     const terminal = await runToolStep({
       call: {

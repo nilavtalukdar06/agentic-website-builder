@@ -40,12 +40,13 @@ export async function createTestSession(name: string) {
       description?: string;
       githubRepo?: string | null;
       previewUrl?: string | null;
+      sandboxId?: string | null;
       updatedAt?: Date;
     }) => {
       const id = randomUUID();
       await sql`
-        INSERT INTO "Project" (id, slug, name, description, "userId", "githubRepo", "previewUrl", "updatedAt")
-        VALUES (${id}, ${project.slug}, ${project.name}, ${project.description ?? null}, ${userId}, ${project.githubRepo ?? null}, ${project.previewUrl ?? null}, ${(project.updatedAt ?? new Date()).toISOString()})`;
+        INSERT INTO "Project" (id, slug, name, description, "userId", "githubRepo", "previewUrl", "sandboxId", "updatedAt")
+        VALUES (${id}, ${project.slug}, ${project.name}, ${project.description ?? null}, ${userId}, ${project.githubRepo ?? null}, ${project.previewUrl ?? null}, ${project.sandboxId ?? null}, ${(project.updatedAt ?? new Date()).toISOString()})`;
       return id;
     },
     addMessage: async (message: {
@@ -85,6 +86,24 @@ export async function createTestSession(name: string) {
       httpOnly: true,
       sameSite: "Lax" as const,
     },
-    cleanup: () => sql`DELETE FROM "user" WHERE id = ${userId}`,
+    projectCount: async () => {
+      const [row] =
+        await sql`SELECT count(*)::int AS count FROM "Project" WHERE "userId" = ${userId}`;
+      return row.count as number;
+    },
+    messageCount: async (projectId: string) => {
+      const [row] =
+        await sql`SELECT count(*)::int AS count FROM "Message" WHERE "projectId" = ${projectId}`;
+      return row.count as number;
+    },
+    projectState: async (projectId: string) => {
+      const [row] =
+        await sql`SELECT "sandboxId", "previewUrl" FROM "Project" WHERE id = ${projectId} AND "userId" = ${userId}`;
+      return row as { sandboxId: string | null; previewUrl: string | null };
+    },
+    cleanup: async () => {
+      await sql`DELETE FROM "GuardEvent" WHERE "userId" = ${userId}`;
+      await sql`DELETE FROM "user" WHERE id = ${userId}`;
+    },
   };
 }

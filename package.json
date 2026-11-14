@@ -2,6 +2,9 @@
   "name": "agentic-website-builder",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "bun run db:generate && next build",

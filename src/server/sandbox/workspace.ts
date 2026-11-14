@@ -39,12 +39,10 @@ export async function wakeSandbox({
     where: { id: projectId },
     data: { sandboxId: sandbox.sandboxId, previewUrl },
   });
-  await sandbox.commands
-    .run(
-      `curl -s -o /dev/null --max-time ${WAKE_WAIT_SECONDS} http://localhost:${PREVIEW_PORT}/`,
-      { cwd: APP_DIR, timeoutMs: (WAKE_WAIT_SECONDS + 10) * 1000 },
-    )
-    .catch(() => null);
+  await sandbox.commands.run(
+    `curl -fsS -o /dev/null --max-time ${WAKE_WAIT_SECONDS} http://localhost:${PREVIEW_PORT}/`,
+    { cwd: APP_DIR, timeoutMs: (WAKE_WAIT_SECONDS + 10) * 1000 },
+  );
   return { previewUrl, created };
 }
 

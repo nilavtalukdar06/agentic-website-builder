@@ -153,10 +153,10 @@ export const privacySections: ArticleSection[] = [
         <P>
           Don&apos;t put secrets or other people&apos;s personal data in
           prompts: prompts are sent to the providers above. If a prompt looks
-          like it contains a key, Vibe removes it before any AI model sees it
-          and asks you to send the request again without it; Vibe doesn&apos;t
-          store keys. Sandbox preview addresses are not private: anyone with the
-          link can open the preview.
+          like it contains a key, Vibe rejects it before storing the message or
+          sending it to an AI model, and asks you to send the request again
+          without it. Vibe doesn&apos;t store keys. Sandbox preview addresses
+          are not private: anyone with the link can open the preview.
         </P>
       </>
     ),
@@ -196,7 +196,6 @@ export const privacySections: ArticleSection[] = [
           Safety-check records (fingerprints only): for as long as your account
           exists.
         </li>
-        <li>Uptime check records: 30 days.</li>
         <li>
           When you ask us to delete your account we remove your account,
           projects and the images you attached, except what we must keep by law.

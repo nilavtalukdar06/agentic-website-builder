@@ -7,24 +7,25 @@ import { useTRPC } from "@/trpc/client";
 export function usePreview({
   projectId,
   building,
-  hasVersion,
+  version,
   savedPreviewUrl,
   livePreviewUrl,
 }: {
   projectId: string;
   building: boolean;
-  hasVersion: boolean;
+  version: number | null;
   savedPreviewUrl: string | null;
   livePreviewUrl: string | null;
 }) {
   const trpc = useTRPC();
   const wake = useMutation(trpc.sandbox.wake.mutationOptions());
   const { mutate } = wake;
+  const hasVersion = version !== null;
   const shouldWake = !building && hasVersion;
 
   useEffect(() => {
     if (shouldWake) mutate({ projectId });
-  }, [shouldWake, projectId, mutate]);
+  }, [shouldWake, projectId, version, mutate]);
 
   const url =
     (wake.data?.status === "ready" ? wake.data.previewUrl : null) ??

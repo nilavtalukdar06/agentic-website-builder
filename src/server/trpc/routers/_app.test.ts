@@ -78,6 +78,7 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn(),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     message: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -99,6 +100,7 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
     creditLedger: {
       aggregate: vi.fn(),
     },
+    guardEvent: { create: vi.fn().mockResolvedValue({}) },
     $transaction: vi.fn(),
   };
   Object.assign(db.project, { update: vi.fn().mockResolvedValue({}) });
@@ -288,6 +290,30 @@ describe("project.bySlug", () => {
 
 describe("project.create", () => {
   const prompt = "Build me a landing page for Ember & Oak. Warm and editorial.";
+
+  test("rejects a pasted key before project writes, model lookup or enqueue", async () => {
+    const { ctx, db } = signedIn();
+    const secret = "sk-9Y5Q7Z2H8N4W6R3T1M0B9V8C7L6K5J4D";
+    await expect(
+      createCaller(ctx).project.create({ prompt: `Build key ${secret}` }),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("Remove API keys"),
+    });
+    expect(db.project.create).not.toHaveBeenCalled();
+    expect(db.message.create).not.toHaveBeenCalled();
+    expect(gateway.findAgentModel).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(db.guardEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        verdict: "secret",
+        textHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    });
+    expect(JSON.stringify(db.guardEvent.create.mock.calls)).not.toContain(
+      secret,
+    );
+  });
 
   test("names the project from the prompt and stores the prompt", async () => {
     const { ctx, db } = signedIn();
@@ -618,6 +644,20 @@ describe("message.list", () => {
 });
 
 describe("message.send", () => {
+  test("rejects a secret while another prompt is pending, without storing or queueing it", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.count.mockResolvedValue(1);
+    await expect(
+      createCaller(ctx).message.send({
+        projectId: "p1",
+        prompt: "Use sk-9Y5Q7Z2H8N4W6R3T1M0B9V8C7L6K5J4D",
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.message.create).not.toHaveBeenCalled();
+    expect(gateway.findAgentModel).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
   test("stores the follow-up and starts the agent", async () => {
     const { ctx, db } = signedIn();
     db.project.findFirst.mockResolvedValue({ id: "p1" });
@@ -793,7 +833,11 @@ describe("version.files", () => {
 describe("version.restore", () => {
   test("saves a new version from the old files and rewrites the sandbox", async () => {
     const { ctx, db } = signedIn();
-    db.project.findFirst.mockResolvedValue({ id: "p1", sandboxId: "sbx" });
+    db.project.findFirst.mockResolvedValue({
+      id: "p1",
+      sandboxId: "sbx",
+      previewUrl: "https://old.e2b.app",
+    });
     db.version.findFirst
       .mockResolvedValueOnce({ number: 1, files: { a: "1" } })
       .mockResolvedValueOnce({ number: 3 });
@@ -819,6 +863,71 @@ describe("version.restore", () => {
     expect(workspace.writeVersionToSandbox).toHaveBeenCalledWith("sbx", {
       a: "1",
     });
+    expect(ctx.db.project.update).toHaveBeenCalledWith({
+      where: { id: "p1" },
+      data: { sandboxId: null, previewUrl: null, updatedAt: expect.any(Date) },
+    });
+    expect(db.project.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "p1",
+        sandboxId: null,
+        versions: { none: { status: "READY", number: { gt: 4 } } },
+        messages: { none: { role: "USER", replies: { none: {} } } },
+      }),
+      data: { sandboxId: "sbx", previewUrl: "https://old.e2b.app" },
+    });
+  });
+
+  test.each(["unreachable", "write-failed"])(
+    "leaves the old sandbox detached when %s",
+    async (failure) => {
+      const { ctx, db } = signedIn();
+      db.project.findFirst.mockResolvedValue({
+        id: "p1",
+        sandboxId: "sbx",
+        previewUrl: "https://old.e2b.app",
+      });
+      db.version.findFirst
+        .mockResolvedValueOnce({ number: 1, files: { a: "restored" } })
+        .mockResolvedValueOnce({ number: 3 });
+      if (failure === "unreachable")
+        workspace.writeVersionToSandbox.mockResolvedValue({ written: false });
+      else
+        workspace.writeVersionToSandbox.mockRejectedValue(
+          new Error("temporary write failure"),
+        );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await expect(
+        createCaller(ctx).version.restore({ projectId: "p1", number: 1 }),
+      ).resolves.toEqual({ number: 4, sandboxUpdated: false });
+      expect(ctx.db.project.update).toHaveBeenCalledWith({
+        where: { id: "p1" },
+        data: {
+          sandboxId: null,
+          previewUrl: null,
+          updatedAt: expect.any(Date),
+        },
+      });
+      expect(db.project.updateMany).not.toHaveBeenCalled();
+      warn.mockRestore();
+    },
+  );
+
+  test("does not reattach a sandbox superseded by another restore or build", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({
+      id: "p1",
+      sandboxId: "sbx",
+      previewUrl: null,
+    });
+    db.version.findFirst
+      .mockResolvedValueOnce({ number: 1, files: { a: "1" } })
+      .mockResolvedValueOnce({ number: 3 });
+    workspace.writeVersionToSandbox.mockResolvedValue({ written: true });
+    db.project.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      createCaller(ctx).version.restore({ projectId: "p1", number: 1 }),
+    ).resolves.toEqual({ number: 4, sandboxUpdated: false });
   });
 
   test("is refused while building", async () => {

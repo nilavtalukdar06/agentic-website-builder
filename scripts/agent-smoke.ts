@@ -10,7 +10,7 @@ import {
   slugFromName,
   withSlugSuffix,
 } from "@/lib/project-name";
-import { findAgentModel } from "@/server/ai/gateway";
+import { resolvePrompt } from "@/server/trpc/routers/prompt";
 import { getCreditBalance } from "@/server/billing/balance";
 import { db } from "@/server/db";
 
@@ -38,6 +38,11 @@ async function main() {
   if (!user) throw new Error("No user found. Sign in once, or pass --email.");
 
   const prompt = values.prompt!;
+  const { model } = await resolvePrompt(db, user.id, {
+    prompt,
+    model: values.model,
+    attachmentIds: [],
+  });
   let projectId: string;
   let slug: string;
   if (values.project) {
@@ -62,9 +67,6 @@ async function main() {
     slug = project.slug;
   }
 
-  const model = await findAgentModel(values.model);
-  if (!model)
-    throw new Error(`Model ${values.model} isn't in the curated list.`);
   const message = await db.message.create({
     data: { projectId, role: "USER", content: prompt, model: model.id },
   });

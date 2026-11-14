@@ -54,7 +54,7 @@ export function Workspace({
   const preview = usePreview({
     projectId: project.id,
     building: project.building,
-    hasVersion: project.version !== null,
+    version: project.version,
     savedPreviewUrl: project.previewUrl,
     livePreviewUrl: previewUrl,
   });

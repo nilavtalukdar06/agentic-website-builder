@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { inngest } from "@/inngest/client";
 import { agentRun } from "@/inngest/events";
+import { detectSecrets } from "@/inngest/agent/guardrails/secret-patterns";
+import { recordGuardEvent } from "@/inngest/agent/guardrails/events";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import { findAgentModel } from "@/server/ai/gateway";
 
@@ -18,10 +20,30 @@ export const promptFields = {
 };
 
 export async function resolvePrompt(
-  db: Pick<PrismaClient, "attachment">,
+  db: Pick<PrismaClient, "attachment" | "guardEvent">,
   userId: string,
-  input: { model?: string; attachmentIds: string[] },
+  input: {
+    prompt: string;
+    projectId?: string;
+    model?: string;
+    attachmentIds: string[];
+  },
 ) {
+  if ((await detectSecrets(input.prompt)).length > 0) {
+    await recordGuardEvent(db, {
+      userId,
+      projectId: input.projectId,
+      stage: "input",
+      verdict: "secret",
+      categories: ["secret"],
+      text: input.prompt,
+    });
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        "Remove API keys, tokens and connection strings from your request before sending it. Vibe doesn't store keys.",
+    });
+  }
   const attachmentIds = [...new Set(input.attachmentIds)];
   const [model, attachments] = await Promise.all([
     findAgentModel(input.model).catch(() => {

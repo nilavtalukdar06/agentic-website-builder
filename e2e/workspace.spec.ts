@@ -56,9 +56,13 @@ async function stubWake(page: Page, result: "ready" | "fail") {
   });
 }
 
-async function seedBuiltProject() {
+async function seedBuiltProject(sandboxId?: string) {
   const slug = `ws-${suffix}`;
-  const projectId = await session.addProject({ slug, name: "Ember & Oak" });
+  const projectId = await session.addProject({
+    slug,
+    name: "Ember & Oak",
+    sandboxId,
+  });
   const prompt = await session.addMessage({
     projectId,
     role: "USER",
@@ -288,6 +292,56 @@ test("restoring a version saves it as the newest one", async ({ page }) => {
   });
   await expect(page.getByText("v3", { exact: true })).toBeVisible();
   await expect(page.getByText("v3 · 0 credits")).toBeVisible();
+});
+
+test("a failed sandbox restore detaches it and wakes the saved version after reload", async ({
+  page,
+}) => {
+  await stubWake(page, "ready");
+  const { slug, projectId } = await seedBuiltProject(`unavailable-${suffix}`);
+  await page.goto(`/p/${slug}`);
+  await expect.poll(() => wakeCalls).toBeGreaterThan(0);
+  const before = wakeCalls;
+  await page.getByRole("button", { name: "Restore version 1" }).click();
+  await expect(page.getByText("Restored version 1 as version 3.")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect.poll(() => wakeCalls).toBeGreaterThan(before);
+  expect(await session.projectState(projectId)).toEqual({
+    sandboxId: null,
+    previewUrl: null,
+  });
+  await page.reload();
+  await expect(page.getByText("v3", { exact: true })).toBeVisible();
+  expect(await session.projectState(projectId)).toEqual({
+    sandboxId: null,
+    previewUrl: null,
+  });
+});
+
+test("a secret-bearing follow-up is rejected without saving a message", async ({
+  page,
+}) => {
+  await stubWake(page, "ready");
+  const { slug, projectId } = await seedBuiltProject();
+  const before = await session.messageCount(projectId);
+  await page.goto(`/p/${slug}`);
+  const input = page.getByRole("textbox", { name: "Message Vibe" });
+  const send = page.getByRole("button", { name: "Send message" });
+  await expect(async () => {
+    await input.fill("Use sk-9Y5Q7Z2H8N4W6R3T1M0B9V8C7L6K5J4D");
+    await expect(send).toBeEnabled({ timeout: 1000 });
+  }).toPass();
+  await send.click();
+  await expect(
+    page.getByText(
+      "Remove API keys, tokens and connection strings from your request before sending it. Vibe doesn't store keys.",
+    ),
+  ).toBeVisible();
+  expect(await session.messageCount(projectId)).toBe(before);
+  await expect(
+    page.getByRole("button", { name: "Stop", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("a building project shows the overlay and stops a queued prompt", async ({

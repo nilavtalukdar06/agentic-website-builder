@@ -83,7 +83,7 @@ export const versionRouter = createTRPCRouter({
       const userId = ctx.session.user.id;
       const project = await ctx.db.project.findFirst({
         where: { id: input.projectId, userId },
-        select: { id: true, sandboxId: true },
+        select: { id: true, sandboxId: true, previewUrl: true },
       });
       if (!project) throw new TRPCError({ code: "NOT_FOUND" });
       const pending = await ctx.db.message.count({
@@ -133,7 +133,11 @@ export const versionRouter = createTRPCRouter({
         });
         await tx.project.update({
           where: { id: project.id },
-          data: { updatedAt: new Date() },
+          data: {
+            sandboxId: null,
+            previewUrl: null,
+            updatedAt: new Date(),
+          },
         });
         return next;
       }, TRANSACTION_OPTIONS);
@@ -147,6 +151,22 @@ export const versionRouter = createTRPCRouter({
         } catch (error) {
           console.warn("[version.restore] couldn't update the sandbox", error);
         }
+      }
+      if (sandboxUpdated) {
+        const attached = await ctx.db.project.updateMany({
+          where: {
+            id: project.id,
+            userId,
+            sandboxId: null,
+            versions: { none: { status: "READY", number: { gt: number } } },
+            messages: { none: pendingPromptWhere },
+          },
+          data: {
+            sandboxId: project.sandboxId,
+            previewUrl: project.previewUrl,
+          },
+        });
+        sandboxUpdated = attached.count > 0;
       }
       return { number, sandboxUpdated };
     }),

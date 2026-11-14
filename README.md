@@ -10,7 +10,7 @@ Next.js 16 (App Router), React 19, Tailwind CSS 4 with shadcn/ui and AI Elements
 
 ## Getting started
 
-1. Install dependencies with `bun install`.
+1. Use Node 24 (`nvm use`, from `.nvmrc`) and install dependencies with `bun install`.
 2. Copy `.env.example` to `.env` and fill it in. Each variable is described there.
 3. Apply the database migrations with `bun run db:deploy` (or `bun run db:migrate` while developing).
 4. Start the app with `bun run dev` and open <http://localhost:3000>. In a second terminal run `bun run inngest:dev` so the agent runs.
@@ -34,5 +34,5 @@ The sandbox template is built once with `bun run sandbox:build`; paste the print
 
 ## Pages
 
-- `/` home with the prompt box and recent projects, `/projects`, `/p/[slug]` the workspace (signed in)
+- `/` home with the prompt box and recent projects, `/projects`, `/usage`, `/p/[slug]` the workspace (signed in)
 - `/sign-in`, `/terms`, `/privacy`, `/design` (public; `/design` is the design system)

@@ -226,6 +226,29 @@ describe("recordAssistantError", () => {
 });
 
 describe("checkpoints", () => {
+  test("refuses a secret-bearing draft without replacing the last safe checkpoint", async () => {
+    const db = { version: { upsert: vi.fn().mockResolvedValue({}) } };
+    const input = {
+      projectId: "p1",
+      chainId: "r0",
+      runId: "r1",
+      files: { "app/page.tsx": "export {}" },
+    };
+    await expect(saveCheckpoint(db as never, input)).resolves.toBe(true);
+    await expect(
+      saveCheckpoint(db as never, {
+        ...input,
+        files: {
+          "config.ts":
+            'export const key = "sk-9Y5Q7Z2H8N4W6R3T1M0B9V8C7L6K5J4D"',
+        },
+      }),
+    ).resolves.toBe(false);
+    expect(db.version.upsert).toHaveBeenCalledOnce();
+    expect(db.version.upsert.mock.calls[0][0].update.files).toEqual(
+      input.files,
+    );
+  });
   test("upserts one draft per run chain", async () => {
     const db = { version: { upsert: vi.fn().mockResolvedValue({}) } };
     await saveCheckpoint(db as never, {

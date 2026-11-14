@@ -71,6 +71,28 @@ test("creating a project from the prompt opens it", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("a pasted key is rejected without creating a project, even with zero credits", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const input = page.getByRole("textbox", {
+    name: "Describe the website to build",
+  });
+  const submit = page.getByRole("button", { name: "Create project" });
+  await expect(async () => {
+    await input.fill("Build key sk-9Y5Q7Z2H8N4W6R3T1M0B9V8C7L6K5J4D");
+    await expect(submit).toBeEnabled({ timeout: 1000 });
+  }).toPass();
+  await submit.click();
+  await expect(
+    page.getByText(
+      "Remove API keys, tokens and connection strings from your request before sending it. Vibe doesn't store keys.",
+    ),
+  ).toBeVisible();
+  await expect(page).toHaveURL("/");
+  expect(await session.projectCount()).toBe(0);
+});
+
 test("projects page searches, filters and sorts through the URL", async ({
   page,
 }) => {
