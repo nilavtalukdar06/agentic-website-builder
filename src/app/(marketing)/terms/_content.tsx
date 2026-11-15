@@ -233,8 +233,11 @@ export const termsSections: ArticleSection[] = [
           paused sandbox can still be lost, in which case it is recreated from
           your latest saved version. Sandboxes of projects you haven&apos;t
           opened for 14 days are deleted; your saved versions stay, and the
-          preview is rebuilt the next time you open the project. Download or
-          export anything you can&apos;t afford to lose.
+          preview is rebuilt the next time you open the project. You can delete
+          a project at any time; this permanently removes its conversation,
+          saved versions, images and sandbox and can&apos;t be undone, and
+          credits already spent aren&apos;t refunded. Download or export
+          anything you can&apos;t afford to lose.
         </P>
         <P>
           To keep Vibe fast and fair, we limit how often you can start builds,

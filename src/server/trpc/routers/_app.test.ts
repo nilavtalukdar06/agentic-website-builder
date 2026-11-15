@@ -21,7 +21,9 @@ vi.mock("@/inngest/client", () => ({ inngest: { send } }));
 vi.mock("@/server/sandbox/workspace", () => workspace);
 vi.mock("@/server/storage/attachments", () => ({
   attachmentUrl: vi.fn(async (key: string) => `https://files.test/${key}`),
+  deleteAttachment: vi.fn(),
 }));
+vi.mock("@/server/sandbox/admin", () => ({ killSandbox: vi.fn() }));
 vi.mock("@/server/ai/gateway", () => gateway);
 
 const sonnet = {
@@ -301,6 +303,66 @@ describe("project.bySlug", () => {
     await expect(
       createCaller(ctx).project.bySlug({ slug: "" }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+describe("project.delete", () => {
+  const owned = {
+    ...project,
+    userId: "u1",
+    name: "Demo",
+    sandboxId: "sbx1",
+    operationId: null,
+    operationKind: null,
+    operationStartedAt: null,
+  };
+
+  function withTransactionTables(db: ReturnType<typeof signedIn>["db"]) {
+    Object.assign(db, {
+      guardEvent: {
+        create: vi.fn().mockResolvedValue({}),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      sandboxEvent: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    });
+    Object.assign(db.project, { delete: vi.fn().mockResolvedValue({}) });
+    db.project.findFirst.mockResolvedValue(owned);
+    db.attachment.findMany.mockResolvedValue([{ key: "users/u1/a.png" }]);
+  }
+
+  test("deletes the project, then its sandbox and uploaded images", async () => {
+    const { ctx, db } = signedIn();
+    withTransactionTables(db);
+    const { killSandbox } = await import("@/server/sandbox/admin");
+    const { deleteAttachment } = await import("@/server/storage/attachments");
+    await expect(
+      createCaller(ctx).project.delete({ projectId: "p1", name: "Demo" }),
+    ).resolves.toEqual({ deleted: true });
+    expect(
+      (db.project as unknown as { delete: ReturnType<typeof vi.fn> }).delete,
+    ).toHaveBeenCalledWith({ where: { id: "p1" } });
+    expect(killSandbox).toHaveBeenCalledWith("sbx1");
+    expect(deleteAttachment).toHaveBeenCalledWith("users/u1/a.png");
+  });
+
+  test("scopes the lookup to the signed-in user", async () => {
+    const { ctx, db } = signedIn("u2");
+    withTransactionTables(db);
+    db.project.findFirst.mockResolvedValue(null);
+    await expect(
+      createCaller(ctx).project.delete({ projectId: "p1", name: "Demo" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(db.project.findFirst).toHaveBeenCalledWith({
+      where: { id: "p1", userId: "u2" },
+    });
+  });
+
+  test("rejects an empty name before touching the database", async () => {
+    const { ctx, db } = signedIn();
+    await expect(
+      createCaller(ctx).project.delete({ projectId: "p1", name: "" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 });
 

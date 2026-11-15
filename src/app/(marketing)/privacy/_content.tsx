@@ -226,6 +226,13 @@ export const privacySections: ArticleSection[] = [
           Vibe&apos;s GitHub access in your GitHub application settings.
         </li>
         <li>
+          Deleting a project: when you delete a project in Vibe we permanently
+          remove its messages, saved versions, export records, the images you
+          attached to it and its sandbox. We keep credit and payment records,
+          and safety-check and resume records stay without a link to the
+          project.
+        </li>
+        <li>
           Sandboxes: deleted automatically once a project has been idle for 14
           days, or when no project uses them any more. Your saved versions stay
           and the preview is rebuilt when you open the project.

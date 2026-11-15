@@ -158,6 +158,7 @@ export function PatternsSection() {
                   building={false}
                   version={3}
                   projects={sampleProjects.slice(0, 4)}
+                  onDelete={() => {}}
                   onCollapse={() => {}}
                 />
                 <WorkspaceToolbar

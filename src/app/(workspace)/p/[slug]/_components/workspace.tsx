@@ -11,12 +11,14 @@ import {
 } from "@/components/ui/resizable";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ChatHeader } from "@/components/workspace/chat-header";
+import { DeleteProjectDialog } from "@/components/workspace/delete-project-dialog";
 import { MobileBar } from "@/components/workspace/mobile-bar";
 import { WorkspaceToolbar } from "@/components/workspace/workspace-toolbar";
 import { workspaceSearchParams } from "@/lib/search-params/workspace";
 import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
 import { ExportDialog } from "./export-dialog";
+import { useDeleteProject } from "./use-delete-project";
 import { useGithubExport } from "./use-github-export";
 import { ChatPanel } from "./chat-panel";
 import { CodePanel } from "./code-panel";
@@ -44,6 +46,8 @@ export function Workspace({
   );
   const restore = useRestoreVersion();
   const githubExport = useGithubExport(project.id);
+  const deleteProject = useDeleteProject();
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [
     { view: urlView, device, export: exportOpen, exportError },
     setParams,
@@ -83,6 +87,26 @@ export function Workspace({
       state={githubExport}
     />
   );
+  const deleteDialog = (
+    <DeleteProjectDialog
+      open={deleteOpen}
+      onOpenChange={(open) => {
+        setDeleteOpen(open);
+        if (!open) deleteProject.reset();
+      }}
+      projectName={project.name}
+      pending={deleteProject.isPending || deleteProject.isSuccess}
+      error={deleteProject.error?.message}
+      blockedReason={
+        project.building || project.busy || githubExport.active
+          ? "Wait for the current build or operation to finish."
+          : null
+      }
+      onConfirm={() =>
+        deleteProject.mutate({ projectId: project.id, name: project.name })
+      }
+    />
+  );
   const exportProps = {
     onExport: () => void setParams({ export: true, exportError: false }),
     exporting: githubExport.active || githubExport.pending,
@@ -100,6 +124,7 @@ export function Workspace({
       onViewVersion={isMobile ? undefined : viewCode}
       onRestoreVersion={restoreVersion}
       restoreDisabled={restoreDisabled}
+      onDelete={() => setDeleteOpen(true)}
       onCollapse={() => (isMobile ? setMobilePane("main") : setChatOpen(false))}
       collapseLabel={isMobile ? "Show preview" : undefined}
       collapseIcon={isMobile ? EyeIcon : undefined}
@@ -177,6 +202,7 @@ export function Workspace({
     return (
       <div className="flex h-svh flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
         {exportDialog}
+        {deleteDialog}
         <div
           className={cn(
             "flex min-h-0 flex-1 flex-col",
@@ -214,6 +240,7 @@ export function Workspace({
   return (
     <div className="flex h-svh flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
       {exportDialog}
+      {deleteDialog}
       {chatOpen ? (
         <ResizablePanelGroup orientation="horizontal" className="min-h-0">
           <ResizablePanel defaultSize="30%" minSize="22%" maxSize="50%">

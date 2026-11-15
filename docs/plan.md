@@ -628,6 +628,16 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 - **"…" menu:** Reload, Open in new tab, **Version history** (restore only), Theme. Not built: the screenshots' Change page, Share, Social & search, Supabase connect and the mic in the bar (voice input stays in the composer).
 - The chat opens first. The view is local state, not a URL param.
 
+### 6.6 Delete project and header overflow (owner's request, 15 November 2026)
+
+Neither is in the canvas (`~/Desktop/vibe-ui` has no delete control), so the pieces reuse existing components: the project switcher menu, `Dialog`, `Field`, `Input`, `Button` (destructive) and `Spinner`. **The owner should confirm the placement.**
+
+- **Header overflow:** the switcher button now shrinks (`shrink min-w-0`, the name truncates with the full name in its `title`) and the version badge and action buttons never shrink, so a long name (names come from the first sentence of the prompt, up to 48 characters, and the panel can be as narrow as 22%) can't push the history and collapse buttons out of the chat column. `e2e/delete-project.spec.ts` fails against the old header.
+- **Entry point:** **Delete project** (destructive item, after a separator) at the bottom of the project switcher menu, on desktop and on the mobile chat header. It is not on project cards or in the sidebar.
+- **Confirmation:** a dialog explains what goes (chat, versions, attached images, preview sandbox), that spent credits aren't refunded and that an exported GitHub repository stays on GitHub. The **Delete project** button stays disabled until the project's name is typed **exactly** (case-sensitive); the server checks the name again. While deleting, the dialog can't be dismissed; after success it goes to `/projects` with a "Project deleted" toast.
+- **Server:** `project.delete({ projectId, name })`, rate limited 20 per hour per user (`projectDelete`). One locked transaction (`projectTransaction`): name must match, refused with `CONFLICT` while a build is pending or an export, restore or wake holds the project, then it detaches `GuardEvent` and `SandboxEvent` rows (`projectId` → null) and deletes the `Project`. The foreign keys cascade to `Message`, `Attachment` (the rows of sent messages), `Version` and `GithubExport`. **After the commit** (so a failed database write never leaves rows pointing at deleted files) it kills the sandbox and deletes each attachment object from the bucket, best effort: any failure raises an alert with counts only. A sandbox that survives is caught by the orphan sweep (§9); an image that survives needs a manual delete, because nothing sweeps bucket objects of deleted rows.
+- **Kept on purpose:** `CreditLedger` rows (the usage page already shows a deleted project's activity without a name), and the exported GitHub repository.
+
 **Done when:** a full generation shows live in chat + overlay, the preview loads, Code mode browses/copies/downloads files and ZIP, and all three states match the canvas in light/dark.
 
 ---
@@ -708,7 +718,7 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 ### Rate limits (built)
 
 - **Mechanism:** a Postgres fixed-window counter (`ThrottleWindow`, one atomic upsert per request, `src/server/rate-limit.ts`) rather than `@upstash/ratelimit` or Inngest throttling. It adds no provider, rejects synchronously with `TOO_MANY_REQUESTS` and a readable wait (Inngest throttling would queue silently), and counters are purged after a day.
-- **tRPC:** `rateLimitedProcedure(...rules)` runs after the auth check and before input validation. Per user: `project.create` 10/hour and, with `message.send` and `message.retry`, 20 agent starts per 10 minutes; `credits.checkout` 10/hour; `github.start` and `github.retry` 10/hour; `sandbox.wake` 30 and `version.restore` 20 per 10 minutes. `security.test.ts` fails if a mutation loses its limit.
+- **tRPC:** `rateLimitedProcedure(...rules)` runs after the auth check and before input validation. Per user: `project.create` 10/hour and, with `message.send` and `message.retry`, 20 agent starts per 10 minutes; `credits.checkout` 10/hour; `github.start` and `github.retry` 10/hour; `sandbox.wake` 30 and `version.restore` 20 per 10 minutes; `project.delete` 20 per hour (added with §6.6). `security.test.ts` fails if a mutation loses its limit.
 - **Route handlers:** `POST /api/attachments` 40 and `POST /api/realtime/token` 120 per 10 minutes, answering 429 with `Retry-After`. Added in Phase 10: an Arcjet per-IP sliding-window limit runs in front of this on all six route handlers as an edge DoS safety net; it does not replace these per-user limits (see Phase 10).
 - **Auth:** Better Auth's own limiter now uses `storage: "database"` (a `rateLimit` table); its default memory store does not work across serverless instances. It is active in production builds only.
 
@@ -716,7 +726,7 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 
 - **Nightly job** (`cleanup-resources`, Inngest cron `0 4 * * *`): (1) deletes the sandbox of every project idle for **14 days** (`SANDBOX_IDLE_DAYS`) and clears `sandboxId` and `previewUrl` without changing the project's edited time, so the next open rebuilds from the latest Version; (2) deletes paused sandboxes no project references; (3) deletes uploads with no message after 24 hours, object first, then the row; (4) purges expired counters and old events. Every sweep is capped per run and alerts if something couldn't be removed.
 - **Orphan safety:** sandboxes are created with metadata `{ app: "vibe", database: <hash of the database host> }`, and the orphan sweep only lists paused sandboxes of this template carrying this database's tag. A development database can never delete production's sandboxes; sandboxes created before the tag are only retired through their project row.
-- **Deleted projects:** there is no project-delete feature, so nothing is orphaned that way; replaced and abandoned sandboxes are caught by the orphan sweep. If project deletion is ever added it must delete the sandbox and the bucket objects of its attachments.
+- **Deleted projects:** `project.delete` (§6.6) deletes the sandbox and the bucket objects of the project's attachments itself, after the database transaction commits. A failed sandbox kill is caught by the orphan sweep (the row no longer references it); a failed object delete only raises an alert.
 - **Resume health:** `SandboxEvent` records each resume (`RESUMED`), rebuild after a failed resume (`REBUILT`) and failure (`FAILED`) from wake, the run and the export. `monitor-sandboxes` (cron every 30 minutes) alerts when at least 3 attempts happened in the window and half or more were rebuilds or failures.
 - **Alerts:** `raiseAlert` writes a `[alert]` line to the server log (filterable in the Vercel log drain) and, when `ALERT_WEBHOOK_URL` is set, posts to a Slack- or Discord-compatible incoming webhook. Payloads carry technical references only, never user data. Delivery failures never throw.
 
@@ -845,7 +855,7 @@ ARCJET_ENV=development  # dev/e2e only; without it Arcjet can't fingerprint loop
 - [x] Phase 3.1: public pages (`/terms`, `/privacy`; `/docs`, `/contact` and `/status` were built, then removed at the owner's request)
 - [x] Phase 4: sidebar shell, Home, Projects
 - [x] Phase 5: E2B template with skills, the Builder (Inngest + AI SDK, AI Gateway models; web search when the user references a website), input and output guardrails, sandbox lifecycle (pause instead of kill, checkpoints, recovery), realtime events, metering, image attachments. Simplified on 13 November 2026 and the dropped 5b/5c code removed (§5.13)
-- [x] Phase 6: workspace (chat, preview + overlay, read-only code) with the §6.4 backend (follow-ups, stop, retry, restore, wake) and the mobile workspace (§6.5); live generation checked, both findings fixed, canvas signed off by the owner
+- [x] Phase 6: workspace (chat, preview + overlay, read-only code, delete project §6.6) with the §6.4 backend (follow-ups, stop, retry, restore, wake) and the mobile workspace (§6.5); live generation checked, both findings fixed, canvas signed off by the owner
 - [x] Phase 7: credits ledger, Stripe top-ups, usage page; test-mode payments confirmed successful by the owner. The payment issue was resolved by applying the missing database migration.
 - [x] Phase 8: durable public/private GitHub export, recovery, retry, realtime status and desktop/mobile re-export
 - [x] Phase 9: rate limits, nightly cleanup and sandbox-resume alerting, Stripe webhook alerting, security headers and audit, accessibility audit with fixes, and the Vitest and Playwright coverage. Production deployment was removed from the plan at the owner's request

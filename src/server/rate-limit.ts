@@ -14,6 +14,7 @@ const HOUR = 60 * MINUTE;
 export const rateRules = {
   agent: { name: "agent", limit: 20, windowMs: 10 * MINUTE },
   projectCreate: { name: "project-create", limit: 10, windowMs: HOUR },
+  projectDelete: { name: "project-delete", limit: 20, windowMs: HOUR },
   checkout: { name: "checkout", limit: 10, windowMs: HOUR },
   githubExport: { name: "github-export", limit: 10, windowMs: HOUR },
   sandbox: { name: "sandbox", limit: 30, windowMs: 10 * MINUTE },

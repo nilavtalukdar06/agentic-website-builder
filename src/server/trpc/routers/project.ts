@@ -15,7 +15,13 @@ import {
   protectedProcedure,
   rateLimitedProcedure,
 } from "../init";
+import {
+  deleteProjectRecords,
+  removeProjectResources,
+} from "@/server/projects/delete";
 import { projectOperation } from "@/server/projects/operations";
+import { killSandbox } from "@/server/sandbox/admin";
+import { deleteAttachment } from "@/server/storage/attachments";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
 export const projectSelect = {
@@ -215,5 +221,23 @@ export const projectRouter = createTRPCRouter({
         code: "CONFLICT",
         message: "Couldn't find a free project URL. Try again.",
       });
+    }),
+  delete: rateLimitedProcedure(rateRules.projectDelete)
+    .input(
+      z.object({
+        projectId: z.string().min(1).max(64),
+        name: z.string().min(1).max(200),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const resources = await deleteProjectRecords(ctx.db, {
+        ...input,
+        userId: ctx.session.user.id,
+      });
+      await removeProjectResources(resources, {
+        killSandbox,
+        deleteObject: deleteAttachment,
+      });
+      return { deleted: true as const };
     }),
 });

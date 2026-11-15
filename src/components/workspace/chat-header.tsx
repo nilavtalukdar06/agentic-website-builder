@@ -10,6 +10,7 @@ import {
   LayoutGridIcon,
   type LucideIcon,
   PanelLeftCloseIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,7 @@ export type ChatHeaderProps = {
   onViewVersion?: (number: number) => void;
   onRestoreVersion?: (number: number) => void;
   restoreDisabled?: boolean;
+  onDelete?: () => void;
   onCollapse?: () => void;
   collapseLabel?: string;
   collapseIcon?: LucideIcon;
@@ -115,6 +117,7 @@ export function ChatHeader({
   onViewVersion,
   onRestoreVersion,
   restoreDisabled,
+  onDelete,
   onCollapse,
   collapseLabel = "Hide chat",
   collapseIcon: CollapseIcon = PanelLeftCloseIcon,
@@ -123,7 +126,10 @@ export function ChatHeader({
   return (
     <div
       data-slot="chat-header"
-      className={cn("flex h-13 items-center gap-1 px-2 text-sm", className)}
+      className={cn(
+        "flex h-13 min-w-0 items-center gap-1 px-2 text-sm",
+        className,
+      )}
     >
       <Link
         href="/"
@@ -138,15 +144,17 @@ export function ChatHeader({
             <Button
               variant="ghost"
               size="sm"
-              className="min-w-0 font-medium"
+              className="min-w-0 shrink justify-start font-medium"
               aria-label={`${projectName}. Switch project`}
             />
           }
         >
-          <span className="truncate">{projectName}</span>
+          <span className="min-w-0 truncate" title={projectName}>
+            {projectName}
+          </span>
           <ChevronDownIcon
             data-icon="inline-end"
-            className="text-muted-foreground"
+            className="shrink-0 text-muted-foreground"
           />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
@@ -177,6 +185,17 @@ export function ChatHeader({
               </DropdownMenuGroup>
             </>
           ) : null}
+          {onDelete ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem variant="destructive" onClick={onDelete}>
+                  <Trash2Icon />
+                  Delete project
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
       {building ? (
@@ -189,7 +208,7 @@ export function ChatHeader({
           v{version}
         </Badge>
       ) : null}
-      <div className="ml-auto flex items-center gap-0.5">
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">
         {versions && versions.length > 0 ? (
           <DropdownMenu>
             <Tooltip>

@@ -10,7 +10,9 @@ vi.mock("@/server/sandbox/workspace", () => ({
 vi.mock("@/inngest/publisher", () => ({ createPublisher: () => vi.fn() }));
 vi.mock("@/server/storage/attachments", () => ({
   attachmentUrl: vi.fn(),
+  deleteAttachment: vi.fn(),
 }));
+vi.mock("@/server/sandbox/admin", () => ({ killSandbox: vi.fn() }));
 vi.mock("@/server/ai/gateway", () => ({
   findAgentModel: vi.fn(),
   getAgentModels: vi.fn(),
@@ -90,6 +92,7 @@ describe("tRPC surface", () => {
       "message.retry",
       "message.send",
       "project.create",
+      "project.delete",
       "sandbox.wake",
       "version.restore",
     ]);
