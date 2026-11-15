@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { GithubIcon } from "@/components/icons/github-icon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,10 +26,19 @@ import {
   FieldTitle,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { authClient } from "@/lib/auth-client";
-import { exportLabels, repositoryName } from "@/lib/github-export";
+import {
+  exportLabels,
+  exportProgress,
+  repositoryName,
+} from "@/lib/github-export";
 import type { GithubExportState } from "./use-github-export";
 
 export function ExportDialog({
@@ -80,6 +89,23 @@ export function ExportDialog({
     }
   }
   const blocked = building || !!data?.busy || pending || connecting;
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+  const wasActive = useRef(false);
+  const jobStatus = job?.status;
+  useEffect(() => {
+    if (active) {
+      wasActive.current = true;
+      return;
+    }
+    if (wasActive.current && jobStatus === "SUCCEEDED") {
+      wasActive.current = false;
+      const timer = setTimeout(() => onOpenChangeRef.current(false), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [active, jobStatus]);
   if (!open) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -132,12 +158,14 @@ export function ExportDialog({
             ) : null}
             {active && job ? (
               <div role="status" className="space-y-3">
-                <p className="font-medium">{exportLabels[job.status]}</p>
+                <Progress value={exportProgress[job.status]}>
+                  <ProgressLabel>{exportLabels[job.status]}</ProgressLabel>
+                  <ProgressValue />
+                </Progress>
                 <p className="text-sm text-muted-foreground">
                   Exporting version {job.versionNumber}. You can close this
                   dialog and return later.
                 </p>
-                <Skeleton className="h-2 w-full" />
               </div>
             ) : (
               <>

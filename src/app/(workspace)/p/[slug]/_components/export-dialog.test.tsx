@@ -26,16 +26,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   linkSocial.mockResolvedValue({ error: null });
 });
-function show(
-  options: {
-    open?: boolean;
-    pending?: boolean;
-    loadError?: boolean;
-    active?: boolean;
-    data?: Partial<Data>;
-  } = {},
-) {
-  const state = {
+function buildState(options: {
+  pending?: boolean;
+  loadError?: boolean;
+  active?: boolean;
+  data?: Partial<Data>;
+}) {
+  return {
     status: {
       isPending: !!options.pending,
       isError: !!options.loadError,
@@ -54,6 +51,17 @@ function show(
     start: { mutate: vi.fn(), error: null },
     retry: { mutate: vi.fn(), error: null },
   } as unknown as GithubExportState;
+}
+function show(
+  options: {
+    open?: boolean;
+    pending?: boolean;
+    loadError?: boolean;
+    active?: boolean;
+    data?: Partial<Data>;
+  } = {},
+) {
+  const state = buildState(options);
   render(
     <ExportDialog
       open={options.open ?? true}
@@ -120,7 +128,51 @@ test("private is the default and public requests only public repository access",
 test("active jobs show persisted progress and no success", () => {
   show({ active: true, data: { job: { ...job, status: "RECOVERING" } } });
   expect(screen.getByRole("status")).toHaveTextContent("Waking up the sandbox");
+  expect(screen.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "35",
+  );
   expect(screen.queryByText("Pushed to GitHub")).toBeNull();
+});
+test("a finished export closes the dialog on its own", () => {
+  vi.useFakeTimers();
+  try {
+    const onOpenChange = vi.fn();
+    const active = { ...job, status: "PUSHING" as const };
+    const { rerender } = render(
+      <ExportDialog
+        open
+        onOpenChange={onOpenChange}
+        projectId="p1"
+        slug="demo"
+        building={false}
+        oauthError={false}
+        state={buildState({ active: true, data: { job: active } })}
+      />,
+    );
+    rerender(
+      <ExportDialog
+        open
+        onOpenChange={onOpenChange}
+        projectId="p1"
+        slug="demo"
+        building={false}
+        oauthError={false}
+        state={buildState({
+          active: false,
+          data: {
+            githubRepo: "owner/demo",
+            job: { ...active, status: "SUCCEEDED" },
+          },
+        })}
+      />,
+    );
+    expect(onOpenChange).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1500);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 test("retry uses the existing failed job", () => {
   const state = show({

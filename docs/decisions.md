@@ -422,6 +422,11 @@ _Superseded by the Phase 5 simplification (13 November 2026): kept as history._
 - **Header overflow** → the switcher button gets `shrink min-w-0` and the right-hand group `shrink-0`. The shared `Button` has `shrink-0` in its base classes, so the old `min-w-0` alone never let the name truncate → shortening names on creation (the overflow also happens with a narrow panel and a normal name).
 - **Legal** → Privacy §6 gains a bullet on project deletion and Terms §9 a sentence. **Both need the owner's review.**
 
+## Export dialog live progress and auto-close (15 November 2026)
+
+- **Live progress** → reuse the existing shadcn/Base UI `Progress` with a stepped `exportProgress` map (QUEUED 10 → RECOVERING 35 → PREPARING 60 → PUSHING 85 → SUCCEEDED 100) driven by the persisted/realtime job status → the previous indeterminate `Skeleton` bar (gave no sense of advancement) or a time-based animation (the real stages are discrete and already published). No new package: `Progress` was already in the component inventory (§plan line 200).
+- **Auto-close on success** → close the dialog ~1.5 s after a push the user was actively watching reaches `SUCCEEDED`, gated on a `wasActive` ref so a reopened persisted-success dialog never self-closes → closing immediately (the user wouldn't see the bar complete) or never (the original bug; the dialog stayed open after success). The success toast remains the durable notification, and the "On GitHub" link/re-export stays reachable from the toolbar.
+
 ## Phase 11 — agent v2 (proposed 15 November 2026, not built)
 
 Design in `docs/agent-v2.md`. These are proposals until the owner approves; each is re-checked against the package-first rule (§0.1) when its sub-phase starts.

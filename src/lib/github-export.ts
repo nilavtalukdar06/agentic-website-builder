@@ -19,6 +19,15 @@ export const exportLabels: Record<ExportStatus, string> = {
   FAILED: "Export failed",
 };
 
+export const exportProgress: Record<ExportStatus, number> = {
+  QUEUED: 10,
+  RECOVERING: 35,
+  PREPARING: 60,
+  PUSHING: 85,
+  SUCCEEDED: 100,
+  FAILED: 100,
+};
+
 export const isExportActive = (status?: string | null) =>
   status !== undefined &&
   status !== null &&

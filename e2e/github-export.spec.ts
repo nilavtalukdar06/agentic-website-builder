@@ -129,12 +129,7 @@ test("queues a frozen version, survives reload, and shows persisted success with
     0,
   );
   await session.setExportStatus(job!.id, "SUCCEEDED");
-  await expect(
-    page
-      .locator('[data-slot="dialog-content"] [data-slot="alert-title"]')
-      .filter({ hasText: "Pushed to GitHub" }),
-  ).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByRole("link", { name: "On GitHub" })).toHaveAttribute(
     "href",
     "https://github.com/vibe-test/demo",
