@@ -2,6 +2,10 @@
 
 Package-first log (see `docs/plan.md` §0.1). One line per decision: feature → package → why → rejected alternatives.
 
+## Repo hygiene (15 November 2026)
+
+- **Prettier scope** → added `.agents` and `.claude` to `.prettierignore` → `bun run format` was reformatting vendored skill docs synced via `skills-lock.json` (third-party content, not project source) → leaving them in scope (every repo-wide format run would churn vendor files and fight the skill sync). No new package. Full repo pass otherwise confirmed clean: format, lint, `tsc --noEmit`, 797 unit tests and a production build all pass with no changes needed; no stray temp scripts, debug files or unjustified comments found.
+
 ## Documentation (15 November 2026)
 
 - **README diagrams** → Excalidraw: each diagram is committed as an editable `.excalidraw` source plus a rendered `.svg` in `docs/diagrams/`, embedded in `README.md` as images → Mermaid in Markdown (GitHub renders it, but the owner asked for Excalidraw, and Mermaid ER and sequence layouts can't show field-level FK anchors or annotated side notes), PNG exports (blurry when zoomed, larger) or diagrams in an external tool (drift from the repo). No new package; nothing is added to `package.json`.
