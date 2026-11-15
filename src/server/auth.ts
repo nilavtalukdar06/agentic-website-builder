@@ -26,6 +26,7 @@ export const auth = betterAuth({
   },
   account: {
     encryptOAuthTokens: true,
+    updateAccountOnSignIn: false,
   },
   databaseHooks: {
     user: {

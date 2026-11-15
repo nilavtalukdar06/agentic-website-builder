@@ -179,6 +179,29 @@ test("failed push retries the same job with frozen repository and commit", async
   });
 });
 
+test("an auth failure offers a reconnect instead of a retry that cannot work", async ({
+  page,
+}) => {
+  await session.addGithubAccount();
+  await page.goto(`/p/${slug}?export=true`);
+  await page
+    .getByRole("button", { name: "Create repository and export" })
+    .click();
+  await expect
+    .poll(async () => (await session.exportState(projectId))?.status)
+    .toBeDefined();
+  const job = (await session.exportState(projectId))!;
+  await session.setExportStatus(job.id, "FAILED");
+  await session.setGithubScope(null);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Connect GitHub to retry", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry export", exact: true }),
+  ).toHaveCount(0);
+});
+
 test("concurrent submissions create one reservation and refuse generation/restore", async ({
   page,
 }) => {

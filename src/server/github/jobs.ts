@@ -148,8 +148,14 @@ export async function failExport(
       },
       data: { status: "FAILED", error: exportErrors[code], errorCode: code },
     });
-    if (failed.count > 0)
+    if (failed.count > 0) {
       await clearOperation(tx, input.projectId, input.exportId);
+      if (code === "AUTH_REQUIRED")
+        await tx.account.updateMany({
+          where: { userId: input.userId, providerId: "github" },
+          data: { scope: null },
+        });
+    }
     return failed.count;
   });
   if (changed > 0)

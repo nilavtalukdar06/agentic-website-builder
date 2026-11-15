@@ -104,6 +104,9 @@ export async function createTestSession(name: string) {
     addGithubAccount: async (scope = "repo") => {
       await sql`INSERT INTO "account" (id, "accountId", "providerId", "userId", scope, "createdAt", "updatedAt") VALUES (${randomUUID()}, ${randomUUID()}, 'github', ${userId}, ${scope}, now(), now())`;
     },
+    setGithubScope: async (scope: string | null) => {
+      await sql`UPDATE "account" SET scope = ${scope}, "updatedAt" = now() WHERE "providerId" = 'github' AND "userId" = ${userId}`;
+    },
     exportState: async (projectId: string) => {
       const [row] =
         await sql`SELECT id, status, attempt, private, name, "versionId", "versionNumber", repository, "commitSha" FROM "GithubExport" WHERE "projectId" = ${projectId} AND "userId" = ${userId} ORDER BY "createdAt" DESC LIMIT 1`;

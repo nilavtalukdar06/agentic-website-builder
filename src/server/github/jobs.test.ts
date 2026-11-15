@@ -18,6 +18,7 @@ const tx = {
   $queryRaw: vi.fn(),
   project: { findFirst: vi.fn(), updateMany: vi.fn() },
   githubExport: { findFirst: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  account: { updateMany: vi.fn() },
 };
 const transaction = vi.fn(async (fn: (arg: typeof tx) => unknown) => fn(tx));
 const db = { ...tx, $transaction: transaction } as unknown as PrismaClient;
@@ -37,6 +38,7 @@ beforeEach(() => {
   });
   tx.githubExport.updateMany.mockResolvedValue({ count: 1 });
   tx.githubExport.update.mockResolvedValue({ id: "e1", runId: "run1" });
+  tx.account.updateMany.mockResolvedValue({ count: 1 });
 });
 test("only one run may claim an attempt, and terminal deliveries do nothing", async () => {
   await claimExport(db, request, "run1");
@@ -123,6 +125,39 @@ test("failure cannot overwrite success or a newer attempt; errors are sanitized"
   );
   expect(tx.project.updateMany).not.toHaveBeenCalled();
   expect(publish).not.toHaveBeenCalled();
+});
+test("an auth failure drops the stored scope so the dialog can offer a reconnect", async () => {
+  await failExport(
+    db,
+    request,
+    new Error(
+      "Connect GitHub and allow repository access, then retry the export.",
+    ),
+  );
+  expect(tx.githubExport.updateMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({ errorCode: "AUTH_REQUIRED" }),
+    }),
+  );
+  expect(tx.account.updateMany).toHaveBeenCalledWith({
+    where: { userId: "u1", providerId: "github" },
+    data: { scope: null },
+  });
+});
+test("other failures leave the stored scope alone", async () => {
+  await failExport(db, request, new Error("transport"));
+  expect(tx.account.updateMany).not.toHaveBeenCalled();
+});
+test("a losing auth failure must not drop the scope of the attempt that won", async () => {
+  tx.githubExport.updateMany.mockResolvedValue({ count: 0 });
+  await failExport(
+    db,
+    request,
+    new Error(
+      "Connect GitHub and allow repository access, then retry the export.",
+    ),
+  );
+  expect(tx.account.updateMany).not.toHaveBeenCalled();
 });
 test("ambiguous enqueue failure cannot release a worker's claimed reservation", async () => {
   await failExport(db, request, new Error("transport"), true);
