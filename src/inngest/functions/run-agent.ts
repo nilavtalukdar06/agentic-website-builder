@@ -28,6 +28,7 @@ import {
   previewUrlFor,
   snapshotSandbox,
 } from "@/server/sandbox/sandbox";
+import { detectAgentPromptInjection } from "@/server/arcjet-guard";
 import { builderSpec } from "../agent/agents";
 import { cleanTitle, historyToMessages } from "../agent/conversation";
 import { classifyText } from "../agent/guardrails/classifier";
@@ -236,6 +237,24 @@ export const runAgent = inngest.createFunction(
     const guard = resume
       ? allowed
       : await step.run("guard-classify", async () => {
+          const arcjetPi = await detectAgentPromptInjection(setup.prompt).catch(
+            (error: unknown) => {
+              console.warn(
+                "[run-agent] arcjet prompt-injection guard failed",
+                error,
+              );
+              return { blocked: false, skipped: true };
+            },
+          );
+          if (arcjetPi.blocked) {
+            return {
+              verdict: "block" as const,
+              categories: ["prompt-injection"],
+              skipped: false,
+              call: null as BilledCall | null,
+              usage: emptyUsage as TokenUsage,
+            };
+          }
           try {
             const result = await classifyText(setup.prompt, "input");
             return {

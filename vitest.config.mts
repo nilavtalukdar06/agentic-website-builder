@@ -23,6 +23,7 @@ export default defineConfig({
       AWS_ACCESS_KEY_ID: "test-access-key",
       AWS_SECRET_ACCESS_KEY: "test-secret-key",
       AWS_ENDPOINT_URL_S3: "https://storage.test.neon.tech",
+      ARCJET_KEY: "test-arcjet-key",
     },
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],

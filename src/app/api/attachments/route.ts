@@ -4,6 +4,10 @@ import {
   checkAttachment,
   isAttachmentType,
 } from "@/lib/attachments";
+import {
+  arcjetDenialResponse,
+  ajBrowserBotWithRateLimit,
+} from "@/server/arcjet";
 import { db } from "@/server/db";
 import { consumeRateLimit, rateRules } from "@/server/rate-limit";
 import { getSession } from "@/server/session";
@@ -11,7 +15,13 @@ import { attachmentKey, storeAttachment } from "@/server/storage/attachments";
 
 export const dynamic = "force-dynamic";
 
+const ajAttachments = ajBrowserBotWithRateLimit(30, 60);
+
 export async function POST(request: Request) {
+  const arcjetDecision = await ajAttachments.protect(request);
+  const arcjetDenial = arcjetDenialResponse(arcjetDecision);
+  if (arcjetDenial) return arcjetDenial;
+
   const session = await getSession();
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });

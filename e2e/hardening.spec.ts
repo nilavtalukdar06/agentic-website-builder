@@ -48,6 +48,18 @@ test("uploads are limited per user and answer 429 with Retry-After", async ({
   });
 });
 
+test("Arcjet Shield denies a suspicious request", async ({ page }) => {
+  let denied = false;
+  for (let i = 0; i < 10 && !denied; i++) {
+    const response = await page.request.post("/api/realtime/token", {
+      headers: { "x-arcjet-suspicious": "true" },
+      data: { projectId: "anything" },
+    });
+    denied = response.status() === 403;
+  }
+  expect(denied).toBe(true);
+});
+
 test("the realtime token endpoint is limited per user", async ({ page }) => {
   await session.exhaustRateLimit("realtime-token", 10 * 60_000);
   const response = await page.request.post("/api/realtime/token", {

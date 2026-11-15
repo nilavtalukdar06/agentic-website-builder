@@ -34,6 +34,7 @@ export const env = createEnv({
     INNGEST_EVENT_KEY: z.string().min(1).optional(),
     INNGEST_SIGNING_KEY: z.string().min(1).optional(),
     ALERT_WEBHOOK_URL: z.url().optional(),
+    ARCJET_KEY: z.string().min(1),
   },
   clientPrefix: "NEXT_PUBLIC_",
   client: {
@@ -65,6 +66,7 @@ export const env = createEnv({
     INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
     INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
     ALERT_WEBHOOK_URL: process.env.ALERT_WEBHOOK_URL,
+    ARCJET_KEY: process.env.ARCJET_KEY,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },
   emptyStringAsUndefined: true,

@@ -1,9 +1,16 @@
+import { arcjetDenialResponse, ajPerIpRateLimit } from "@/server/arcjet";
 import { fulfillCheckout } from "@/server/billing/fulfill";
 import { stripeProvider } from "@/server/billing/payments";
 import { db } from "@/server/db";
 import { raiseAlert } from "@/server/ops/alert";
 
+const ajStripeWebhook = ajPerIpRateLimit(60, 60);
+
 export async function POST(request: Request) {
+  const arcjetDecision = await ajStripeWebhook.protect(request);
+  const arcjetDenial = arcjetDenialResponse(arcjetDecision);
+  if (arcjetDenial) return arcjetDenial;
+
   const signature = request.headers.get("stripe-signature");
   if (!signature) return new Response("Missing signature", { status: 400 });
   let event;

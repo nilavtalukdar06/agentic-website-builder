@@ -2,6 +2,10 @@ import { getClientSubscriptionToken } from "inngest/react";
 import { z } from "zod";
 import { projectChannel, projectTopics } from "@/inngest/channels";
 import { inngest } from "@/inngest/client";
+import {
+  arcjetDenialResponse,
+  ajBrowserBotWithRateLimit,
+} from "@/server/arcjet";
 import { db } from "@/server/db";
 import { consumeRateLimit, rateRules } from "@/server/rate-limit";
 import { getSession } from "@/server/session";
@@ -10,7 +14,13 @@ export const dynamic = "force-dynamic";
 
 const body = z.object({ projectId: z.string().min(1).max(64) });
 
+const ajRealtimeToken = ajBrowserBotWithRateLimit(60, 60);
+
 export async function POST(request: Request) {
+  const arcjetDecision = await ajRealtimeToken.protect(request);
+  const arcjetDenial = arcjetDenialResponse(arcjetDecision);
+  if (arcjetDenial) return arcjetDenial;
+
   const session = await getSession();
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });

@@ -168,6 +168,14 @@ export const privacySections: ArticleSection[] = [
           <li>
             <Strong>Stripe</Strong>: processes top-up payments.
           </li>
+          <li>
+            <Strong>Arcjet</Strong>: protects the app from abuse. It inspects
+            request metadata (such as your IP address and headers) on every API
+            route to block malicious traffic, bots and request floods, and
+            screens your prompt for prompt-injection attempts before the agent
+            acts on it. It does not receive your account details or project
+            code.
+          </li>
         </UL>
         <P>
           We may also disclose data if the law requires it, or to protect our

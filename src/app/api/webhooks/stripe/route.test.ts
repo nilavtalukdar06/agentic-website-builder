@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const { verifyWebhook, fulfillCheckout, raiseAlert } = vi.hoisted(() => ({
-  verifyWebhook: vi.fn(),
-  fulfillCheckout: vi.fn(),
-  raiseAlert: vi.fn(),
+const { verifyWebhook, fulfillCheckout, raiseAlert, protect } = vi.hoisted(
+  () => ({
+    verifyWebhook: vi.fn(),
+    fulfillCheckout: vi.fn(),
+    raiseAlert: vi.fn(),
+    protect: vi.fn(),
+  }),
+);
+vi.mock("@/server/arcjet", () => ({
+  ajPerIpRateLimit: () => ({ protect }),
+  arcjetDenialResponse: (decision: { denied: boolean }) =>
+    decision.denied
+      ? Response.json({ error: "Forbidden" }, { status: 403 })
+      : null,
 }));
 vi.mock("@/server/ops/alert", () => ({ raiseAlert }));
 vi.mock("@/server/billing/payments", () => ({
@@ -20,6 +30,12 @@ const request = (signature?: string) =>
 describe("Stripe webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    protect.mockResolvedValue({ denied: false });
+  });
+  it("rejects requests Arcjet denies before checking the signature", async () => {
+    protect.mockResolvedValue({ denied: true });
+    expect((await POST(request("valid"))).status).toBe(403);
+    expect(verifyWebhook).not.toHaveBeenCalled();
   });
   it("rejects absent or invalid signatures", async () => {
     expect((await POST(request())).status).toBe(400);

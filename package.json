@@ -27,6 +27,8 @@
     "agent:smoke": "bun --conditions=react-server scripts/agent-smoke.ts"
   },
   "dependencies": {
+    "@arcjet/guard": "^1.15.0",
+    "@arcjet/next": "^1.15.0",
     "@aws-sdk/client-s3": "^3.1166.0",
     "@aws-sdk/s3-presigned-post": "^3.1166.0",
     "@aws-sdk/s3-request-presigner": "^3.1166.0",

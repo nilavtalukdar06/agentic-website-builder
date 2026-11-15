@@ -6,8 +6,16 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   storeAttachment: vi.fn(),
   consume: vi.fn(),
+  protect: vi.fn(),
 }));
 
+vi.mock("@/server/arcjet", () => ({
+  ajBrowserBotWithRateLimit: () => ({ protect: mocks.protect }),
+  arcjetDenialResponse: (decision: { denied: boolean }) =>
+    decision.denied
+      ? Response.json({ error: "Forbidden" }, { status: 403 })
+      : null,
+}));
 vi.mock("@/server/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/server/db", () => ({
   db: { attachment: { create: mocks.create } },
@@ -48,9 +56,16 @@ beforeEach(() => {
   );
   mocks.storeAttachment.mockReset().mockResolvedValue(undefined);
   mocks.consume.mockReset().mockResolvedValue({ allowed: true, remaining: 39 });
+  mocks.protect.mockReset().mockResolvedValue({ denied: false });
 });
 
 describe("POST /api/attachments", () => {
+  test("rejects requests Arcjet denies before touching the session", async () => {
+    mocks.protect.mockResolvedValue({ denied: true });
+    expect((await POST(upload(png()))).status).toBe(403);
+    expect(mocks.getSession).not.toHaveBeenCalled();
+  });
+
   test("rejects signed-out callers", async () => {
     mocks.getSession.mockResolvedValue(null);
     expect((await POST(upload(png()))).status).toBe(401);
