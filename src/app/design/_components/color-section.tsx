@@ -52,7 +52,7 @@ function ThemePanel({
           {mode === "light" ? ":root" : ".dark"}
         </span>
       </h3>
-      <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
         {tokens.map((token) => (
           <Swatch key={token.name} token={token} mode={mode} />
         ))}
@@ -67,7 +67,7 @@ export function ColorSection() {
       id="color"
       description="Neutral greys, 1px borders, no shadows. Color is reserved for focus rings, status and third-party logos."
     >
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <ThemePanel mode="light" title="Color" tokens={canvasTokens} />
         <ThemePanel mode="dark" title="Color" tokens={canvasTokens} />
       </div>
@@ -86,7 +86,7 @@ export function ColorSection() {
             </Badge>
           ))}
         </div>
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <ThemePanel
             mode="light"
             title="Derived"
@@ -103,7 +103,7 @@ export function ColorSection() {
         title="Contrast"
         description="Measured live against the active theme. Text pairs must reach AA (4.5:1)."
       >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {contrastPairs.map((pair) => (
             <ColorPair key={pair.name} {...pair} />
           ))}

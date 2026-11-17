@@ -67,7 +67,7 @@ export function RecentProjects() {
         <div
           role="group"
           aria-label="Project views"
-          className="flex min-w-0 items-center gap-0.5 overflow-x-auto rounded-full border p-1"
+          className="flex min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto rounded-full border p-1"
         >
           <Link
             href="/projects"
@@ -87,7 +87,7 @@ export function RecentProjects() {
           href="/projects"
           className={`${pill} shrink-0 font-medium text-foreground hover:bg-muted`}
         >
-          Browse all
+          <span className="max-[22.5rem]:sr-only">Browse all</span>
           <ArrowRightIcon />
         </Link>
       </div>

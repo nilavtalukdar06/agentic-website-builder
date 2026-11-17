@@ -32,7 +32,7 @@ export function BrandSection() {
       id="brand"
       description="One rounded V filled with an orange to pink to violet gradient, the same colours as the Home and sign-in gradient. It looks the same in both themes, so it works on any background."
     >
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label="Lockup · light" scope="light">
           <Logo size={36} />
         </Tile>

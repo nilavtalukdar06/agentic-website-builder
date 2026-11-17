@@ -629,6 +629,8 @@ Below the `md` breakpoint (768 px, `useIsMobile`) the resizable split is replace
 - **"…" menu:** Reload, Open in new tab, **Version history** (restore only), Theme. Not built: the screenshots' Change page, Share, Social & search, Supabase connect and the mic in the bar (voice input stays in the composer).
 - The chat opens first. The view is local state, not a URL param.
 
+**Every other screen is also kept usable from 320 px up (18 November 2026):** no page scrolls sideways at 320, 375 or 768 px; grids start with `grid-cols-1`, and wide demo or table content scrolls inside its own frame. `e2e/responsive.spec.ts` checks it. See `docs/decisions.md`.
+
 ### 6.6 Delete project and header overflow (owner's request, 15 November 2026)
 
 Neither is in the canvas (`~/Desktop/vibe-ui` has no delete control), so the pieces reuse existing components: the project switcher menu, `Dialog`, `Field`, `Input`, `Button` (destructive) and `Spinner`. **The owner should confirm the placement.**

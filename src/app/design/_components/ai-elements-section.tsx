@@ -147,7 +147,7 @@ export function AiElementsSection() {
       id="ai-elements"
       description="Vercel AI Elements (Base UI build) with static sample data."
     >
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Example title="Conversation · Message · Reasoning · Task">
           <Conversation className="h-130 rounded-lg border">
             <ConversationContent>
@@ -309,7 +309,7 @@ export function AiElementsSection() {
 
         <Example title="WebPreview" className="lg:col-span-2">
           <WebPreview defaultUrl={samplePreviewUrl} className="h-96">
-            <WebPreviewNavigation>
+            <WebPreviewNavigation className="overflow-x-auto">
               <WebPreviewNavigationButton tooltip="Back" disabled>
                 <ArrowLeftIcon className="size-4" />
               </WebPreviewNavigationButton>
@@ -343,7 +343,7 @@ export function AiElementsSection() {
         </Example>
 
         <Example title="FileTree · CodeBlock" className="lg:col-span-2">
-          <div className="grid gap-4 lg:grid-cols-[16rem_1fr]">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[16rem_1fr]">
             <FileTree
               defaultExpanded={new Set(["app", "components", "lib"])}
               selectedPath={selectedPath}

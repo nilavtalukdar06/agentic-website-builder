@@ -340,6 +340,16 @@ _Superseded by the Phase 5 simplification (13 November 2026): kept as history._
 - **One view at a time under 768 px** → `useIsMobile` (already in `src/hooks`) switches `Workspace` between the desktop split and `MobileWorkspace` (chat, or preview / code with a bottom bar) → a third resizable layout, or CSS-only hiding, which would mount both panels and open two realtime subscriptions.
 - **Bottom bar and "…" menu** → built from existing `Button` (`accent`, `chip`), `DropdownMenu` and `ThemeToggle`; the version list is shared with the chat header through `VersionHistoryItems`. No new package.
 
+## Mobile responsiveness pass (owner's request, 18 November 2026)
+
+- **Method** → rendered every public page and the shell, home, grid, sidebar sheet, chat header, mobile bar, composer and loading states at 320, 375 and 768 px and measured horizontal overflow, instead of reading class names only. The signed-in pages need a database, so they were checked from source plus the same components rendered with sample data, and `e2e/responsive.spec.ts` covers them where the database env exists → a visual-only review.
+- **Grids with no column template** → `grid gap-4 lg:grid-cols-2` has an `auto` implicit column, which grows to the width of a wide child (a chart, a table, the conversation demo) and pushes the page sideways on phones. Those grids now start with `grid-cols-1` (`minmax(0, 1fr)`): every `/design` section, the Usage stat and chart grids and the Usage loading skeleton. `/design` scrolled sideways at 320 and 375 px before.
+- **Showcase-only fixes** → the `ChatHeader · WorkspaceToolbar` frame and the `WebPreview` bar on `/design` scroll horizontally inside their own frame, because the desktop toolbar can't shrink below its controls (the real phone workspace uses `MobileBar`).
+- **Home "Recent projects" header** → the pill switcher no longer shrinks (it cut "My projects" to "My" at 320 px) and "Browse all" becomes the arrow alone at 360 px and below, keeping its accessible name → a smaller label font or wrapping.
+- **Workspace loading** → the skeleton matches the mobile chat view under 768 px instead of showing the desktop split and then jumping.
+- **Sidebar** → the "⌘K" hint is hidden under 768 px; there is no keyboard on a phone.
+- **Not changed** → the layouts, breakpoints and components that already held at 320 px (marketing pages, sign-in, prompt composer with a long model name, mobile workspace). No new UI patterns; `~/Desktop/vibe-ui` was not available on this machine, so nothing here is new design.
+
 ## Phase 6 live-check findings (fixed 13 November 2026)
 
 - **Second skills copy in snapshots** → the snapshot and restore listing prunes the root `agent/skills/` folder (`-path ./agent/skills`) next to `.agents/` and `.claude/`, and the path and command guards treat it as read-only skills → removing the folder in the template build (it would need a template rebuild, and existing sandboxes would still carry it). Versions saved before the fix still hold those files; development data only.

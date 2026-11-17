@@ -80,7 +80,9 @@ function SidebarSearch() {
           <SearchIcon />
           <span>Search</span>
         </SidebarMenuButton>
-        <SidebarMenuBadge aria-hidden>⌘K</SidebarMenuBadge>
+        <SidebarMenuBadge aria-hidden className="max-md:hidden">
+          ⌘K
+        </SidebarMenuBadge>
       </SidebarMenuItem>
     </SidebarMenu>
   );

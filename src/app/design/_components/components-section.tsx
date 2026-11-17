@@ -137,7 +137,7 @@ export function ComponentsSection() {
       id="components"
       description="shadcn/ui on Base UI, restyled to the flat tokens."
     >
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Example title="Button" description="Variants, sizes, icons.">
           <div className="flex flex-wrap items-center gap-2">
             <Button>Default</Button>
@@ -401,7 +401,7 @@ export function ComponentsSection() {
         </Example>
 
         <Example title="Card · Skeleton">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardDescription>Balance</CardDescription>

@@ -86,7 +86,7 @@ export function UsageView() {
           Pay as you go. Top up any amount from $5 to $100.
         </p>
       </div>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Stat
           title="Balance"
           value={number(data.balance)}
@@ -103,7 +103,7 @@ export function UsageView() {
           detail={data.latest ? date(data.latest.createdAt) : "No top-ups yet"}
         />
       </div>
-      <div className="grid items-start gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
           <Card>
             <CardHeader className="flex flex-row items-start justify-between gap-4">

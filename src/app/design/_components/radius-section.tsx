@@ -30,7 +30,7 @@ export function RadiusSection() {
       id="radius"
       description="--radius: 0.5rem. No shadows: depth comes from borders and surface steps."
     >
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Example title="Radius">
           <div className="flex flex-wrap gap-4">
             {radii.map((radius) => (

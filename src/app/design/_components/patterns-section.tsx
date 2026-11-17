@@ -93,7 +93,7 @@ export function PatternsSection() {
         </FieldGroup>
       </Example>
       <Example title="ProjectCard" description="Home and Projects grids.">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {sampleProjects.slice(0, 3).map((project) => (
             <ProjectCard
               key={project.slug}
@@ -118,7 +118,7 @@ export function PatternsSection() {
         </Empty>
       </Example>
 
-      <div className="grid gap-4 lg:grid-cols-[18rem_1fr]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
         <Example title="AppSidebar">
           <SidebarProvider className="min-h-0 overflow-hidden rounded-lg border">
             <AppSidebar
@@ -136,8 +136,8 @@ export function PatternsSection() {
             title="ChatHeader · WorkspaceToolbar"
             description="Workspace chrome on the sidebar colour: building, then done, then exported."
           >
-            <div className="flex flex-col gap-2 rounded-lg border bg-sidebar p-2">
-              <div className="grid gap-2 xl:grid-cols-[18rem_1fr]">
+            <div className="flex flex-col gap-2 overflow-x-auto rounded-lg border bg-sidebar p-2">
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-[18rem_1fr]">
                 <ChatHeader
                   projectName="Ember & Oak Roasters"
                   building
@@ -152,7 +152,7 @@ export function PatternsSection() {
                   user={sampleUser}
                 />
               </div>
-              <div className="grid gap-2 xl:grid-cols-[18rem_1fr]">
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-[18rem_1fr]">
                 <ChatHeader
                   projectName="Ember & Oak Roasters"
                   building={false}
@@ -170,7 +170,7 @@ export function PatternsSection() {
                   user={sampleUser}
                 />
               </div>
-              <div className="grid gap-2 xl:grid-cols-[18rem_1fr]">
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-[18rem_1fr]">
                 <ChatHeader
                   projectName="Lumen analytics"
                   building={false}
@@ -187,7 +187,7 @@ export function PatternsSection() {
               </div>
             </div>
           </Example>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Example title="CreditsCard">
               <CreditsCard {...sampleCredits} />
               <CreditsCard balance={0} allowance={2000} />

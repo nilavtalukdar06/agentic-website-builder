@@ -7,7 +7,7 @@ export default function Loading() {
       aria-label="Loading project"
       className="flex h-svh overflow-hidden bg-sidebar"
     >
-      <div className="flex w-[30%] min-w-64 flex-col">
+      <div className="flex w-[30%] min-w-64 flex-col max-md:w-full">
         <div className="flex h-13 items-center gap-2 px-2">
           <Skeleton className="size-8 rounded-lg" />
           <Skeleton className="h-4 w-36" />
@@ -30,7 +30,7 @@ export default function Loading() {
           <Skeleton className="h-28 w-full rounded-[1.25rem]" />
         </div>
       </div>
-      <div className="flex flex-1 flex-col pr-2 pb-2 pl-2">
+      <div className="flex flex-1 flex-col pr-2 pb-2 pl-2 max-md:hidden">
         <div className="flex h-13 items-center gap-2 px-1">
           <Skeleton className="h-9 w-28 rounded-full" />
           <Skeleton className="mx-auto h-8 w-80 rounded-full" />
