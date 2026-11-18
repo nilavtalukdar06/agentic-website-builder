@@ -43,6 +43,7 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
         },
         userMetadata: { app: "vibe", purpose: "build-check" },
       });
+      let stagehand: Stagehand | undefined;
       try {
         const sessionId = browser.sessionId;
         const live = sessionId
@@ -50,8 +51,7 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
               .debug(sessionId)
               .catch(() => null)
           : null;
-        await browser.context.addInitScript(INIT_SCRIPT);
-        const stagehand = await Stagehand.create({
+        stagehand = await Stagehand.create({
           browser,
           model: {
             generate: createGenerate(
@@ -63,6 +63,8 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
           },
           logging: { level: "error", format: "json" },
         });
+        const agent = stagehand;
+        await browser.context.addInitScript(INIT_SCRIPT);
         const page =
           (await browser.context.activePage()) ??
           (await browser.context.newPage());
@@ -84,7 +86,7 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
             return page.screenshot({ type: "png" });
           },
           async interact(action, expect) {
-            const acted = await stagehand.act(action, { page });
+            const acted = await agent.act(action, { page });
             assertSameOrigin(previewUrl, await page.url());
             if (!acted.data.success) {
               return {
@@ -93,22 +95,20 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
               };
             }
             await page.waitForTimeout(SETTLE_MS);
-            const verdict = await stagehand.extract(
-              verdictInstruction(expect),
-              {
-                page,
-              },
-            );
+            const verdict = await agent.extract(verdictInstruction(expect), {
+              page,
+            });
             assertSameOrigin(previewUrl, await page.url());
             return parseVerdict(verdict.data);
           },
           async close() {
-            await stagehand.close().catch(() => undefined);
+            await agent.close().catch(() => undefined);
             await browser.close().catch(() => undefined);
           },
         };
         return session;
       } catch (error) {
+        await stagehand?.close().catch(() => undefined);
         await browser.close().catch(() => undefined);
         throw error;
       }
