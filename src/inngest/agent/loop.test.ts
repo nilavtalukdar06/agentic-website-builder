@@ -6,7 +6,9 @@ vi.mock("e2b", () => ({ CommandExitError: class extends Error {} }));
 vi.mock("@/server/sandbox/sandbox", () => ({
   snapshotSandbox: vi.fn().mockResolvedValue({ "app/page.tsx": "x" }),
   connectSandbox: vi.fn(async () => ({
-    commands: { run: vi.fn() },
+    commands: {
+      run: vi.fn().mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 }),
+    },
     files: {
       exists: vi.fn().mockResolvedValue(false),
       write: vi.fn().mockResolvedValue({}),
@@ -99,7 +101,6 @@ async function run(
     sandboxId: "s1",
     model,
     messages: [{ role: "user", content: "Build it" }],
-    installedSkills: [{ name: "shadcn", description: "UI" }],
     budget,
     ...rest,
   });
@@ -127,19 +128,83 @@ describe("runAgentLoop", () => {
     expect(result.calls[0]).toMatchObject({ agent: "builder", searches: 0 });
   });
 
-  test("runs tools in their own steps and carries skill progress", async () => {
+  test("runs all of a turn's tool calls in one step", async () => {
     runModelTurn
       .mockResolvedValueOnce(
-        turn("", [{ toolName: "readFiles", input: { paths: ["AGENTS.md"] } }]),
+        turn("", [
+          {
+            toolName: "readFiles",
+            input: { files: [{ path: "app/page.tsx" }] },
+          },
+          { toolName: "listFiles", input: {} },
+          {
+            toolName: "createOrUpdateFiles",
+            input: { files: [{ path: "app/page.tsx", content: "x" }] },
+          },
+        ]),
       )
       .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
     const result = await run();
     expect(step.run.mock.calls.map(([id]) => id)).toEqual([
       "builder-model-0",
-      "builder-tool-0-0",
+      "builder-tools-0",
       "builder-model-1",
     ]);
-    expect(result.progress.readAgentsMd).toBe(true);
+    expect(result.written).toEqual(["app/page.tsx"]);
+    const toolMessage = result.messages.find(
+      (message) => message.role === "tool",
+    );
+    expect(
+      (toolMessage?.content as { toolName: string }[]).map(
+        (part) => part.toolName,
+      ),
+    ).toEqual(["readFiles", "listFiles", "createOrUpdateFiles"]);
+  });
+
+  test("keeps editFile results for sandbox recovery", async () => {
+    const { connectSandbox } = await import("@/server/sandbox/sandbox");
+    const sandbox = await connectSandbox("s1");
+    sandbox.files.read = vi.fn().mockResolvedValue("const a = 1;\n");
+    recover.connectOrRecover.mockResolvedValue({ sandbox, recovered: null });
+    const { createRunContext } = await import("./loop");
+    const runContext = createRunContext({ runId: "r1", sandboxId: "s1" });
+    runModelTurn
+      .mockResolvedValueOnce(
+        turn("", [
+          {
+            toolName: "editFile",
+            input: {
+              path: "lib/a.ts",
+              edits: [{ search: "const a = 1;", replace: "const a = 2;" }],
+            },
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(turn("<task_summary>Done</task_summary>"));
+    await run({ run: runContext });
+    expect(runContext.pendingWrites.get("lib/a.ts")).toBe("const a = 2;\n");
+  });
+
+  test("an editor run is capped and asked to finish on its last turn", async () => {
+    const { TURN_CAP_NOTE } = await import("./loop");
+    const read = {
+      toolName: "readFiles",
+      input: { files: [{ path: "a.ts" }] },
+    };
+    runModelTurn
+      .mockResolvedValueOnce(turn("", [read]))
+      .mockResolvedValueOnce(turn("", [read]))
+      .mockResolvedValueOnce(turn("<task_summary>Changed it</task_summary>"));
+    const result = await run({ maxTurns: 3 });
+    expect(runModelTurn).toHaveBeenCalledTimes(3);
+    const last = runModelTurn.mock.calls[2][0];
+    expect(last.toolChoice).toBe("none");
+    expect(JSON.stringify(last.messages)).toContain(TURN_CAP_NOTE.slice(0, 40));
+    expect(result).toMatchObject({
+      capped: true,
+      finished: true,
+      output: "Changed it",
+    });
   });
 
   test("an askUser call is answered as an unknown tool", async () => {
@@ -200,17 +265,23 @@ describe("runAgentLoop", () => {
     expect(call.activeTools).toEqual([
       "terminal",
       "createOrUpdateFiles",
+      "editFile",
       "readFiles",
-      "loadSkill",
+      "listFiles",
+      "searchCode",
     ]);
     expect(JSON.stringify(call.messages)).toContain("all 6 web searches");
   });
 
   test("stops when the balance runs out", async () => {
     runModelTurn.mockResolvedValue(
-      turn("", [{ toolName: "readFiles", input: { paths: ["a.ts"] } }], {
-        estimatedUsd: 0.5,
-      }),
+      turn(
+        "",
+        [{ toolName: "readFiles", input: { files: [{ path: "a.ts" }] } }],
+        {
+          estimatedUsd: 0.5,
+        },
+      ),
     );
     const result = await run({
       budget: { balance: 10, spentUsd: 0, searches: 0 },
@@ -219,9 +290,11 @@ describe("runAgentLoop", () => {
     expect(runModelTurn).toHaveBeenCalledTimes(1);
   });
 
-  test("stops before the next turn when the user asks", async () => {
+  test("stops before the next turn when the user asks, without an extra step", async () => {
     runModelTurn.mockResolvedValue(
-      turn("", [{ toolName: "readFiles", input: { paths: ["a.ts"] } }]),
+      turn("", [
+        { toolName: "readFiles", input: { files: [{ path: "a.ts" }] } },
+      ]),
     );
     const shouldStop = vi
       .fn()
@@ -231,10 +304,11 @@ describe("runAgentLoop", () => {
     expect(result.stopped).toBe(true);
     expect(result.finished).toBe(false);
     expect(runModelTurn).toHaveBeenCalledTimes(1);
-    expect(step.run).toHaveBeenCalledWith(
-      "builder-stop-1",
-      expect.any(Function),
-    );
+    expect(step.run.mock.calls.map(([id]) => id)).toEqual([
+      "builder-model-0",
+      "builder-tools-0",
+      "builder-model-1",
+    ]);
   });
 });
 
@@ -252,10 +326,7 @@ describe("checkpoints", () => {
     runModelTurn.mockResolvedValueOnce(
       turn("<task_summary>Done</task_summary>"),
     );
-    await run({
-      run: runContext,
-      progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
-    });
+    await run({ run: runContext });
     expect(step.run.mock.calls.map(([name]) => name)).toContain(
       "builder-checkpoint-5",
     );
@@ -267,7 +338,10 @@ describe("checkpoints", () => {
 });
 
 describe("no turn limit for the builder", () => {
-  const read = { toolName: "readFiles", input: { paths: ["AGENTS.md"] } };
+  const read = {
+    toolName: "readFiles",
+    input: { files: [{ path: "app/page.tsx" }] },
+  };
 
   test("keeps working past 60 turns until it finishes", async () => {
     for (let index = 0; index < 75; index++) {
@@ -276,9 +350,7 @@ describe("no turn limit for the builder", () => {
     runModelTurn.mockResolvedValueOnce(
       turn("<task_summary>Finished the big site</task_summary>"),
     );
-    const result = await run({
-      progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
-    });
+    const result = await run();
     expect(runModelTurn).toHaveBeenCalledTimes(76);
     expect(result).toMatchObject({
       finished: true,
@@ -299,7 +371,7 @@ describe("no turn limit for the builder", () => {
     const result = await run({ run: runContext });
     expect(step.run.mock.calls.map(([name]) => name)).toEqual([
       "builder-model-0",
-      "builder-tool-0-0",
+      "builder-tools-0",
       "builder-handoff-1",
     ]);
     expect(runModelTurn.mock.calls[1][0]).toMatchObject({ toolChoice: "none" });
@@ -314,10 +386,7 @@ describe("no turn limit for the builder", () => {
       await import("./loop");
     const runContext = createRunContext({ sandboxId: "s1" });
     runModelTurn.mockResolvedValueOnce(turn("<task_summary>x</task_summary>"));
-    await run({
-      run: runContext,
-      progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
-    });
+    await run({ run: runContext });
     expect(runContext.steps).toBe(1);
     expect(runContext.stateBytes).toBeGreaterThan(0);
     expect(

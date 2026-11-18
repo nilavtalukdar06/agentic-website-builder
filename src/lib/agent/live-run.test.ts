@@ -241,11 +241,208 @@ describe("run steps", () => {
     ]);
   });
 
+  test("plan and check notes become done rows and task items", () => {
+    const run = reduceLiveRun([
+      { topic: "status", data: { state: "thinking" } },
+      {
+        topic: "task",
+        data: { kind: "note", label: "Planned Ember & Oak: 1 page, 6 files" },
+      },
+      {
+        topic: "task",
+        data: { kind: "note", label: "Checks found 2 problems" },
+      },
+    ]);
+    expect(
+      run.steps.map(({ kind, label, status }) => ({ kind, label, status })),
+    ).toEqual([
+      { kind: "thinking", label: "Thinking", status: "done" },
+      {
+        kind: "note",
+        label: "Planned Ember & Oak: 1 page, 6 files",
+        status: "done",
+      },
+      { kind: "note", label: "Checks found 2 problems", status: "done" },
+    ]);
+    expect(run.tasks).toHaveLength(2);
+  });
+
+  test("browser events open a live session, update checks in place and close it", () => {
+    const check = {
+      id: "0-page-phone-/",
+      kind: "page" as const,
+      label: "Open / at phone width",
+      route: "/",
+      viewport: "phone" as const,
+      status: "running" as const,
+      detail: null,
+    };
+    const run = reduceLiveRun([
+      {
+        topic: "browser",
+        data: {
+          phase: "session",
+          liveUrl: "https://www.browserbase.com/devtools-fullscreen/x",
+          round: 0,
+        },
+      },
+      { topic: "browser", data: { phase: "check", check } },
+      {
+        topic: "browser",
+        data: {
+          phase: "check",
+          check: { ...check, status: "failed", detail: "scrolls sideways" },
+        },
+      },
+    ]);
+    expect(run.browser).toMatchObject({
+      liveUrl: "https://www.browserbase.com/devtools-fullscreen/x",
+      open: true,
+      checks: [{ id: check.id, status: "failed", detail: "scrolls sideways" }],
+    });
+    expect(
+      run.steps.map(({ kind, label, status }) => ({ kind, label, status })),
+    ).toEqual([
+      {
+        kind: "browser",
+        label: "Opened the site in a cloud browser",
+        status: "done",
+      },
+      { kind: "browser", label: "Open / at phone width", status: "error" },
+    ]);
+    const closed = reduceLiveRun(
+      [
+        {
+          topic: "browser",
+          data: { phase: "closed", status: "failed", summary: "1 problem" },
+        },
+      ],
+      run,
+    );
+    expect(closed.browser).toMatchObject({
+      open: false,
+      status: "failed",
+      summary: "1 problem",
+    });
+    expect(run.browser?.open).toBe(true);
+  });
+
   test("a repeated thinking status doesn't add a second row", () => {
     const run = reduceLiveRun([
       { topic: "status", data: { state: "thinking" } },
       { topic: "status", data: { state: "thinking" } },
     ]);
     expect(run.steps).toHaveLength(1);
+  });
+});
+
+describe("browser progress", () => {
+  const check = {
+    id: "0-page-phone-/",
+    kind: "page" as const,
+    label: "Open / at phone width",
+    route: "/",
+    viewport: "phone" as const,
+    status: "running" as const,
+    detail: null,
+  };
+  const opened: LiveEvent = {
+    topic: "browser",
+    data: {
+      phase: "session",
+      liveUrl: "https://www.browserbase.com/live",
+      round: 0,
+    },
+  };
+
+  test("updates a check in place without mutating the previous render", () => {
+    const running = reduceLiveRun([
+      opened,
+      { topic: "browser", data: { phase: "check", check } },
+    ]);
+    const finished = reduceLiveRun(
+      [
+        {
+          topic: "browser",
+          data: {
+            phase: "check",
+            check: {
+              ...check,
+              status: "failed",
+              detail: "Content is wider than the phone",
+            },
+          },
+        },
+        {
+          topic: "browser",
+          data: {
+            phase: "closed",
+            status: "failed",
+            summary: "Found sideways scrolling",
+          },
+        },
+      ],
+      running,
+    );
+    expect(running.browser?.checks[0].status).toBe("running");
+    expect(running.browser?.open).toBe(true);
+    expect(finished.browser).toMatchObject({ open: false, status: "failed" });
+    expect(finished.browser?.checks).toHaveLength(1);
+    expect(
+      finished.steps.filter((step) => step.id === `browser-${check.id}`),
+    ).toEqual([
+      expect.objectContaining({
+        status: "error",
+        detail: "Content is wider than the phone",
+      }),
+    ]);
+  });
+
+  test("starts a fresh repair session while retaining the earlier step history", () => {
+    const run = reduceLiveRun([
+      opened,
+      {
+        topic: "browser",
+        data: { phase: "check", check: { ...check, status: "failed" } },
+      },
+      {
+        topic: "browser",
+        data: { phase: "closed", status: "failed", summary: "Repair needed" },
+      },
+      { topic: "browser", data: { phase: "session", liveUrl: null, round: 1 } },
+    ]);
+    expect(run.browser).toMatchObject({
+      round: 1,
+      open: true,
+      checks: [],
+      status: null,
+    });
+    expect(run.steps.some((step) => step.status === "error")).toBe(true);
+  });
+
+  test("represents skipped checks without requiring a session event", () => {
+    const run = reduceLiveRun([
+      {
+        topic: "browser",
+        data: {
+          phase: "closed",
+          status: "skipped",
+          summary: "No browser key configured",
+        },
+      },
+    ]);
+    expect(run.browser).toMatchObject({
+      open: false,
+      checks: [],
+      status: "skipped",
+    });
+  });
+
+  test("drops the session capability when the run finishes", () => {
+    const tracker = advanceLive(emptyTracker(), [
+      opened,
+      { topic: "status", data: { state: "done" } },
+    ]);
+    expect(tracker.run.browser).toBeNull();
   });
 });

@@ -67,7 +67,12 @@ describe("tRPC surface", () => {
     const withoutInput = paths
       .filter((path) => procedureType(path).inputs.length === 0)
       .sort();
-    expect(withoutInput).toEqual(["credits.balance", "model.list"]);
+    expect(withoutInput).toEqual([
+      "credits.balance",
+      "memory.clear",
+      "memory.list",
+      "model.list",
+    ]);
   });
 
   test("the expensive mutations are rate limited per user", async () => {
@@ -89,6 +94,9 @@ describe("tRPC surface", () => {
       "credits.checkout",
       "github.retry",
       "github.start",
+      "memory.clear",
+      "memory.forget",
+      "memory.setEnabled",
       "message.retry",
       "message.send",
       "project.create",

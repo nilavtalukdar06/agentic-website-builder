@@ -5,6 +5,7 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import type { GeneratingFile } from "@/components/workspace/generating-overlay";
+import type { BrowserCheck } from "@/lib/agent/parts";
 import type { AgentModel } from "@/lib/ai/models";
 
 export const sampleUser = { name: "Nilav", plan: "Pay as you go" };
@@ -338,5 +339,36 @@ export const sampleRunSteps: GeneratingFile[] = [
     verb: "Running",
     status: "active",
     icon: TerminalIcon,
+  },
+];
+
+export const sampleBrowserChecks: BrowserCheck[] = [
+  {
+    id: "0-page-desktop-/",
+    kind: "page",
+    label: "Open / at desktop width",
+    route: "/",
+    viewport: "desktop",
+    status: "passed",
+    detail: "No errors, nothing scrolls sideways, images load",
+  },
+  {
+    id: "0-page-phone-/",
+    kind: "page",
+    label: "Open / at phone width",
+    route: "/",
+    viewport: "phone",
+    status: "failed",
+    detail:
+      "the page scrolls sideways (content is 520px wide in a 390px window); widest element: div.grid.grid-cols-3 (520px)",
+  },
+  {
+    id: "0-act-0",
+    kind: "interaction",
+    label: "Add a task called Buy milk",
+    route: "/",
+    viewport: "desktop",
+    status: "running",
+    detail: null,
   },
 ];

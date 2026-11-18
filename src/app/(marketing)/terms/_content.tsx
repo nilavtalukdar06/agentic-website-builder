@@ -211,7 +211,7 @@ export const termsSections: ArticleSection[] = [
     body: (
       <P>
         Vibe depends on third parties for sign-in, hosting, the database, AI
-        models, sandboxes and payments (see the{" "}
+        models, sandboxes, cloud browser checks and payments (see the{" "}
         <A href="/privacy#sharing">Privacy Policy</A>). Their own terms apply to
         their services, and we are not responsible for their outages or actions.
         Projects you generate may use open-source packages under their own
@@ -238,6 +238,20 @@ export const termsSections: ArticleSection[] = [
           saved versions, images and sandbox and can&apos;t be undone, and
           credits already spent aren&apos;t refunded. Download or export
           anything you can&apos;t afford to lose.
+        </P>
+        <P>
+          Automated browser checks may use Browserbase to load and interact with
+          generated previews. The live viewer is read-only. Checks are limited
+          and do not guarantee correctness, security or accessibility. Saved
+          screenshots are scheduled for deletion after 30 days and removed when
+          a project is deleted.
+        </P>
+        <P>
+          Memory is on by default: Vibe uses Supermemory to remember what you
+          say about your preferences and your projects, and uses those notes as
+          context in later builds. Notes can be incomplete or out of date, and
+          your current message always takes priority. You can turn memory off,
+          review it or clear it under Memory in your account menu.
         </P>
         <P>
           To keep Vibe fast and fair, we limit how often you can start builds,

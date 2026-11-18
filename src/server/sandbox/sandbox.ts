@@ -24,6 +24,7 @@ const SNAPSHOT_EXCLUDED_DIRS = [
   ".git",
   ".agents",
   ".claude",
+  ".vibe",
 ];
 const SNAPSHOT_EXCLUDED_PATHS = ["./agent/skills"];
 const SNAPSHOT_EXCLUDED_FILES = [

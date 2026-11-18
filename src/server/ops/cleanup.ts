@@ -1,5 +1,7 @@
 import "server-only";
-import type { PrismaClient } from "@/generated/prisma/client";
+import { screenshotKeys } from "@/lib/agent/parts";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import { isProjectScreenshotKey } from "@/server/storage/screenshot-keys";
 import { purgeThrottleWindows } from "@/server/rate-limit";
 
 const DAY = 24 * 60 * 60_000;
@@ -131,6 +133,117 @@ export async function deleteOrphanUploads(
     });
   }
   return { deleted: removed.length, failed };
+}
+
+export const SCREENSHOT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const SCREENSHOT_PAGE_SIZE = 200;
+
+export async function expireScreenshotObjectsPage(
+  list: (cursor?: string) => Promise<{
+    items: { key: string; lastModified?: number }[];
+    cursor?: string;
+  }>,
+  deleteObject: (key: string) => Promise<unknown>,
+  now: number,
+  cursor?: string,
+) {
+  const page = await list(cursor);
+  let deleted = 0;
+  let failed = 0;
+  for (const object of page.items) {
+    if (!object.key.startsWith("qa/")) continue;
+    if (
+      object.lastModified === undefined ||
+      !Number.isFinite(object.lastModified)
+    ) {
+      failed += 1;
+      continue;
+    }
+    if (object.lastModified >= now - SCREENSHOT_RETENTION_MS) continue;
+    try {
+      await deleteObject(object.key);
+      deleted += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  if (page.cursor && page.cursor === cursor) {
+    throw new Error("Screenshot listing cursor did not advance");
+  }
+  return { deleted, failed, cursor: page.cursor ?? null };
+}
+
+export async function expireScreenshots(
+  db: Pick<PrismaClient, "message">,
+  deleteObject: (key: string) => Promise<unknown>,
+  now = Date.now(),
+) {
+  const cutoff = new Date(now - SCREENSHOT_RETENTION_MS);
+  let after: string | undefined;
+  let deleted = 0;
+  let failed = 0;
+  while (true) {
+    const messages = await db.message.findMany({
+      where: {
+        role: "ASSISTANT",
+        createdAt: { lt: cutoff },
+        ...(after ? { id: { gt: after } } : {}),
+      },
+      select: { id: true, projectId: true, parts: true },
+      orderBy: { id: "asc" },
+      take: SCREENSHOT_PAGE_SIZE,
+    });
+    for (const message of messages) {
+      const keys = [...new Set(screenshotKeys(message.parts))];
+      const removed = new Set<string>();
+      for (const key of keys) {
+        if (!isProjectScreenshotKey(key, message.projectId)) {
+          removed.add(key);
+          continue;
+        }
+        try {
+          await deleteObject(key);
+          removed.add(key);
+          deleted += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      if (removed.size > 0 && Array.isArray(message.parts)) {
+        const parts = message.parts.map((part) => {
+          if (
+            !part ||
+            typeof part !== "object" ||
+            Array.isArray(part) ||
+            part.type !== "browser" ||
+            !Array.isArray(part.screenshots)
+          )
+            return part;
+          return {
+            ...part,
+            screenshots: part.screenshots.filter(
+              (shot) =>
+                !shot ||
+                typeof shot !== "object" ||
+                Array.isArray(shot) ||
+                typeof shot.key !== "string" ||
+                !removed.has(shot.key),
+            ),
+          };
+        });
+        await db.message.updateMany({
+          where: {
+            id: message.id,
+            parts: { equals: message.parts as Prisma.InputJsonValue },
+          },
+          data: { parts },
+        });
+      }
+    }
+    if (messages.length < SCREENSHOT_PAGE_SIZE) break;
+    after = messages[messages.length - 1].id;
+  }
+  return { deleted, failed };
 }
 
 export async function purgeExpiredRows(

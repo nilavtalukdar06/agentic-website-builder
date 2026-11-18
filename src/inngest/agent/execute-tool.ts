@@ -30,11 +30,14 @@ import { patternRedactor, type Redactor } from "./guardrails/redact";
 import { detectSecrets } from "./guardrails/secret-patterns";
 import { codeTripwire } from "./guardrails/tripwire";
 import { wrapUntrusted } from "./guardrails/untrusted";
-import { MAX_SKILL_CHARS, parseSkill, SKILLS_DIR } from "./skills";
+import { applyEdits } from "./edits";
+import { matchesGlob, shellQuote } from "./glob";
 import {
+  editFileInput,
   isAgentTool,
-  loadSkillInput,
+  listFilesInput,
   readFilesInput,
+  searchCodeInput,
   terminalInput,
   writeFilesInput,
 } from "./tools";
@@ -43,6 +46,16 @@ export const MAX_FILES_PER_RUN = 80;
 export const COMMAND_TIMEOUT_MS = 3 * 60_000;
 const READ_LIMIT = 20_000;
 const READ_TOTAL_LIMIT = 60_000;
+const LIST_LIMIT = 400;
+const SEARCH_LIMIT = 12_000;
+export const IGNORED_DIRS = [
+  "node_modules",
+  ".next",
+  ".git",
+  ".agents",
+  ".claude",
+  ".vibe",
+];
 
 export type ToolCall = {
   toolCallId: string;
@@ -58,9 +71,7 @@ export type TerminalRecord = {
 
 export const MAX_FILES_PER_REMOVAL = 10;
 
-export type SkillProgress = {
-  readAgentsMd: boolean;
-  loadedSkills: string[];
+export type RunProgress = {
   installs?: number;
 };
 
@@ -71,18 +82,18 @@ export type GuardHit = {
   text: string;
 };
 
-export const emptyProgress: SkillProgress = {
-  readAgentsMd: false,
-  loadedSkills: [],
-};
+export const emptyProgress: RunProgress = {};
+
+export type WrittenFile = { path: string; content: string };
 
 export type ToolOutcome = {
   output: string;
   tasks: TaskItem[];
   writtenPaths: string[];
   terminal: TerminalRecord | null;
-  progress: SkillProgress;
+  progress: RunProgress;
   guard?: GuardHit | null;
+  edited?: WrittenFile[];
 };
 
 export type ToolContext = {
@@ -90,29 +101,10 @@ export type ToolContext = {
   publish: Publish;
   writtenPaths: readonly string[];
   tools: readonly string[];
-  skills: { allowed: readonly string[]; installed: readonly string[] };
-  progress: SkillProgress;
+  progress: RunProgress;
   redactor?: Redactor;
   restricted?: boolean;
 };
-
-export function skillGate(
-  progress: SkillProgress,
-  skills: ToolContext["skills"],
-) {
-  const required = skills.allowed.filter((name) =>
-    skills.installed.includes(name),
-  );
-  const loaded = progress.loadedSkills.some((name) => required.includes(name));
-  if (progress.readAgentsMd && (required.length === 0 || loaded)) return null;
-  const steps = [
-    progress.readAgentsMd ? null : "read AGENTS.md with readFiles",
-    required.length === 0 || loaded
-      ? null
-      : `load the skills that apply with loadSkill (${required.join(", ")})`,
-  ].filter(Boolean);
-  return `Not written. Load the skills that apply before writing code: ${steps.join(" and ")}, then send the files again. This applies to small edits too.`;
-}
 
 function outcome(
   ctx: ToolContext,
@@ -358,13 +350,82 @@ async function writeContentCheck(path: string, content: string) {
   return null;
 }
 
+type WriteResult =
+  | {
+      status: "written";
+      path: string;
+      verb: "created" | "edited";
+      lines: number;
+    }
+  | { status: "skipped"; message: string; guard: GuardHit | null };
+
+async function writeOne(
+  ctx: ToolContext,
+  known: Set<string>,
+  path: string,
+  content: string,
+): Promise<WriteResult> {
+  let target: ReturnType<typeof resolveAppPath>;
+  try {
+    target = resolveAppPath(path);
+  } catch (error) {
+    if (!(error instanceof GuardError)) throw error;
+    return {
+      status: "skipped",
+      message: `Skipped ${path}: ${error.message}`,
+      guard: null,
+    };
+  }
+  if (!known.has(target.relative) && known.size >= MAX_FILES_PER_RUN) {
+    return {
+      status: "skipped",
+      message: `Skipped ${target.relative}: this run already changed ${MAX_FILES_PER_RUN} files.`,
+      guard: null,
+    };
+  }
+  const rejected = await writeContentCheck(target.relative, content);
+  if (rejected) {
+    return {
+      status: "skipped",
+      message: rejected.message,
+      guard: rejected.guard,
+    };
+  }
+
+  const existed = await ctx.sandbox.files.exists(target.absolute);
+  const verb = existed ? "edited" : "created";
+  await ctx.publish("file", { phase: "started", path: target.relative, verb });
+  await ctx.sandbox.files.write(target.absolute, content);
+  const lines = countLines(content);
+  await ctx.publish("file", {
+    phase: "written",
+    path: target.relative,
+    verb,
+    lines,
+  });
+  known.add(target.relative);
+  return { status: "written", path: target.relative, verb, lines };
+}
+
+async function fileTask(
+  ctx: ToolContext,
+  written: Extract<WriteResult, { status: "written" }>,
+) {
+  const task: TaskItem = {
+    kind: "file",
+    verb: written.verb,
+    path: written.path,
+    lines: written.lines,
+  };
+  await ctx.publish("task", task);
+  return task;
+}
+
 async function writeFiles(call: ToolCall, ctx: ToolContext) {
   const parsed = writeFilesInput.safeParse(call.input);
   if (!parsed.success) {
     return outcome(ctx, `Invalid input: ${parsed.error.message}`);
   }
-  const gate = skillGate(ctx.progress, ctx.skills);
-  if (gate) return outcome(ctx, gate);
 
   const known = new Set(ctx.writtenPaths);
   let guard: GuardHit | null = null;
@@ -373,57 +434,86 @@ async function writeFiles(call: ToolCall, ctx: ToolContext) {
   const writtenPaths: string[] = [];
 
   for (const file of parsed.data.files) {
-    let target: ReturnType<typeof resolveAppPath>;
-    try {
-      target = resolveAppPath(file.path);
-    } catch (error) {
-      if (!(error instanceof GuardError)) throw error;
-      results.push(`Skipped ${file.path}: ${error.message}`);
+    const result = await writeOne(ctx, known, file.path, file.content);
+    if (result.status === "skipped") {
+      results.push(result.message);
+      guard ??= result.guard;
       continue;
     }
-    if (!known.has(target.relative) && known.size >= MAX_FILES_PER_RUN) {
-      results.push(
-        `Skipped ${target.relative}: this run already changed ${MAX_FILES_PER_RUN} files.`,
-      );
-      continue;
-    }
-    const rejected = await writeContentCheck(target.relative, file.content);
-    if (rejected) {
-      results.push(rejected.message);
-      guard ??= rejected.guard;
-      continue;
-    }
-
-    const existed = await ctx.sandbox.files.exists(target.absolute);
-    const verb = existed ? "edited" : "created";
-    await ctx.publish("file", {
-      phase: "started",
-      path: target.relative,
-      verb,
-    });
-    await ctx.sandbox.files.write(target.absolute, file.content);
-    const lines = countLines(file.content);
-    await ctx.publish("file", {
-      phase: "written",
-      path: target.relative,
-      verb,
-      lines,
-    });
-    const task: TaskItem = {
-      kind: "file",
-      verb,
-      path: target.relative,
-      lines,
-    };
-    await ctx.publish("task", task);
-
-    known.add(target.relative);
-    tasks.push(task);
-    writtenPaths.push(target.relative);
-    results.push(`${existed ? "Updated" : "Created"} ${target.relative}`);
+    tasks.push(await fileTask(ctx, result));
+    writtenPaths.push(result.path);
+    results.push(
+      `${result.verb === "edited" ? "Updated" : "Created"} ${result.path}`,
+    );
   }
 
   return outcome(ctx, results.join("\n"), { tasks, writtenPaths, guard });
+}
+
+async function editFile(call: ToolCall, ctx: ToolContext) {
+  const parsed = editFileInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  let target: ReturnType<typeof resolveAppPath>;
+  try {
+    target = resolveAppPath(parsed.data.path);
+  } catch (error) {
+    if (!(error instanceof GuardError)) throw error;
+    return outcome(ctx, `Not edited: ${error.message}`);
+  }
+  const current = await ctx.sandbox.files
+    .read(target.absolute)
+    .catch(() => null);
+  if (current === null) {
+    return outcome(
+      ctx,
+      `Not edited: ${target.relative} doesn't exist. Create it with createOrUpdateFiles.`,
+    );
+  }
+  const applied = applyEdits(current, parsed.data.edits);
+  if (!applied.ok) {
+    return outcome(
+      ctx,
+      `Not edited ${target.relative}:\n${wrapUntrusted("files", (ctx.redactor ?? patternRedactor).redact(applied.error))}`,
+    );
+  }
+  if (applied.content === current) {
+    return outcome(
+      ctx,
+      `${target.relative} is unchanged: the replacements equal the search text.`,
+    );
+  }
+  const known = new Set(ctx.writtenPaths);
+  const result = await writeOne(ctx, known, target.relative, applied.content);
+  if (result.status === "skipped") {
+    return outcome(ctx, result.message, { guard: result.guard });
+  }
+  const task = await fileTask(ctx, result);
+  return outcome(
+    ctx,
+    `Edited ${result.path} (${applied.replacements} ${applied.replacements === 1 ? "change" : "changes"}, now ${result.lines} lines).`,
+    {
+      tasks: [task],
+      writtenPaths: [result.path],
+      edited: [{ path: result.path, content: applied.content }],
+    },
+  );
+}
+
+function sliceLines(content: string, start?: number, end?: number) {
+  if (start === undefined && end === undefined)
+    return { text: content, note: "" };
+  const lines = content.split("\n");
+  const from = Math.max(1, start ?? 1);
+  const to = Math.min(lines.length, end ?? lines.length);
+  if (from > to) {
+    return { text: "", note: `(file has ${lines.length} lines)` };
+  }
+  return {
+    text: lines.slice(from - 1, to).join("\n"),
+    note: `(lines ${from}-${to} of ${lines.length})`,
+  };
 }
 
 async function readFiles(call: ToolCall, ctx: ToolContext) {
@@ -434,23 +524,25 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
 
   let budget = READ_TOTAL_LIMIT;
   const contents = await Promise.all(
-    parsed.data.paths.map(async (path) => {
+    parsed.data.files.map(async ({ path, startLine, endLine }) => {
       try {
         const target = resolveAppPath(path, "read");
-        const content = await ctx.sandbox.files.read(target.absolute);
+        const raw = await ctx.sandbox.files.read(target.absolute);
+        const { text, note } = sliceLines(raw, startLine, endLine);
         const limit = Math.max(0, Math.min(READ_LIMIT, budget));
-        budget -= Math.min(content.length, limit);
+        budget -= Math.min(text.length, limit);
         if (limit === 0) {
           return {
             path: target.relative,
             error:
-              "Not read: this call already returned 60,000 characters. Read it in a separate call.",
+              "Not read: this call already returned 60,000 characters. Read it in a separate call, or read a line range.",
           };
         }
         return {
           path: target.relative,
+          ...(note ? { range: note } : {}),
           content: truncateOutput(
-            (ctx.redactor ?? patternRedactor).redact(content),
+            (ctx.redactor ?? patternRedactor).redact(text),
             limit,
           ),
         };
@@ -459,9 +551,6 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
         return { path, error: message };
       }
     }),
-  );
-  const readAgentsMd = contents.some(
-    (entry) => entry.path === "AGENTS.md" && "content" in entry,
   );
   const read = contents.flatMap((entry) =>
     "content" in entry ? [entry.path] : [],
@@ -474,65 +563,89 @@ async function readFiles(call: ToolCall, ctx: ToolContext) {
   }
   return outcome(ctx, wrapUntrusted("files", JSON.stringify(contents)), {
     tasks,
-    progress: readAgentsMd
-      ? { ...ctx.progress, readAgentsMd: true }
-      : ctx.progress,
   });
 }
 
-async function loadSkill(call: ToolCall, ctx: ToolContext) {
-  const parsed = loadSkillInput.safeParse(call.input);
+const prunedFind = `find . \\( ${IGNORED_DIRS.map((dir) => `-name ${dir}`).join(" -o ")} \\) -prune -o -type f -print`;
+
+async function listFiles(call: ToolCall, ctx: ToolContext) {
+  const parsed = listFilesInput.safeParse(call.input);
   if (!parsed.success) {
     return outcome(ctx, `Invalid input: ${parsed.error.message}`);
   }
-  const { name } = parsed.data;
-  const available = ctx.skills.allowed.filter((skill) =>
-    ctx.skills.installed.includes(skill),
-  );
-  if (!available.includes(name)) {
-    return outcome(
-      ctx,
-      available.length > 0
-        ? `Skill "${name}" is not available to you. Load one of: ${available.join(", ")}.`
-        : `Skill "${name}" is not available. No skills are installed for you; carry on with the rules in AGENTS.md.`,
-    );
-  }
-  const dir = `${SKILLS_DIR}/${name}`;
-  const markdown = await ctx.sandbox.files
-    .read(`${APP_DIR}/${dir}/SKILL.md`)
-    .catch(() => null);
-  if (markdown === null) {
-    return outcome(ctx, `Skill "${name}" could not be read.`);
-  }
   const listing = await ctx.sandbox.commands
-    .run(`find ${dir} -type f -not -name SKILL.md`, {
-      cwd: APP_DIR,
-      timeoutMs: 30_000,
-    })
+    .run(prunedFind, { cwd: APP_DIR, timeoutMs: 30_000 })
     .then((result) => result.stdout)
     .catch(() => "");
-  const files = listing
+  const pattern = parsed.data.pattern ?? "";
+  const paths = listing
     .split("\n")
     .map((line) => line.trim().replace(/^\.\//, ""))
-    .filter(Boolean)
+    .filter((path) => path && !/(^|\/)\.env(\.|$)/.test(path))
+    .filter((path) => matchesGlob(path, pattern))
     .sort();
-  const body = truncateOutput(parseSkill(markdown).body, MAX_SKILL_CHARS);
-  const fileList =
-    files.length > 0
-      ? `\n\nOther files in this skill (read them with readFiles only when you need them):\n${files.map((file) => `- ${file}`).join("\n")}`
+  const shown = paths.slice(0, LIST_LIMIT);
+  const more =
+    paths.length > shown.length
+      ? `\n… ${paths.length - shown.length} more files; narrow the pattern.`
       : "";
-  const loadedSkills = ctx.progress.loadedSkills.includes(name)
-    ? ctx.progress.loadedSkills
-    : [...ctx.progress.loadedSkills, name];
-  const task: TaskItem = { kind: "skill", name };
-  await ctx.publish("task", task);
   return outcome(
     ctx,
-    wrapUntrusted(`skill:${name}`, `# Skill: ${name}\n\n${body}${fileList}`),
-    {
-      tasks: [task],
-      progress: { ...ctx.progress, loadedSkills },
-    },
+    wrapUntrusted(
+      "files",
+      shown.length > 0
+        ? `${shown.join("\n")}${more}`
+        : `No files match ${pattern || "the project"}.`,
+    ),
+  );
+}
+
+async function searchCode(call: ToolCall, ctx: ToolContext) {
+  const parsed = searchCodeInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  let scope = ".";
+  if (parsed.data.path?.trim()) {
+    try {
+      scope = resolveAppPath(parsed.data.path, "read").relative;
+    } catch (error) {
+      if (!(error instanceof GuardError)) throw error;
+      return outcome(ctx, `Not searched: ${error.message}`);
+    }
+  }
+  const excludes = IGNORED_DIRS.map((dir) => `--exclude-dir=${dir}`).join(" ");
+  const command = `grep -rnIE ${excludes} --exclude='.env*' -m 20 -e ${shellQuote(parsed.data.pattern)} -- ${shellQuote(scope)}`;
+  let output = "";
+  try {
+    const result = await ctx.sandbox.commands.run(command, {
+      cwd: APP_DIR,
+      timeoutMs: 30_000,
+    });
+    output = result.stdout;
+  } catch (error) {
+    if (error instanceof CommandExitError) {
+      output = error.exitCode === 1 ? "" : error.stderr || error.stdout;
+    } else if (isSandboxGone(error)) {
+      throw error;
+    } else {
+      output = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const cleaned = output
+    .split("\n")
+    .map((line) => line.replace(/^\.\//, ""))
+    .join("\n")
+    .trim();
+  return outcome(
+    ctx,
+    wrapUntrusted(
+      "search",
+      truncateOutput(
+        (ctx.redactor ?? patternRedactor).redact(cleaned || "No matches."),
+        SEARCH_LIMIT,
+      ),
+    ),
   );
 }
 
@@ -543,8 +656,18 @@ export async function executeTool(
   if (!isAgentTool(call.toolName) || !ctx.tools.includes(call.toolName)) {
     return outcome(ctx, `Unknown tool: ${call.toolName}`);
   }
-  if (call.toolName === "terminal") return runTerminal(call, ctx);
-  if (call.toolName === "createOrUpdateFiles") return writeFiles(call, ctx);
-  if (call.toolName === "loadSkill") return loadSkill(call, ctx);
-  return readFiles(call, ctx);
+  switch (call.toolName) {
+    case "terminal":
+      return runTerminal(call, ctx);
+    case "createOrUpdateFiles":
+      return writeFiles(call, ctx);
+    case "editFile":
+      return editFile(call, ctx);
+    case "listFiles":
+      return listFiles(call, ctx);
+    case "searchCode":
+      return searchCode(call, ctx);
+    case "readFiles":
+      return readFiles(call, ctx);
+  }
 }

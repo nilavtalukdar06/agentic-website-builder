@@ -58,48 +58,121 @@ export async function runToolStep({
   base: Omit<ToolContext, "sandbox" | "publish">;
   replay: ReplayWrite[];
 }): Promise<StepToolOutcome> {
+  const { outcomes, sandbox } = await runToolBatch({
+    calls: [call],
+    projectId,
+    run,
+    base,
+    replay,
+    isReadOnly: () => false,
+  });
+  return { ...outcomes[0], sandbox };
+}
+
+export type BatchOutcome = {
+  outcomes: ToolOutcome[];
+  sandbox: SandboxRef | null;
+};
+
+function readOnlyGroups(
+  calls: ToolCall[],
+  isReadOnly: (name: string) => boolean,
+) {
+  const groups: number[][] = [];
+  for (const [index, call] of calls.entries()) {
+    const last = groups.at(-1);
+    const readOnly = isReadOnly(call.toolName);
+    if (readOnly && last && isReadOnly(calls[last[0]].toolName)) {
+      last.push(index);
+    } else {
+      groups.push([index]);
+    }
+  }
+  return groups;
+}
+
+export async function runToolBatch({
+  calls,
+  projectId,
+  run,
+  base,
+  replay,
+  isReadOnly,
+}: {
+  calls: ToolCall[];
+  projectId: string;
+  run: Pick<
+    RunContext,
+    "chainId" | "userId" | "runId" | "restricted" | "sandbox"
+  >;
+  base: Omit<ToolContext, "sandbox" | "publish">;
+  replay: ReplayWrite[];
+  isReadOnly: (name: string) => boolean;
+}): Promise<BatchOutcome> {
   const publish = createPublisher(projectId, patternRedactor);
   const recover = () =>
     recoverSandbox({ projectId, chainId: run.chainId, replay });
   let { sandbox, recovered } = await connectOrRecover(run.sandbox, recover);
+  let recoveredNoted = false;
+  let progress = base.progress;
+  const writtenPaths = [...base.writtenPaths];
+  const outcomes: ToolOutcome[] = new Array(calls.length);
 
-  const ctx: ToolContext = {
-    ...base,
-    sandbox,
-    publish,
-    redactor: patternRedactor,
-    restricted: run.restricted,
+  const execute = async (call: ToolCall): Promise<ToolOutcome> => {
+    const ctx: ToolContext = {
+      ...base,
+      writtenPaths,
+      progress,
+      sandbox,
+      publish,
+      redactor: patternRedactor,
+      restricted: run.restricted,
+    };
+    try {
+      return await executeTool(call, ctx);
+    } catch (error) {
+      if (!isSandboxGone(error) || recovered) throw error;
+      const result = await recover();
+      sandbox = result.sandbox;
+      recovered = result.ref;
+      return executeTool(call, { ...ctx, sandbox });
+    }
   };
 
-  let outcome: ToolOutcome;
-  try {
-    outcome = await executeTool(call, ctx);
-  } catch (error) {
-    if (!isSandboxGone(error) || recovered) throw error;
-    const result = await recover();
-    sandbox = result.sandbox;
-    recovered = result.ref;
-    outcome = await executeTool(call, { ...ctx, sandbox });
+  for (const group of readOnlyGroups(calls, isReadOnly)) {
+    const results = await Promise.all(
+      group.map((index) => execute(calls[index])),
+    );
+    for (const [offset, index] of group.entries()) {
+      let outcome = results[offset];
+      progress = outcome.progress;
+      writtenPaths.push(...outcome.writtenPaths);
+      if (recovered && !recoveredNoted) {
+        recoveredNoted = true;
+        await publish("preview", { url: recovered.previewUrl });
+        outcome = {
+          ...outcome,
+          output: `${RECOVERED_NOTE}\n\n${outcome.output}`,
+        };
+      }
+      if (outcome.guard) {
+        await recordGuardEvent(db, {
+          userId: run.userId,
+          projectId,
+          runId: run.runId,
+          stage: outcome.guard.stage,
+          verdict: outcome.guard.verdict,
+          categories: outcome.guard.categories,
+          text: outcome.guard.text,
+        });
+        await publish("guard", { stage: "tool", verdict: "block" });
+        outcome = { ...outcome, guard: { ...outcome.guard, text: "" } };
+      }
+      outcomes[index] = outcome;
+    }
   }
 
-  if (recovered) {
-    await publish("preview", { url: recovered.previewUrl });
-    outcome = { ...outcome, output: `${RECOVERED_NOTE}\n\n${outcome.output}` };
-  }
-  if (outcome.guard) {
-    await recordGuardEvent(db, {
-      userId: run.userId,
-      projectId,
-      runId: run.runId,
-      stage: outcome.guard.stage,
-      verdict: outcome.guard.verdict,
-      categories: outcome.guard.categories,
-      text: outcome.guard.text,
-    });
-    await publish("guard", { stage: "tool", verdict: "block" });
-    outcome = { ...outcome, guard: { ...outcome.guard, text: "" } };
-  }
-  return { ...outcome, sandbox: recovered };
+  return { outcomes, sandbox: recovered };
 }
 
 export async function takeCheckpoint({

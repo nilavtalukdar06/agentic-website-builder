@@ -13,17 +13,10 @@ class FakeExitError extends Error {
 
 vi.mock("e2b", () => ({ CommandExitError: FakeExitError }));
 
-const { emptyProgress, executeTool, MAX_FILES_PER_RUN } =
-  await import("./execute-tool");
+const { executeTool, MAX_FILES_PER_RUN } = await import("./execute-tool");
+const { agentToolNames } = await import("./tools");
 
-const builderToolNames = [
-  "terminal",
-  "createOrUpdateFiles",
-  "readFiles",
-  "loadSkill",
-];
-
-const ready = { readAgentsMd: true, loadedSkills: ["shadcn"] };
+const builderToolNames = [...agentToolNames];
 
 function makeSandbox() {
   return {
@@ -42,8 +35,7 @@ function makeCtx(
   writtenPaths: string[] = [],
   overrides: Partial<{
     tools: string[];
-    progress: { readAgentsMd: boolean; loadedSkills: string[] };
-    installed: string[];
+    progress: { installs?: number };
   }> = {},
 ) {
   const sandbox = makeSandbox();
@@ -56,11 +48,7 @@ function makeCtx(
       publish: publish as never,
       writtenPaths,
       tools: overrides.tools ?? builderToolNames,
-      skills: {
-        allowed: ["shadcn", "next-best-practices"],
-        installed: overrides.installed ?? ["shadcn", "next-best-practices"],
-      },
-      progress: overrides.progress ?? ready,
+      progress: overrides.progress ?? {},
     },
   };
 }
@@ -227,7 +215,9 @@ describe("executeTool", () => {
       .mockResolvedValueOnce("content")
       .mockRejectedValueOnce(new Error("missing"));
     const result = await executeTool(
-      call("readFiles", { paths: ["app/page.tsx", "nope.ts"] }),
+      call("readFiles", {
+        files: [{ path: "app/page.tsx" }, { path: "nope.ts" }],
+      }),
       ctx,
     );
     expect(JSON.parse(unwrap(result.output))).toEqual([
@@ -237,91 +227,34 @@ describe("executeTool", () => {
   });
 });
 
-describe("skills before writing", () => {
-  const write = call("createOrUpdateFiles", {
-    files: [{ path: "app/page.tsx", content: "x" }],
-  });
-
-  test("rejects a write before AGENTS.md is read", async () => {
-    const { ctx, sandbox } = makeCtx([], {
-      progress: { readAgentsMd: false, loadedSkills: ["shadcn"] },
-    });
-    const result = await executeTool(write, ctx);
-    expect(sandbox.files.write).not.toHaveBeenCalled();
-    expect(result.output).toMatch(/^Not written/);
-    expect(result.output).toContain("read AGENTS.md");
-    expect(result.output).not.toContain("loadSkill");
-  });
-
-  test("rejects a write before a skill is loaded, even a small one", async () => {
-    const { ctx, sandbox } = makeCtx([], {
-      progress: { readAgentsMd: true, loadedSkills: [] },
-    });
-    const result = await executeTool(write, ctx);
-    expect(sandbox.files.write).not.toHaveBeenCalled();
-    expect(result.output).toContain(
-      "load the skills that apply with loadSkill (shadcn, next-best-practices)",
-    );
-  });
-
-  test("allows the write after AGENTS.md and a skill", async () => {
-    const { ctx, sandbox } = makeCtx([], { progress: emptyProgress });
-    const read = await executeTool(
-      call("readFiles", { paths: ["AGENTS.md"] }),
+describe("no gate before writing", () => {
+  test("writes on the first call, without reading AGENTS.md or loading skills", async () => {
+    const { ctx, sandbox } = makeCtx();
+    const result = await executeTool(
+      call("createOrUpdateFiles", {
+        files: [{ path: "app/page.tsx", content: "x" }],
+      }),
       ctx,
     );
-    expect(read.progress.readAgentsMd).toBe(true);
-    sandbox.files.read.mockResolvedValueOnce(
-      "---\nname: shadcn\ndescription: UI\n---\n# shadcn body",
-    );
-    sandbox.commands.run.mockResolvedValueOnce({
-      stdout: ".agents/skills/shadcn/rules/forms.md\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    const loaded = await executeTool(call("loadSkill", { name: "shadcn" }), {
-      ...ctx,
-      progress: read.progress,
-    });
-    expect(loaded.output).toContain("# Skill: shadcn\n\n# shadcn body");
-    expect(loaded.output).toContain("- .agents/skills/shadcn/rules/forms.md");
-    expect(loaded.output).not.toContain("description: UI");
-    expect(loaded.progress).toEqual({
-      readAgentsMd: true,
-      loadedSkills: ["shadcn"],
-    });
-    const result = await executeTool(write, {
-      ...ctx,
-      progress: loaded.progress,
-    });
     expect(sandbox.files.write).toHaveBeenCalledOnce();
     expect(result.writtenPaths).toEqual(["app/page.tsx"]);
   });
 
-  test("does not require a skill when none are installed", async () => {
-    const { ctx, sandbox } = makeCtx([], {
-      installed: [],
-      progress: { readAgentsMd: true, loadedSkills: [] },
-    });
-    await executeTool(write, ctx);
-    expect(sandbox.files.write).toHaveBeenCalledOnce();
-  });
-
-  test("loadSkill rejects skills outside the agent's allowlist", async () => {
-    const { ctx, sandbox } = makeCtx();
+  test("loadSkill no longer exists", async () => {
+    const { ctx } = makeCtx([], { tools: [...builderToolNames, "loadSkill"] });
     const result = await executeTool(
-      call("loadSkill", { name: "frontend-design" }),
+      call("loadSkill", { name: "shadcn" }),
       ctx,
     );
-    expect(sandbox.files.read).not.toHaveBeenCalled();
-    expect(result.output).toMatch(/not available to you/);
-    expect(result.progress).toBe(ctx.progress);
+    expect(result.output).toBe("Unknown tool: loadSkill");
   });
 
   test("skills can be read but not written", async () => {
     const { ctx, sandbox } = makeCtx();
     const read = await executeTool(
-      call("readFiles", { paths: [".agents/skills/shadcn/rules/forms.md"] }),
+      call("readFiles", {
+        files: [{ path: ".agents/skills/shadcn/rules/forms.md" }],
+      }),
       ctx,
     );
     expect(JSON.parse(unwrap(read.output))[0]).toHaveProperty("content");
@@ -336,10 +269,179 @@ describe("skills before writing", () => {
   });
 });
 
+describe("editFile", () => {
+  const source =
+    'export function Hero() {\n  return <h1 className="text-red-500">Hi</h1>;\n}\n';
+
+  test("applies search-and-replace blocks and reports the new contents", async () => {
+    const { ctx, sandbox, publish } = makeCtx();
+    sandbox.files.read.mockResolvedValue(source);
+    sandbox.files.exists.mockResolvedValue(true);
+    const result = await executeTool(
+      call("editFile", {
+        path: "components/hero.tsx",
+        edits: [{ search: "text-red-500", replace: "text-blue-500" }],
+      }),
+      ctx,
+    );
+    const expected = source.replace("text-red-500", "text-blue-500");
+    expect(sandbox.files.write).toHaveBeenCalledWith(
+      "/home/user/app/components/hero.tsx",
+      expected,
+    );
+    expect(result.writtenPaths).toEqual(["components/hero.tsx"]);
+    expect(result.edited).toEqual([
+      { path: "components/hero.tsx", content: expected },
+    ]);
+    expect(result.tasks).toEqual([
+      { kind: "file", verb: "edited", path: "components/hero.tsx", lines: 3 },
+    ]);
+    expect(publish).toHaveBeenCalledWith("task", result.tasks[0]);
+  });
+
+  test("writes nothing when a block doesn't match, and shows the closest lines", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.files.read.mockResolvedValue(source);
+    const result = await executeTool(
+      call("editFile", {
+        path: "components/hero.tsx",
+        edits: [
+          { search: "text-red-500", replace: "text-blue-500" },
+          { search: '<h1 className="missing">', replace: "x" },
+        ],
+      }),
+      ctx,
+    );
+    expect(sandbox.files.write).not.toHaveBeenCalled();
+    expect(result.output).toContain("Not edited components/hero.tsx");
+    expect(result.output).toContain("2| ");
+    expect(result.writtenPaths).toEqual([]);
+  });
+
+  test("points to createOrUpdateFiles for a file that doesn't exist", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.files.read.mockRejectedValue(new Error("not found"));
+    const result = await executeTool(
+      call("editFile", {
+        path: "components/new.tsx",
+        edits: [{ search: "a", replace: "b" }],
+      }),
+      ctx,
+    );
+    expect(result.output).toContain("Create it with createOrUpdateFiles");
+    expect(sandbox.files.write).not.toHaveBeenCalled();
+  });
+
+  test("runs the result through the secret scan", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.files.read.mockResolvedValue('const key = "";\n');
+    const result = await executeTool(
+      call("editFile", {
+        path: "lib/ai.ts",
+        edits: [
+          {
+            search: 'const key = "";',
+            replace: `const key = "sk-proj-${"VerySecretValue123".repeat(2)}";`,
+          },
+        ],
+      }),
+      ctx,
+    );
+    expect(sandbox.files.write).not.toHaveBeenCalled();
+    expect(result.output).toContain("looks like a secret");
+  });
+
+  test("refuses read-only paths", async () => {
+    const { ctx, sandbox } = makeCtx();
+    const result = await executeTool(
+      call("editFile", {
+        path: ".agents/skills/shadcn/SKILL.md",
+        edits: [{ search: "a", replace: "b" }],
+      }),
+      ctx,
+    );
+    expect(result.output).toMatch(/^Not edited: Path is read-only/);
+    expect(sandbox.files.read).not.toHaveBeenCalled();
+  });
+});
+
+describe("reading and searching", () => {
+  test("reads a line range", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.files.read.mockResolvedValue("a\nb\nc\nd\ne");
+    const result = await executeTool(
+      call("readFiles", {
+        files: [{ path: "app/page.tsx", startLine: 2, endLine: 3 }],
+      }),
+      ctx,
+    );
+    expect(JSON.parse(unwrap(result.output))).toEqual([
+      { path: "app/page.tsx", range: "(lines 2-3 of 5)", content: "b\nc" },
+    ]);
+  });
+
+  test("lists files, skipping ignored folders and env files, filtered by a glob", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockResolvedValue({
+      stdout:
+        "./app/page.tsx\n./app/about/page.tsx\n./components/hero.tsx\n./.env.local\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await executeTool(
+      call("listFiles", { pattern: "app/**/page.tsx" }),
+      ctx,
+    );
+    expect(unwrap(result.output)).toBe("app/about/page.tsx\napp/page.tsx");
+    expect(sandbox.commands.run.mock.calls[0][0]).toContain(
+      "-name node_modules",
+    );
+  });
+
+  test("searches with a quoted pattern and reports no matches plainly", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockRejectedValue(new FakeExitError("", "", 1));
+    const result = await executeTool(
+      call("searchCode", { pattern: "it's; rm -rf /", path: "components" }),
+      ctx,
+    );
+    const command = sandbox.commands.run.mock.calls[0][0] as string;
+    expect(command).toContain(`-e 'it'\\''s; rm -rf /'`);
+    expect(command).toContain("-- 'components'");
+    expect(unwrap(result.output)).toBe("No matches.");
+  });
+
+  test("returns matching lines without the ./ prefix", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockResolvedValue({
+      stdout: "./components/hero.tsx:4:  <Button>Start</Button>\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await executeTool(
+      call("searchCode", { pattern: "Button" }),
+      ctx,
+    );
+    expect(unwrap(result.output)).toBe(
+      "components/hero.tsx:4:  <Button>Start</Button>",
+    );
+  });
+
+  test("refuses to search outside the project", async () => {
+    const { ctx, sandbox } = makeCtx();
+    const result = await executeTool(
+      call("searchCode", { pattern: "x", path: "../../etc" }),
+      ctx,
+    );
+    expect(result.output).toMatch(/^Not searched/);
+    expect(sandbox.commands.run).not.toHaveBeenCalled();
+  });
+});
+
 describe("tool set", () => {
   test("rejects a tool the builder doesn't have", async () => {
     const { ctx, sandbox } = makeCtx([], {
-      tools: ["readFiles", "loadSkill"],
+      tools: ["readFiles", "editFile"],
     });
     const result = await executeTool(call("terminal", { command: "ls" }), ctx);
     expect(sandbox.commands.run).not.toHaveBeenCalled();
@@ -416,7 +518,7 @@ describe("guardrails in the executor", () => {
     const { ctx, sandbox } = makeCtx();
     sandbox.files.read.mockResolvedValue(`KEY=${secret}`);
     const result = await executeTool(
-      call("readFiles", { paths: ["notes.txt"] }),
+      call("readFiles", { files: [{ path: "notes.txt" }] }),
       ctx,
     );
     expect(result.output).not.toContain(secret);
@@ -536,7 +638,7 @@ describe("guardrails in the executor", () => {
     expect(git.output).toMatch(/^Command blocked: .*npm registry/);
     const capped = await executeTool(
       call("terminal", { command: "npm install zod" }),
-      { ...ctx, progress: { ...ready, installs: 20 } },
+      { ...ctx, progress: { installs: 20 } },
     );
     expect(capped.output).toMatch(/limit is 20/);
   });
@@ -549,7 +651,9 @@ describe("activity rows", () => {
       .mockResolvedValueOnce("content")
       .mockRejectedValueOnce(new Error("missing"));
     const result = await executeTool(
-      call("readFiles", { paths: ["app/page.tsx", "nope.ts"] }),
+      call("readFiles", {
+        files: [{ path: "app/page.tsx" }, { path: "nope.ts" }],
+      }),
       ctx,
     );
     const task = { kind: "read", paths: ["app/page.tsx"] };

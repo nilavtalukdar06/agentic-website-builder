@@ -10,6 +10,7 @@ export const projectTopics = [
   "search",
   "guard",
   "export",
+  "browser",
 ] as const;
 
 export const projectChannelName = (projectId: string) => `project:${projectId}`;

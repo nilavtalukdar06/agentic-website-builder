@@ -23,6 +23,8 @@ import {
   ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { BrowserReport } from "@/components/workspace/browser-session";
+import { MemoryNote } from "@/components/workspace/memory-note";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -155,6 +157,7 @@ export function VersionCard({
 }
 
 function AssistantMessage({
+  projectId,
   message,
   canRetry,
   canRestore,
@@ -163,6 +166,7 @@ function AssistantMessage({
   onRestore,
   onViewCode,
 }: {
+  projectId: string;
   message: ConversationMessage;
   canRetry: boolean;
   canRestore: boolean;
@@ -180,6 +184,8 @@ function AssistantMessage({
     part.type === "sources" ? part.sources : [],
   );
   const error = parts.find((part) => part.type === "error");
+  const browser = parts.find((part) => part.type === "browser");
+  const memory = parts.find((part) => part.type === "memory");
   const restricted = parts.some(
     (part) => part.type === "guard" && part.verdict === "review",
   );
@@ -222,6 +228,8 @@ function AssistantMessage({
             />
           ))}
           <SourceList sources={sources} />
+          {browser ? <BrowserReport part={browser} /> : null}
+          {memory ? <MemoryNote part={memory} projectId={projectId} /> : null}
           {restricted ? <RestrictedNotice /> : null}
           {error ? (
             <Alert variant="destructive">
@@ -256,6 +264,7 @@ function AssistantMessage({
 }
 
 export function ChatMessage({
+  projectId,
   message,
   status = null,
   canRetry = false,
@@ -265,6 +274,7 @@ export function ChatMessage({
   onRestore,
   onViewCode,
 }: {
+  projectId: string;
   message: ConversationMessage;
   status?: "queued" | "stopping" | null;
   canRetry?: boolean;
@@ -279,6 +289,7 @@ export function ChatMessage({
   }
   return (
     <AssistantMessage
+      projectId={projectId}
       message={message}
       canRetry={canRetry}
       canRestore={canRestore}

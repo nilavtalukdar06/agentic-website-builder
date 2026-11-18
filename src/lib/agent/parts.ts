@@ -24,12 +24,58 @@ export const taskItemSchema = z.discriminatedUnion("kind", [
     name: z.string(),
   }),
   z.object({
+    kind: z.literal("note"),
+    label: z.string(),
+  }),
+  z.object({
     kind: z.literal("file"),
     verb: z.enum(fileVerbs),
     path: z.string(),
     lines: z.number().int().nonnegative(),
   }),
 ]);
+
+export const browserViewports = ["desktop", "phone"] as const;
+export const browserCheckStatuses = ["running", "passed", "failed"] as const;
+
+export const browserCheckSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["page", "interaction"]),
+  label: z.string(),
+  route: z.string(),
+  viewport: z.enum(browserViewports),
+  status: z.enum(browserCheckStatuses),
+  detail: z.string().nullable(),
+});
+
+export const browserScreenshotSchema = z.object({
+  viewport: z.enum(browserViewports),
+  key: z.string(),
+  url: z.string().nullable().optional(),
+});
+
+export const browserPartSchema = z.object({
+  type: z.literal("browser"),
+  status: z.enum(["passed", "failed", "skipped"]),
+  reason: z.string().nullable(),
+  checks: z.array(browserCheckSchema),
+  screenshots: z.array(browserScreenshotSchema),
+});
+
+export const memoryPartSchema = z.object({
+  type: z.literal("memory"),
+  action: z.enum(["remember", "forget"]),
+  status: z.enum(["saved", "preview", "unavailable", "forgotten"]),
+  text: z.string(),
+  reason: z.string().nullable(),
+  matches: z.array(
+    z.object({
+      id: z.string(),
+      memory: z.string(),
+      scope: z.enum(["user", "project"]),
+    }),
+  ),
+});
 
 export const agentPartSchema = z.discriminatedUnion("type", [
   z.object({
@@ -59,6 +105,8 @@ export const agentPartSchema = z.discriminatedUnion("type", [
     verdict: z.enum(["review", "block"]),
   }),
   z.object({ type: z.literal("stopped") }),
+  browserPartSchema,
+  memoryPartSchema,
 ]);
 
 export const agentPartsSchema = z.array(agentPartSchema);
@@ -80,6 +128,10 @@ export function parseAgentParts(raw: unknown): AgentPart[] | null {
 }
 
 export type TaskItem = z.infer<typeof taskItemSchema>;
+export type BrowserCheck = z.infer<typeof browserCheckSchema>;
+export type BrowserPart = z.infer<typeof browserPartSchema>;
+export type MemoryPart = z.infer<typeof memoryPartSchema>;
+export type BrowserViewport = (typeof browserViewports)[number];
 export type AgentPart = z.infer<typeof agentPartSchema>;
 
 const installPattern =
@@ -115,4 +167,18 @@ export function deletedPaths(command: string) {
         (token) => token && !token.startsWith("/") && !token.includes(".."),
       );
   });
+}
+
+export function screenshotKeys(parts: unknown) {
+  return (parseAgentParts(parts) ?? []).flatMap((part) =>
+    part.type === "browser" ? part.screenshots.map((shot) => shot.key) : [],
+  );
+}
+
+export function withoutScreenshots(parts: unknown) {
+  const parsed = parseAgentParts(parts);
+  if (!parsed) return null;
+  return parsed.map((part) =>
+    part.type === "browser" ? { ...part, screenshots: [] } : part,
+  );
 }

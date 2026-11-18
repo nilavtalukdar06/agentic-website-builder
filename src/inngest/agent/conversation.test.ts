@@ -22,7 +22,7 @@ describe("historyToMessages", () => {
           { role: "ASSISTANT", content: "Built it" },
           { role: "USER", content: "Make it darker" },
         ],
-        [],
+        "",
         vision,
       ),
     ).toEqual([
@@ -32,21 +32,20 @@ describe("historyToMessages", () => {
     ]);
   });
 
-  test("lists earlier files on the latest user message only", () => {
+  test("adds the project context to the latest user message only", () => {
     const messages = historyToMessages(
       [
         { role: "USER", content: "Build it" },
         { role: "ASSISTANT", content: "Done" },
         { role: "USER", content: "Add a footer" },
       ],
-      ["app/page.tsx", "components/hero.tsx"],
+      "<project_context>map</project_context>",
       vision,
     );
     expect(messages[0]).toEqual({ role: "user", content: "Build it" });
     expect(messages[2]).toEqual({
       role: "user",
-      content:
-        "Add a footer\n\n(Files in the project from earlier versions: app/page.tsx, components/hero.tsx)",
+      content: "Add a footer\n\n<project_context>map</project_context>",
     });
   });
 
@@ -55,7 +54,7 @@ describe("historyToMessages", () => {
       role: i % 2 === 0 ? ("USER" as const) : ("ASSISTANT" as const),
       content: `m${i}`,
     }));
-    const messages = historyToMessages(history, [], vision);
+    const messages = historyToMessages(history, "", vision);
     expect(messages).toHaveLength(MAX_HISTORY_MESSAGES);
     expect(messages.at(-1)).toEqual({ role: "assistant", content: "m29" });
   });
@@ -69,7 +68,7 @@ describe("historyToMessages", () => {
           attachments: [{ key: "users/u1/a.png", contentType: "image/png" }],
         },
       ],
-      [],
+      "",
       vision,
     );
     expect(message).toEqual({
@@ -97,7 +96,7 @@ describe("historyToMessages", () => {
           ],
         },
       ],
-      [],
+      "",
       { vision: false },
     );
     expect(message.content).toBe(
@@ -116,7 +115,7 @@ describe("resolveAttachments", () => {
           attachments: [{ key: "users/u1/a.png", contentType: "image/png" }],
         },
       ],
-      [],
+      "",
       { vision: true },
     );
     const presign = async (key: string) => `https://storage.test/${key}?sig=1`;
@@ -241,8 +240,7 @@ describe("compactHistory", () => {
     const messages: ModelMessage[] = [
       { role: "user", content: "Build it" },
       ...turn(1, "line1\nline2\nline3"),
-      ...turn(2, "b"),
-      ...turn(3, "c"),
+      ...[2, 3, 4, 5, 6, 7, 8].flatMap((n) => turn(n, "b")),
     ];
     const compacted = compactHistory(messages, 2);
     expect(compacted[0]).toEqual(messages[0]);
@@ -270,7 +268,25 @@ describe("compactHistory", () => {
     expect(oldOutput).toBe(
       `${"x".repeat(1500)}\n… [1500 characters of earlier output removed]`,
     );
-    expect(oldOutput).toContain("1500 characters of earlier output removed");
-    expect(compacted.slice(3)).toEqual(messages.slice(3));
+    expect(compacted.slice(13)).toEqual(messages.slice(13));
+  });
+
+  test("moves the compaction boundary in blocks, so the prefix stays stable for the prompt cache", () => {
+    const base: ModelMessage[] = [
+      { role: "user", content: "Build it" },
+      ...[1, 2, 3, 4, 5, 6, 7, 8].flatMap((n) => turn(n, "a")),
+    ];
+    const longer = [...base, ...turn(9, "a")];
+    const first = compactHistory(base, 2);
+    const second = compactHistory(longer, 2);
+    expect(second.slice(0, first.length)).toEqual(first);
+  });
+
+  test("doesn't compact before a full block of old turns exists", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: "Build it" },
+      ...[1, 2, 3, 4, 5].flatMap((n) => turn(n, "a")),
+    ];
+    expect(compactHistory(messages, 2)).toBe(messages);
   });
 });

@@ -193,6 +193,12 @@ export async function debitCredits(
     versionNumber: number | null;
     handoff?: boolean;
     guard?: { input: string; output?: string };
+    run?: {
+      intent: string;
+      timings: Record<string, number>;
+      issues?: number;
+      memory?: { read: string; reads: number; write: string };
+    };
   },
 ) {
   if (input.credits <= 0) return null;
@@ -215,6 +221,7 @@ export async function debitCredits(
         agents: input.cost.agents,
         ...(input.handoff ? { handoff: true } : {}),
         ...(input.guard ? { guard: input.guard } : {}),
+        ...(input.run ? { run: input.run } : {}),
         ...input.usage,
       },
     },

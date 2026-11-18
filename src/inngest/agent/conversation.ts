@@ -41,20 +41,17 @@ function userMessage(
 
 export function historyToMessages(
   history: StoredMessage[],
-  files: string[],
+  context: string,
   { vision }: { vision: boolean },
 ): ModelMessage[] {
   const recent = history
     .slice(-MAX_HISTORY_MESSAGES)
     .filter((message) => message.content.trim() || message.attachments?.length);
   const lastUser = recent.findLastIndex((message) => message.role === "USER");
-  const filesNote =
-    files.length > 0
-      ? `\n\n(Files in the project from earlier versions: ${files.join(", ")})`
-      : "";
+  const note = context ? `\n\n${context}` : "";
   return recent.map((message, index) =>
     message.role === "USER"
-      ? userMessage(message, vision, index === lastUser ? filesNote : "")
+      ? userMessage(message, vision, index === lastUser ? note : "")
       : { role: "assistant", content: message.content },
   );
 }
@@ -83,6 +80,7 @@ export async function resolveAttachments(
 }
 
 export const KEEP_RECENT_TURNS = 3;
+export const COMPACT_EVERY_TURNS = 6;
 const OLD_OUTPUT_CHARS = 1500;
 
 function countLines(content: string) {
@@ -118,8 +116,11 @@ export function compactHistory(
       ? [index]
       : [],
   );
-  if (assistantIndexes.length <= keepRecentTurns) return messages;
-  const cutoff = assistantIndexes[assistantIndexes.length - keepRecentTurns];
+  const eligible = assistantIndexes.length - keepRecentTurns;
+  const frozen =
+    Math.floor(eligible / COMPACT_EVERY_TURNS) * COMPACT_EVERY_TURNS;
+  if (frozen <= 0) return messages;
+  const cutoff = assistantIndexes[frozen];
   return messages.map((message, index) => {
     if (index >= cutoff || typeof message.content === "string") {
       return message;

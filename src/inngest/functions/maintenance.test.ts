@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   retire: vi.fn(),
   orphans: vi.fn(),
   uploads: vi.fn(),
+  screenshots: vi.fn(),
+  screenshotObjects: vi.fn(),
   purge: vi.fn(),
   health: vi.fn(),
   alert: vi.fn(),
@@ -27,6 +29,8 @@ vi.mock("@/server/ops/cleanup", () => ({
   retireIdleSandboxes: mocks.retire,
   killOrphanSandboxes: mocks.orphans,
   deleteOrphanUploads: mocks.uploads,
+  expireScreenshots: mocks.screenshots,
+  expireScreenshotObjectsPage: mocks.screenshotObjects,
   purgeExpiredRows: mocks.purge,
 }));
 vi.mock("@/server/ops/sandbox-events", () => ({
@@ -37,7 +41,10 @@ vi.mock("@/server/sandbox/admin", () => ({
   killSandbox: vi.fn(),
   listPausedSandboxes: vi.fn(),
 }));
-vi.mock("@/server/storage/attachments", () => ({ deleteAttachment: vi.fn() }));
+vi.mock("@/server/storage/attachments", () => ({
+  deleteAttachment: vi.fn(),
+  listScreenshotObjects: vi.fn(),
+}));
 
 const { cleanupResources, monitorSandboxes } = await import("./maintenance");
 
@@ -52,6 +59,12 @@ beforeEach(() => {
   mocks.retire.mockResolvedValue({ retired: 2, failed: 0 });
   mocks.orphans.mockResolvedValue({ killed: 1, failed: 0 });
   mocks.uploads.mockResolvedValue({ deleted: 3, failed: 0 });
+  mocks.screenshots.mockResolvedValue({ deleted: 4, failed: 0 });
+  mocks.screenshotObjects.mockResolvedValue({
+    deleted: 0,
+    failed: 0,
+    cursor: null,
+  });
   mocks.purge.mockResolvedValue({ throttleWindows: 5 });
 });
 
@@ -73,6 +86,7 @@ describe("cleanupResources", () => {
       idle: { retired: 2 },
       orphans: { killed: 1 },
       uploads: { deleted: 3 },
+      screenshots: { deleted: 4 },
     });
     expect(mocks.alert).not.toHaveBeenCalled();
   });
@@ -113,4 +127,41 @@ describe("monitorSandboxes", () => {
       }),
     );
   });
+});
+
+test("includes screenshot failures in the nightly alert and runs its durable step", async () => {
+  mocks.screenshots.mockResolvedValue({ deleted: 2, failed: 3 });
+  await run(cleanupResources);
+  expect(step.run).toHaveBeenCalledWith(
+    "expire-screenshots",
+    expect.any(Function),
+  );
+  expect(mocks.alert).toHaveBeenCalledWith(
+    expect.objectContaining({ details: { failures: 3 } }),
+  );
+});
+
+test("walks all object pages in separate durable steps and aggregates failures", async () => {
+  mocks.screenshotObjects
+    .mockResolvedValueOnce({ deleted: 1, failed: 2, cursor: "next" })
+    .mockResolvedValueOnce({ deleted: 3, failed: 0, cursor: null });
+  const result = await run(cleanupResources);
+  expect(result).toMatchObject({
+    screenshotObjects: { deleted: 4, failed: 2 },
+  });
+  expect(step.run).toHaveBeenCalledWith(
+    "expire-screenshot-objects-0",
+    expect.any(Function),
+  );
+  expect(step.run).toHaveBeenCalledWith(
+    "expire-screenshot-objects-1",
+    expect.any(Function),
+  );
+  expect(mocks.screenshotObjects.mock.calls[1][3]).toBe("next");
+  expect(mocks.screenshotObjects.mock.calls[1][2]).toBe(
+    mocks.screenshotObjects.mock.calls[0][2],
+  );
+  expect(mocks.alert).toHaveBeenCalledWith(
+    expect.objectContaining({ details: { failures: 2 } }),
+  );
 });

@@ -39,7 +39,12 @@ function renderMessage(
   };
   render(
     <TooltipProvider>
-      <ChatMessage message={{ ...base, ...message }} {...handlers} {...props} />
+      <ChatMessage
+        projectId="p1"
+        message={{ ...base, ...message }}
+        {...handlers}
+        {...props}
+      />
     </TooltipProvider>,
   );
   return handlers;

@@ -3,13 +3,18 @@ import { gateway } from "@/server/ai/gateway";
 import { extractSummary } from "../conversation";
 import { builderInstructions } from "../prompts/system";
 import { SEARCH_TOOL } from "../search";
-import { SKILL_NAMES } from "../skills";
 import { builderTools } from "../tools";
 import type { AgentSpec } from "./types";
 
-export function builderSpec({ search }: { search: boolean }): AgentSpec {
+export function builderSpec({
+  search,
+  name = "builder",
+}: {
+  search: boolean;
+  name?: AgentSpec["name"];
+}): AgentSpec {
   return {
-    name: "builder",
+    name,
     tools: search
       ? {
           ...builderTools,
@@ -20,8 +25,7 @@ export function builderSpec({ search }: { search: boolean }): AgentSpec {
           }),
         }
       : builderTools,
-    skills: SKILL_NAMES,
-    instructions: (skills) => builderInstructions(skills, search),
+    instructions: builderInstructions(search),
     output: extractSummary,
   };
 }

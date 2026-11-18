@@ -2,10 +2,13 @@ import "server-only";
 import {
   generateText,
   type ModelMessage,
+  Output,
   streamText,
+  type SystemModelMessage,
   type ToolSet,
   wrapLanguageModel,
 } from "ai";
+import type { z } from "zod";
 import type { AgentModel } from "@/lib/ai/models";
 import { gateway } from "@/server/ai/gateway";
 import {
@@ -18,7 +21,6 @@ import { secretRedactionMiddleware } from "./guardrails/middleware";
 import { patternRedactor, type Redactor } from "./guardrails/redact";
 import type { Publish } from "../publisher";
 import { resolveAttachments } from "./conversation";
-import { REPLY_PROMPT, TITLE_PROMPT } from "./prompts/summary";
 import { SEARCH_TOOL, type SearchRecord, searchRecord } from "./search";
 
 const FLUSH_MS = 150;
@@ -97,13 +99,18 @@ export async function runModelTurn({
 }): Promise<ModelTurn> {
   const generationIds: string[] = [];
   const searches: SearchRecord[] = [];
+  const prepared = cacheable(
+    model,
+    instructions,
+    await resolveAttachments(messages, attachmentUrl),
+  );
   const result = streamText({
     model: wrapLanguageModel({
       model: gateway(model.id),
       middleware: secretRedactionMiddleware(redactor),
     }),
-    instructions,
-    messages: await resolveAttachments(messages, attachmentUrl),
+    instructions: prepared.instructions,
+    messages: prepared.messages,
     tools,
     activeTools,
     toolChoice,
@@ -172,42 +179,106 @@ export async function runModelTurn({
   };
 }
 
-export async function generateVersionTitle(
-  model: AgentModel,
-  prompt: string,
-  summary: string,
-): Promise<ModelCall & { text: string }> {
+export function cacheable(
+  model: Pick<AgentModel, "provider">,
+  instructions: string,
+  messages: ModelMessage[],
+): { instructions: string | SystemModelMessage; messages: ModelMessage[] } {
+  if (model.provider !== "anthropic") return { instructions, messages };
+  const breakpoint = { anthropic: { cacheControl: { type: "ephemeral" } } };
+  const last = messages.at(-1);
+  return {
+    instructions: {
+      role: "system",
+      content: instructions,
+      providerOptions: breakpoint,
+    },
+    messages: last
+      ? [
+          ...messages.slice(0, -1),
+          {
+            ...last,
+            providerOptions: { ...last.providerOptions, ...breakpoint },
+          } as ModelMessage,
+        ]
+      : messages,
+  };
+}
+
+export type StructuredCall<T> = ModelCall & { output: T };
+
+export async function generateStructured<T>({
+  model,
+  instructions,
+  messages,
+  schema,
+  maxOutputTokens = MAX_OUTPUT_TOKENS,
+}: {
+  model: AgentModel;
+  instructions: string;
+  messages: ModelMessage[];
+  schema: z.ZodType<T>;
+  maxOutputTokens?: number;
+}): Promise<StructuredCall<T>> {
+  const prepared = cacheable(
+    model,
+    instructions,
+    await resolveAttachments(messages, attachmentUrl),
+  );
   const result = await generateText({
-    model: gateway(model.id),
-    instructions: TITLE_PROMPT,
-    prompt: `Request:\n${prompt.slice(0, 2000)}\n\nSummary:\n${summary.slice(0, 2000)}`,
+    model: wrapLanguageModel({
+      model: gateway(model.id),
+      middleware: secretRedactionMiddleware(patternRedactor),
+    }),
+    instructions: prepared.instructions,
+    messages: prepared.messages,
+    output: Output.object({ schema }),
+    maxOutputTokens,
     maxRetries: 2,
+    providerOptions,
   });
   const usage = toTokenUsage(result.totalUsage);
   const generationId = generationIdOf(result.providerMetadata);
   return {
-    text: result.text,
+    output: result.output,
     usage,
     estimatedUsd: costOf(usage, model),
     generationIds: generationId ? [generationId] : [],
   };
 }
 
-export async function generateReply(
-  model: AgentModel,
-  input: { prompt: string; notes: string; files: string[] },
-): Promise<ModelCall & { text: string }> {
+export async function generatePlainText({
+  model,
+  instructions,
+  messages,
+  maxOutputTokens = MAX_OUTPUT_TOKENS,
+}: {
+  model: AgentModel;
+  instructions: string;
+  messages: ModelMessage[];
+  maxOutputTokens?: number;
+}): Promise<ModelCall & { text: string; finishReason: string }> {
+  const prepared = cacheable(
+    model,
+    instructions,
+    await resolveAttachments(messages, attachmentUrl),
+  );
   const result = await generateText({
-    model: gateway(model.id),
-    instructions: REPLY_PROMPT,
-    prompt: `Request:\n${input.prompt.slice(0, 2000)}\n\nAgent notes:\n${input.notes.slice(0, 4000)}\n\nFiles changed:\n${input.files.slice(0, 40).join("\n") || "none"}`,
-    maxOutputTokens: 800,
+    model: wrapLanguageModel({
+      model: gateway(model.id),
+      middleware: secretRedactionMiddleware(patternRedactor),
+    }),
+    instructions: prepared.instructions,
+    messages: prepared.messages,
+    maxOutputTokens,
     maxRetries: 2,
+    providerOptions,
   });
   const usage = toTokenUsage(result.totalUsage);
   const generationId = generationIdOf(result.providerMetadata);
   return {
     text: result.text,
+    finishReason: result.finishReason,
     usage,
     estimatedUsd: costOf(usage, model),
     generationIds: generationId ? [generationId] : [],

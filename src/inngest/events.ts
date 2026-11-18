@@ -13,8 +13,8 @@ export const agentRun = eventType("agent/run", {
           .object({
             note: z.string().max(8000),
             written: z.array(z.string()).max(400),
-            readAgentsMd: z.boolean(),
-            loadedSkills: z.array(z.string()).max(20),
+            readAgentsMd: z.boolean().optional(),
+            loadedSkills: z.array(z.string()).max(20).optional(),
             installs: z.number().int().nonnegative(),
             searches: z.number().int().nonnegative().optional(),
             restricted: z.boolean().optional(),

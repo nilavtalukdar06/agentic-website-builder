@@ -93,6 +93,7 @@ export function ChatPanel({
           {messages.map((message) => (
             <ChatMessage
               key={message.id}
+              projectId={projectId}
               message={message}
               status={
                 message.stopping

@@ -1,10 +1,8 @@
 import type { ToolSet } from "ai";
-import type { SkillName } from "../skills";
 
 export type AgentSpec = {
-  name: "builder";
+  name: "builder" | "editor" | "repair";
   tools: ToolSet;
-  skills: readonly SkillName[];
-  instructions: (skillIndex: string) => string;
+  instructions: string;
   output: (text: string) => string | null;
 };

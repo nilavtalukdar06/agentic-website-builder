@@ -38,31 +38,32 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 
 ## 1. Tech stack
 
-| Concern              | Choice                                                                                           | Packages (verify latest at install time)                                                                                                |
-| -------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework            | Next.js 16 (App Router, Turbopack), React 19                                                     | `next`, `react`, `react-dom`                                                                                                            |
-| Styling              | Tailwind CSS v4 + CSS variables                                                                  | `tailwindcss`, `@tailwindcss/postcss`, `tw-animate-css`                                                                                 |
-| UI                   | shadcn/ui (copy-in components)                                                                   | `npx shadcn@latest init / add …`, `lucide-react`                                                                                        |
-| AI UI                | AI Elements (shadcn-based registry)                                                              | `npx ai-elements@latest add <component>`                                                                                                |
-| Data fetching        | tRPC v11 + TanStack React Query v5                                                               | `@trpc/server`, `@trpc/client`, `@trpc/tanstack-react-query`, `@tanstack/react-query`, `zod`, `superjson`, `client-only`, `server-only` |
-| URL state            | nuqs v2                                                                                          | `nuqs`                                                                                                                                  |
-| Agents               | Inngest v4 + AI SDK (own durable tool loop); one Builder agent per request (Phase 5)             | `inngest` (v4), `ai` (v7) — AgentKit dropped in Phase 5, see `docs/decisions.md`                                                        |
-| Agent → UI streaming | Inngest v4 built-in realtime                                                                     | `inngest/realtime` (channels, publish), `inngest/react` (`useRealtime`, Phase 6)                                                        |
-| LLM                  | Vercel AI Gateway via the AI SDK                                                                 | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway     |
-| Agent skills         | `skills` CLI at template build (§5.7)                                                            | `skills` (dev/build only, MIT); five skills in every sandbox, own `loadSkill` tool                                                      |
-| Web search           | AI Gateway search tool, Builder only, when the user references a website (§5.8)                  | `ai` (`gateway.tools.parallelSearch`); works with every model, billed per search through the gateway                                    |
-| Agent browser (P11)  | _Proposed, not built:_ Browserbase cloud Chrome driven by Stagehand v4 for browser QA (Phase 11) | `@browserbasehq/stagehand` (pinned), behind an own `BrowserProvider`; local Playwright for tests and evals                              |
-| Guardrails           | Own layers + AI SDK middleware + `openai/gpt-oss-safeguard-20b` through the gateway (§5.9–5.10)  | `@secretlint/core` + preset (in-process), `npq` 3.27.4 in the sandbox template; no new vendor                                           |
-| Voice input          | Browser Web Speech API                                                                           | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                   |
-| File storage         | Neon Object Storage (S3-compatible)                                                              | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                |
-| Sandbox              | E2B (custom Next.js template)                                                                    | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                          |
-| Auth                 | Better Auth, **GitHub OAuth only**                                                               | `better-auth`                                                                                                                           |
-| Payments             | Stripe Checkout (one-time, custom amount)                                                        | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                     |
-| Database             | PostgreSQL on Neon, Prisma 7                                                                     | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                    |
-| GitHub export        | GitHub REST API                                                                                  | `@octokit/rest` (candidate; see Phase 8)                                                                                                |
-| Theming              | light/dark                                                                                       | own `ThemeProvider` (`src/components/theme/`, `useSyncExternalStore`), not `next-themes` — see `docs/decisions.md`                      |
-| Fonts                | Geist / Geist Mono                                                                               | `next/font/google` (`Geist`, `Geist_Mono`)                                                                                              |
-| Env validation       | typed env                                                                                        | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                        |
+| Concern              | Choice                                                                                             | Packages (verify latest at install time)                                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Framework            | Next.js 16 (App Router, Turbopack), React 19                                                       | `next`, `react`, `react-dom`                                                                                                                     |
+| Styling              | Tailwind CSS v4 + CSS variables                                                                    | `tailwindcss`, `@tailwindcss/postcss`, `tw-animate-css`                                                                                          |
+| UI                   | shadcn/ui (copy-in components)                                                                     | `npx shadcn@latest init / add …`, `lucide-react`                                                                                                 |
+| AI UI                | AI Elements (shadcn-based registry)                                                                | `npx ai-elements@latest add <component>`                                                                                                         |
+| Data fetching        | tRPC v11 + TanStack React Query v5                                                                 | `@trpc/server`, `@trpc/client`, `@trpc/tanstack-react-query`, `@tanstack/react-query`, `zod`, `superjson`, `client-only`, `server-only`          |
+| URL state            | nuqs v2                                                                                            | `nuqs`                                                                                                                                           |
+| Agents               | Inngest v4 + AI SDK (own durable tool loop); one Builder agent per request (Phase 5)               | `inngest` (v4), `ai` (v7) — AgentKit dropped in Phase 5, see `docs/decisions.md`                                                                 |
+| Agent → UI streaming | Inngest v4 built-in realtime                                                                       | `inngest/realtime` (channels, publish), `inngest/react` (`useRealtime`, Phase 6)                                                                 |
+| LLM                  | Vercel AI Gateway via the AI SDK                                                                   | `ai` (`createGateway`): any provider, user picks per prompt from a curated list; live prices + exact per-call cost from the gateway              |
+| Agent skills         | `skills` CLI at template build (§5.7)                                                              | `skills` (dev/build only, MIT); five skills in every sandbox, distilled into house rules (Phase 11 retired `loadSkill`)                          |
+| Web search           | AI Gateway search tool, Builder only, when the user references a website (§5.8)                    | `ai` (`gateway.tools.parallelSearch`); works with every model, billed per search through the gateway                                             |
+| Agent browser (P11)  | Browserbase cloud Chrome driven by Stagehand v4 for browser QA (Phase 11)                          | `@browserbasehq/stagehand` 4.4.0 and `@browserbasehq/sdk` 2.28.0 (pinned), behind an own `BrowserProvider`; an in-memory fake provider for tests |
+| Memory (P11)         | Supermemory v5 as a memory layer: user preferences and project decisions from the user's own words | `supermemory` 5.1.2 (pinned), behind an own `MemoryProvider`; an in-memory fake provider for tests                                               |
+| Guardrails           | Own layers + AI SDK middleware + `openai/gpt-oss-safeguard-20b` through the gateway (§5.9–5.10)    | `@secretlint/core` + preset (in-process), `npq` 3.27.4 in the sandbox template; no new vendor                                                    |
+| Voice input          | Browser Web Speech API                                                                             | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                            |
+| File storage         | Neon Object Storage (S3-compatible)                                                                | `files-sdk` (`neon` adapter) + `@aws-sdk/client-s3` peers; bucket declared in `neon.ts` (`@neon/config`)                                         |
+| Sandbox              | E2B (custom Next.js template)                                                                      | `e2b` (Template SDK builds the template; no `@e2b/cli` needed)                                                                                   |
+| Auth                 | Better Auth, **GitHub OAuth only**                                                                 | `better-auth`                                                                                                                                    |
+| Payments             | Stripe Checkout (one-time, custom amount)                                                          | `stripe` (server), `@stripe/stripe-js` (only if needed client-side)                                                                              |
+| Database             | PostgreSQL on Neon, Prisma 7                                                                       | `prisma`, `@prisma/client`, `@prisma/adapter-neon`, `@neondatabase/serverless`, `ws`                                                             |
+| GitHub export        | GitHub REST API                                                                                    | `@octokit/rest` (candidate; see Phase 8)                                                                                                         |
+| Theming              | light/dark                                                                                         | own `ThemeProvider` (`src/components/theme/`, `useSyncExternalStore`), not `next-themes` — see `docs/decisions.md`                               |
+| Fonts                | Geist / Geist Mono                                                                                 | `next/font/google` (`Geist`, `Geist_Mono`)                                                                                                       |
+| Env validation       | typed env                                                                                          | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                                                                 |
 
 Version notes:
 
@@ -388,7 +389,7 @@ The reasoning is in `docs/decisions.md` ("Phase 5 simplification").
      - `terminal`: `sandbox.commands.run(cmd)` in `/home/user/app`, stdout/stderr streamed, 3-minute timeout, output truncated for the model
      - `createOrUpdateFiles`: `sandbox.files.write(...)`, records created/edited paths and line counts
      - `readFiles`: `sandbox.files.read(path)`
-     - `loadSkill`: a skill's `SKILL.md` body and file list (§5.7)
+     - `loadSkill`: a skill's `SKILL.md` body and file list (§5.7). _Retired in Phase 11, replaced by house rules in the prompt._
      - `parallel_search`: web search through the gateway, offered **only when the user's message references a website** (§5.8)
   5. The loop stops when a turn has no tool calls (the reply holds `<task_summary>`) or when the running cost reaches the balance (it stops early and keeps what was built). A Builder pass that finishes without writing any file is sent back once to make the change. A long job is **handed over** to a fresh run before it reaches Inngest's per-run limits (about 1,000 steps and 32 MiB of state): at 850 steps or 24 MiB the Builder writes a handoff note (no tools), the run saves a checkpoint (§5.11), debits the work so far (`meta.handoff`) and sends `agent/run` with `resume.handoff` (note, files changed, skill progress, installs, searches used); the next run restores the checkpoint, skips the input classifier and continues after the deterministic secret check. No chat message is written between segments
   6. **Output guard** (§5.10) on the final reply
@@ -461,7 +462,7 @@ Every sandbox has five agent skills, installed once at template build (§5.1). T
 - **Pinned:** each install writes `.agents/skills/<name>/`, a symlink in `.claude/skills/` and a content hash in `skills-lock.json`; the committed lockfile makes a skill update a deliberate rebuild, never silent. A restore does not reinstall them: a new sandbox from the template already has them.
 - **Not part of the project's files:** `.agents/`, `.claude/` and `skills-lock.json` are left out of Version snapshots and the GitHub export. The Builder can read but never write them (path guard: reads allowed, writes denied; the command guard blocks `rm`, `mv`, `cp`, `>`, `tee`, `sed -i` and `skills add/remove/update` on them).
 - **`AGENTS.md` in every site:** the rules sit above the block `next dev` manages (`CLAUDE.md` is just `@AGENTS.md`) and tell any agent to read `AGENTS.md` before changing code and to load the skills that apply before any change, even a small one. The rules text lives in `src/server/sandbox/agent-rules.ts`; a unit test keeps it identical to `sandbox-templates/nextjs/agents-rules.md`. `ensureAgentInstructions()` adds the section to restored projects that miss it.
-- **How the Builder uses them:** its prompt carries an index (name and description from each installed `SKILL.md`, about 1.5 KB, read in the `sandbox` step); `loadSkill({ name })` returns the body and the folder's file list, other files are read with `readFiles` only when needed.
+- **How the Builder uses them:** its prompt carries an index (name and description from each installed `SKILL.md`, about 1.5 KB, read in the `sandbox` step); `loadSkill({ name })` returns the body and the folder's file list, other files are read with `readFiles` only when needed. _Phase 11 (18 November 2026) retired the gate, the index and `loadSkill`: the skills are distilled into the house rules in `src/inngest/agent/prompts/house-rules.ts`, and the files can still be read with `readFiles`._
 - **Enforced, not just asked:** the executor rejects the first `createOrUpdateFiles` until the Builder has read `AGENTS.md` and loaded at least one skill ("Load the skills that apply before writing code"), small edits included. If no skill is installed, the rule is waived.
 
 ### 5.8 Web search for website references
@@ -775,28 +776,41 @@ Neither is in the canvas (`~/Desktop/vibe-ui` has no delete control), so the pie
 
 ---
 
-## Phase 11 — Agent v2: fast, planned, self-verifying builder
+## Phase 11 — Agent harness v3: fast, planned, self-verifying builder
 
-**Status: approved 15 November 2026; nothing is built yet.** The full design is in [`docs/agent-v2.md`](agent-v2.md); the build order in small phases (stages A–J) is in [`docs/plan2.md`](plan2.md), which also records the owner's answers to the open decisions. This section is the summary and the scope; where the two differ, `agent-v2.md` is the detail and this section is the scope.
+**Status: built 18 November 2026, verified with unit tests and stubbed models; the owner runs the live checks.** The design and the deviations are in [`docs/agent-harness.md`](agent-harness.md). On 18 November 2026 the owner discarded the earlier 60-step build order (`docs/plan2.md`, deleted) in favour of this leaner plan. [`docs/agent-v2.md`](agent-v2.md) stays as background for the diagnosis only.
 
-**Why (owner's report, 15 November 2026):** with `gpt-5.1-codex-mini` the Builder is too slow to build a small app, the first result is half-built and buggy, and small follow-up edits take too long and often miss. The diagnosis (`agent-v2.md` §1) finds two money causes: the free gateway tier's 5 requests a minute and a mini model doing every job in one open loop. It also finds seven design causes: the mandatory skill gate and `AGENTS.md` read on every request, whole-file rewrites as the only way to write, no project memory for follow-ups, verification left to the model, a blank-page template, one sequential Inngest step per tool call plus extra stop, summary and title steps, and compaction that defeats prompt caching.
+**Why (owner's report, 18 November 2026):** even strong models such as `kimi-k2.7` took minutes for a small app like a todo list, the result looked mediocre, and a one-line cosmetic follow-up also took minutes.
 
-**What changes:**
+**What changed:**
 
-- **Pipeline instead of one open loop:** intent router (heuristics first) → **Planner** (structured `BuildPlan`: design system, routes, shared component props, file plan, acceptance checks) → **Generator** (foundation call, then parallel one-shot file workers) or **Editor** (edit tools, preloaded files, 8-turn cap) → **deterministic verification gate** (`tsc`, ESLint, every route, the dev-server log, static rules) → **Repair** (≤ 3 rounds, rollback on regression) → **browser QA** → **visual critic** (create only, ≤ 1 polish pass) → Finalize (reply, project spec and repo map built by code, no separate summary or title calls).
-- **Context pack:** distilled house rules replace the skill gate; a generated component and block catalog; a `ProjectSpec` and repo map saved with every Version; append-only compaction so the prompt cache keeps hitting.
-- **Tools v2:** `editFile` (search-and-replace), `searchCode`, `listFiles`, ranged `readFiles`, `installPackages`, `runChecks`, `inspectPage`; `loadSkill` removed. All tool calls of a turn run in one step.
-- **Agent browser:** Browserbase cloud Chrome driven by Stagehand v4 primitives (`act`, `observe`, `extract`) behind an own `BrowserProvider`. Deterministic checks per route (a preview-only error probe injected with Next.js `instrumentationClientInject`, the error overlay, mobile overflow, broken images, screenshots); planned interactions checked with Stagehand; the model passes paths only, never URLs. Spikes S1–S3 first (Stagehand through AI Gateway, page probe reading, session reconnect across steps).
-- **Template v2:** a blocks library for generated sites, theme presets, common packages preinstalled, `.vibe/` tools (check, map, probe, dev log).
-- **Models:** roles (planner, workers, fast repair and router, critic, guard) with an **Auto** default; a durable per-model rate-limit scheduler instead of 429 retries.
-- **Memory layer (Supermemory, owner's request, `agent-v2.md` §17):** user preferences across projects and each project's corrections and decisions, read by code into the context pack and written by code in Finalize after filters (secret scan; user preferences only from the user's own words, against memory poisoning). Namespaces `vibe:<db>:u:<userId>` and `vibe:<db>:p:<projectId>`, built only in code; no memory tools for the model; `withSupermemory` auto-saving rejected. `ProjectSpec` stays the source of truth. Deleted with the project; a settings panel to view, forget and turn memory off (needs a vibe-ui design approval). Nothing shared across users: agent lessons go to an owner-reviewed Postgres table instead. Spikes M1–M3 first (SDK version and signatures, latency, the vendor's legal pack).
-- **Evaluation harness first:** `bun run agent:eval` over 30 cases, an `AgentRun` metrics table and a recorded baseline. Every sub-phase must meet its eval target.
+- **Pipeline under code control:**
+  - An intent router (heuristics, then one call to the user's chosen model when unsure).
+  - A new site or a large change gets a **Planner** (structured plan: preset, fonts, pages, blocks, file contracts) and a **Generator** (code-applied theme and blocks, then parallel one-shot file workers in dependency waves).
+  - An edit or fix gets the **Editor** (target files preloaded, `editFile`, 8 turns).
+  - A question gets an answer only.
+  - Then a **verify** step (`tsc`, serious ESLint rules and route status) and **repair** (≤ 3 rounds for builds, 2 for edits, with rollback).
+  - A website reference keeps the builder loop, because only the loop has web search.
+- **Overhead removed:**
+  - The skill gate and `loadSkill` are gone; house rules are in the prompt.
+  - One step per turn for all tool calls, and the stop check runs inside the model step.
+  - No reply or title model calls.
+  - Guard, sandbox and router run in parallel.
+  - Cache-friendly context: a stable system prompt, block-wise compaction, and Anthropic breakpoints.
+- **Tools:** `editFile` (search-and-replace), ranged `readFiles`, `listFiles` and `searchCode`.
+- **Context:** a repo map and design notes computed on our server from the latest Version, with no migration.
+- **Blocks and presets:** 17 typed blocks in `sandbox-templates/nextjs/blocks/`, and 6 colour presets. Code copies only the blocks a plan uses, so no template rebuild is needed.
+- **Visible progress:** a `note` task row for the plan, the checks and rollbacks. Per-phase timings go in the debit's `meta.run` and in `agent:smoke`.
 
-**Sub-phases (in order):** 11.0 evals and baseline · 11.1 quick wins without new vendors · 11.2 edit tools and context pack · 11.3 template v2 · 11.4 verification gate and repair · 11.5 Planner and parallel Generator · 11.6 Browserbase and Stagehand · 11.7 visual critic and model roles · 11.8 memory layer (can start after 11.2). Targets and "done when" per step: `agent-v2.md` §2 and §12.
+**Screenshot lifecycle (owner-authorized, 18 November 2026):** Browser screenshots become eligible for removal after 30 days; deletion occurs on the next successful nightly sweep, not at an exact 30-day deadline. Nightly cleanup scans every expired assistant message in bounded pages, retries failed removals on later runs, and keeps browser checks and other message data. Signing and project deletion validate the `qa/<projectId>/<runId>/<round>-<viewport>.png` namespace after project ownership checks. A second sweep lists every object under `qa/` in 200-object durable pages and deletes objects whose storage last-modified timestamp is older than 30 days, including earlier rounds, failed jobs/retries and deleted projects without message or Attachment rows. Failed removals retry on later sweeps; missing timestamps count as failures and retain the object. No provider bucket lifecycle rule is configured. The message sweep scans all expired assistant history each night in bounded pages and can take longer as history grows. This backend completion is authorized independently of the deferred items below.
 
-**When built, these also change:** the Privacy Policy and Terms (Browserbase and Supermemory as new processors, stored screenshots, remembered preferences, `AgentRun` metrics, retention), the env list below, `docs/decisions.md`, the schema (`ProjectSpec`, repo map and verification status on `Version`, `AgentRun`, a model rate-limit bucket, `User.memoryEnabled`, `AgentLesson`), and the UI (plan Task list, verification summary, Memory settings panel). The verification summary and the Memory panel have no vibe-ui artboard and need the owner's approval first.
+**Authorized Browserbase extension (18 November 2026):** cloud browser checks, a read-only live view on desktop and phone, saved check results and desktop/phone screenshots. Reuse existing workspace patterns (owner-approved while vibe-ui is unavailable). Screenshots use Neon Object Storage with a 30-day retention target.
 
-**Out of scope:** backends in generated apps (databases, auth), memory shared across users, a team of agents talking to each other, fine-tuning, a computer-use agent, an embedded live browser view.
+**Memory layer with Supermemory (owner's request, 18 November 2026):** Supermemory free plan with a monthly budget guard (writes stop at 80% of `MEMORY_MONTHLY_USD`, reads at 100%, one alert); a Memory panel in the account menu (list, forget one, clear all, a "Use memory" switch that is on by default) plus chat commands ("remember that…", "forget that…", with a confirmation before anything is deleted); only the user's own message text is stored. Code reads memory in the `route` step with a 1.5 s timeout and adds it to the context pack as untrusted notes below the current message, the files and the project; the model has no memory tools. Namespaces are built only by code: `vibe:<db>:u:<userId>` and `vibe:<db>:p:<projectId>`. Deleting a project drops its namespace; there is no account deletion yet, and when it's added it must drop the user namespace. Details in `docs/agent-harness.md` and `docs/decisions.md`.
+
+**Deferred:** the visual critic, the Auto model chip and the `AgentRun` table with the eval harness. Each needs the owner's go-ahead before it's built.
+
+**Out of scope:** backends in generated apps (databases, auth), a team of agents talking to each other, fine-tuning, a computer-use agent; interactive browser takeover.
 
 ---
 
@@ -836,11 +850,20 @@ STRIPE_WEBHOOK_SECRET=
 E2B_API_KEY=
 E2B_TEMPLATE_ID=         # printed by `bun run sandbox:build`
 
-# Image attachments (Neon Object Storage; written by `neon deploy`)
+# Browser QA (optional; missing key skips checks)
+BROWSERBASE_API_KEY=
+AGENT_BROWSER_QA=on      # on (default) or off
+
+# Image attachments and browser screenshots (Neon Object Storage; written by `neon deploy`)
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_ENDPOINT_URL_S3=
 AWS_REGION=
+
+# Memory (optional; missing key turns memory off)
+SUPERMEMORY_API_KEY=
+AGENT_MEMORY=on          # on (default) or off
+MEMORY_MONTHLY_USD=4.5   # estimated monthly budget; writes stop at 80%, reads at 100%
 
 # Inngest
 INNGEST_DEV=             # 1 (default local port) or http://localhost:<port>; unset in production
@@ -856,7 +879,7 @@ ARCJET_KEY=              # site key from `arcjet sites get-key`
 ARCJET_ENV=development  # dev/e2e only; without it Arcjet can't fingerprint loopback requests and every decision fails open. Not in src/config/env.ts — read directly by the Arcjet SDK
 ```
 
-Proposed for Phase 11, added only when each sub-phase is built (see `docs/agent-v2.md` §16): `AI_PLANNER_MODEL`, `AI_FAST_MODEL`, `AI_CRITIC_MODEL`, `AI_GATEWAY_RPM`, `AGENT_BROWSER_QA`, `BROWSERBASE_API_KEY`, `SUPERMEMORY_API_KEY`, `AGENT_MEMORY`.
+The deferred Phase 11 work would add `AI_PLANNER_MODEL`, `AI_CRITIC_MODEL` and `AI_GATEWAY_RPM`, but only when that work is approved and built.
 
 `SECRETS_ENCRYPTION_KEY` was removed with project secrets in the Phase 5 simplification; a value left in a local `.env` is ignored.
 
@@ -873,7 +896,7 @@ Proposed for Phase 11, added only when each sub-phase is built (see `docs/agent-
 7. **Skill updates:** pinned per template build by the committed lockfile today, or refreshed on a schedule
 8. **Model list:** which models stay in the curated list (`src/lib/ai/models.ts`) as providers ship new ones, and whether expensive models (e.g. Claude Fable) need a warning
 9. **Guardrails (§5.9–5.10):** _partly resolved when built_: `GuardEvent` stores hashes only; the classifier fails open (deterministic checks only, `guard.input: "skipped"` in the ledger meta); `review` continues with restricted tools; the initial install allowlist is in `src/inngest/agent/guardrails/packages.ts`. Still open: whether a `block` is ever appealed (blocks are never charged) and which packages to add to the allowlist over time
-10. **Agent v2 (Phase 11):** _resolved 15 November 2026_: paid AI Gateway tier; Browserbase free plan (QA defaults to `smoke`, with a monthly browser-time guard); Auto model by default and no plan approval; a Version with errors left is saved as `issues`; session recording off; the verification summary and the Memory panel are approved designs; backends in generated apps are not required; QA, critic, planner, repair and memory are charged as their own agents; memory on by default; Supermemory free plan with a monthly usage guard. Details in `docs/plan2.md` §1
+10. **Agent harness (Phase 11):** _resolved 18 November 2026_: the owner discarded `docs/plan2.md` for the leaner plan in `docs/agent-harness.md`, verified with unit tests and stubbed models. Browserbase checks and read-only live viewing were subsequently approved on the same day, and so was the Supermemory memory layer. The visual critic, Auto and the eval harness remain deferred.
 
 ---
 
@@ -891,14 +914,16 @@ Proposed for Phase 11, added only when each sub-phase is built (see `docs/agent-
 - [x] Phase 8: durable public/private GitHub export, recovery, retry, realtime status and desktop/mobile re-export
 - [x] Phase 9: rate limits, nightly cleanup and sandbox-resume alerting, Stripe webhook alerting, security headers and audit, accessibility audit with fixes, and the Vitest and Playwright coverage. Production deployment was removed from the plan at the owner's request
 - [x] Phase 10: Arcjet Shield WAF and bot detection on every route handler, per-IP edge rate limiting layered in front of the Phase 9 Postgres limiter, and a prompt-injection Guard pre-check layered in front of the Phase 5 policy classifier. Privacy Policy updated, flagged for owner review
-- [ ] Phase 11 (approved): agent v2 per `docs/agent-v2.md`, built in the stages of `docs/plan2.md`
-  - [ ] A measure (AgentRun, phase timer, eval runner, judge, baseline)
-  - [ ] B quick wins (skill gate removed, one step per turn, stop check, no summary/title calls, parallel setup, pre-warm, shared 429 backoff, append-only compaction, cache breakpoints)
-  - [ ] C edit tools and context (editFile, ranged reads, listFiles, searchCode, installPackages, repo map, ProjectSpec, context pack, router, Editor mode)
-  - [ ] D template v2 (.vibe tools, check script, probe, blocks, presets, catalog, rebuild)
-  - [ ] E verification gate and repair (runChecks, Version status, deterministic fixes, repair loop, honest reply, agent lessons)
-  - [ ] F Planner and parallel generator (plan schema, Planner, plan in chat, foundation, waves, delta plans, spec and reply from the plan)
-  - [ ] G browser QA with Browserbase + Stagehand (spikes, providers, free-plan budget, page checks, acceptance checks, inspectPage, verification summary, retention, legal)
-  - [ ] H model roles, Auto default, cost per agent, visual critic
-  - [ ] I memory with Supermemory (spikes, provider, read and write paths, remember/forget, delete with project, Memory panel, free-plan budget, legal)
-  - [ ] J wrap-up (dead code, diagrams and README, final eval)
+- [ ] Phase 11: agent harness v3 per `docs/agent-harness.md` (built and unit-tested 18 November 2026; awaiting the owner's live smoke runs)
+  - [x] Overhead: skill gate removed, one step per turn, stop check in the model step, no reply or title calls, parallel setup, block-wise compaction, cache breakpoints
+  - [x] Follow-ups: `editFile`, ranged reads, `listFiles`, `searchCode`, repo map and design notes, context pack, router, Editor mode, question answers
+  - [x] First builds: Planner, block library and presets, foundation step, parallel workers in dependency waves
+  - [x] Verify and repair: checks, deterministic fixes, repair rounds with rollback, honest reply
+  - [x] Progress and measurement: `note` task rows, phase timings in the ledger and `agent:smoke`
+  - [x] Browser QA frontend: read-only live view, mobile access, saved checks and desktop/phone screenshots; provider/privacy and retention documentation
+  - [ ] Browser QA live cloud-session verification (requires credentials)
+  - [x] Browser checks with Browserbase: desktop and phone page checks, planned interactions on the user's model, repair of findings, live read-only view (responsive), saved checks and screenshots, 30-day retention, legal update (flagged to the owner)
+  - [x] Memory layer with Supermemory: user and project namespaces, read in the route step, user-words-only writes, remember/forget commands, Memory panel, budget guard, project-deletion cleanup, legal update (flagged to the owner)
+  - [ ] Memory migration applied and live memory check by the owner (needs `SUPERMEMORY_API_KEY`)
+  - [ ] Live smoke runs by the owner (todo app, landing page, small follow-up, with a Browserbase key)
+  - [ ] Deferred, needs approval: visual critic, Auto model chip, eval harness

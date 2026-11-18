@@ -20,6 +20,7 @@ const nextConfig: NextConfig = {
   experimental: {
     agentFeedback: true,
   },
+  serverExternalPackages: ["@browserbasehq/stagehand"],
   reactCompiler: true,
   turbopack: {
     rules: {

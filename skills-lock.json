@@ -25,6 +25,13 @@
       "skillPath": "security/SKILL.md",
       "computedHash": "36e9710eaa13c61c00bec00a4902fdc6ed829e6de13127238ae57494e93c1d9d"
     },
+    "browser": {
+      "source": "browserbase/skills",
+      "commit": "bac30e266488dc133cb8fa6d45638a05600acfe4",
+      "sourceType": "github",
+      "skillPath": "skills/browser/SKILL.md",
+      "computedHash": "93bfd9f0401e12ca8a11ca815d20d6fe14469a628b518a4da2d59addefd2ec49"
+    },
     "create-auth": {
       "source": "better-auth/skills",
       "sourceType": "github",
@@ -37,11 +44,25 @@
       "skillPath": "better-auth/emailAndPassword/SKILL.md",
       "computedHash": "407c1244202876daa748818ed41dc55afde1b3f7aec48ae3a1f1c8a7ee40465e"
     },
+    "fetch": {
+      "source": "browserbase/skills",
+      "commit": "bac30e266488dc133cb8fa6d45638a05600acfe4",
+      "sourceType": "github",
+      "skillPath": "skills/fetch/SKILL.md",
+      "computedHash": "65fb82f1a8361ed89ce61a037daeef496733aa8b41fbe4bc9290569a7c92c256"
+    },
     "frontend-design": {
       "source": "anthropics/skills",
       "sourceType": "github",
       "skillPath": "skills/frontend-design/SKILL.md",
       "computedHash": "83485963700bcf11d5bf78118facb301676b69d918fee2e45a95e7f1a2840f6c"
+    },
+    "functions": {
+      "source": "browserbase/skills",
+      "commit": "bac30e266488dc133cb8fa6d45638a05600acfe4",
+      "sourceType": "github",
+      "skillPath": "skills/functions/SKILL.md",
+      "computedHash": "c6a07f94bd27ed2b34279c90d8e37aae22af24153916f4f60410cf4dce453793"
     },
     "integrate-arcjet-guard-agent-framework-go": {
       "source": "arcjet/skills",
@@ -234,6 +255,13 @@
       "sourceType": "github",
       "skillPath": "skills/shadcn/SKILL.md",
       "computedHash": "388962d16c7a4f13aaeee0d8f128e50a87df8553d42ef7988c39c0e1c74a40e8"
+    },
+    "supermemory": {
+      "source": "supermemoryai/skills",
+      "commit": "64e285d5a4a56c773e86c088af54524328b71c42",
+      "sourceType": "github",
+      "skillPath": "supermemory/SKILL.md",
+      "computedHash": "eb9e24ab17bd6948004b680706698a42e5d87184c8e6c88170f51a62cac37fd4"
     },
     "tailwind-css": {
       "source": "PaulRBerg/agent-skills",

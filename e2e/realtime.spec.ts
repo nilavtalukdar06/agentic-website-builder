@@ -91,6 +91,10 @@ test("live agent events stream into the chat and the preview overlay", async ({
       chunk: "No problems found",
     });
     await publish("task", { kind: "skill", name: "shadcn" });
+    await publish("task", {
+      kind: "note",
+      label: "Planned Ember & Oak: 1 page, 6 files",
+    });
     await publish("task", { kind: "read", paths: ["app/page.tsx"] });
     await publish("task", {
       kind: "file",
@@ -116,6 +120,12 @@ test("live agent events stream into the chat and the preview overlay", async ({
     ).toBeVisible();
     await expect(chat.getByText("Loaded skill")).toBeVisible();
     await expect(overlay.getByText("Loaded skill")).toBeVisible();
+    await expect(
+      chat.getByText("Planned Ember & Oak: 1 page, 6 files"),
+    ).toBeVisible();
+    await expect(
+      overlay.getByText("Planned Ember & Oak: 1 page, 6 files"),
+    ).toBeVisible();
     await expect(overlay.getByText("Running", { exact: true })).toBeVisible();
     await expect(
       overlay.getByText("npm run lint", { exact: true }),
@@ -138,8 +148,175 @@ test("live agent events stream into the chat and the preview overlay", async ({
       exitCode: 0,
     });
     await expect(page.getByText("Completed")).toBeVisible();
+    await page.route("https://www.browserbase.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<button>Remote control</button>",
+      }),
+    );
+    await publish("browser", {
+      phase: "session",
+      liveUrl: "https://www.browserbase.com/devtools-fullscreen/e2e",
+      round: 0,
+    });
+    const check = {
+      id: "home-desktop",
+      kind: "page" as const,
+      label: "Home page loads",
+      route: "/",
+      viewport: "desktop" as const,
+      status: "running" as const,
+      detail: null,
+    };
+    await publish("browser", { phase: "check", check });
+    const browser = page.getByRole("region", {
+      name: "Checking the site in a cloud browser",
+    });
+    await expect(browser).toBeVisible();
+    await expect(browser.getByText("Home page loads")).toBeVisible();
+    const frame = browser.locator("iframe");
+    await expect(frame).toHaveAttribute("inert", "");
+    await expect(frame).toHaveAttribute("tabindex", "-1");
+    await expect(frame).toHaveCSS("pointer-events", "none");
+    await frame.evaluate((element) => (element as HTMLElement).focus());
+    await expect(frame).not.toBeFocused();
+    await publish("browser", {
+      phase: "check",
+      check: { ...check, status: "passed" },
+    });
+    await expect(browser.getByText("1 passed")).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page
+      .getByRole("button", { name: "Watch the browser check the site" })
+      .click();
+    await expect(browser).toBeVisible();
+    expect(
+      await browser.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    await publish("browser", {
+      phase: "check",
+      check: {
+        ...check,
+        id: "home-phone",
+        viewport: "phone",
+        status: "failed",
+        detail: "Content overflows the phone viewport",
+      },
+    });
+    await expect(
+      browser.getByText("Content overflows the phone viewport"),
+    ).toBeVisible();
+    await publish("browser", {
+      phase: "closed",
+      status: "failed",
+      summary: "One phone check failed",
+    });
+    await expect(browser).toHaveCount(0);
+    await expect(overlay).toBeVisible();
+    await page.setViewportSize({ width: 1280, height: 900 });
     expect(warnings).toEqual([]);
     await expect(page.getByText("credits used")).toContainText("12");
+  } finally {
+    await session.cleanup();
+  }
+});
+
+test("the agent's browser check streams into the preview on desktop and phone", async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.DATABASE_URL || !(await devServerUp()),
+    "needs the database and a running Inngest dev server",
+  );
+  const session = await createTestSession("E2E Browser");
+  try {
+    await page.context().addCookies([session.cookie]);
+    const suffix = randomUUID().slice(0, 8);
+    const projectId = await session.addProject({
+      slug: `qa-${suffix}`,
+      name: "Checked site",
+    });
+    await session.addMessage({
+      projectId,
+      role: "USER",
+      content: "Build a todo app",
+      startedAt: new Date(),
+    });
+    const tokenResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/realtime/token") &&
+        response.status() === 200,
+    );
+    await page.goto(`/p/qa-${suffix}`);
+    await tokenResponse;
+
+    const inngest = new Inngest({ id: "vibe-e2e", isDev: true });
+    const channel = projectChannel({ projectId });
+    type Topics = typeof projectChannel.$infer;
+    const publish = <T extends keyof Topics>(topic: T, data: Topics[T]) =>
+      inngest.realtime.publish(
+        channel[topic] as Realtime.TopicRef<Topics[T]>,
+        data,
+      );
+    await expect(async () => {
+      await publish("status", { state: "building" });
+      await expect(page.getByText("Building…")).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
+
+    const check = {
+      id: "0-page-phone-/",
+      kind: "page" as const,
+      label: "Open / at phone width",
+      route: "/",
+      viewport: "phone" as const,
+      status: "running" as const,
+      detail: null,
+    };
+    await publish("browser", { phase: "session", liveUrl: null, round: 0 });
+    await publish("browser", { phase: "check", check });
+
+    const live = page.getByRole("region", {
+      name: "Checking the site in a cloud browser",
+    });
+    await expect(live).toBeVisible();
+    await expect(live.getByText("Connecting to the browser…")).toBeVisible();
+    await expect(live.getByText("Open / at phone width")).toBeVisible();
+
+    await publish("browser", {
+      phase: "check",
+      check: {
+        ...check,
+        status: "failed",
+        detail: "the page scrolls sideways (content is 520px wide)",
+      },
+    });
+    await expect(live.getByText("1 failed")).toBeVisible();
+    await expect(
+      live.getByText("the page scrolls sideways (content is 520px wide)"),
+    ).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const watch = page.getByRole("button", {
+      name: "Watch the browser check the site",
+    });
+    await expect(watch).toBeVisible();
+    await watch.click();
+    await expect(live).toBeVisible();
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+
+    await publish("browser", {
+      phase: "closed",
+      status: "failed",
+      summary: "The browser found 1 problem.",
+    });
+    await expect(live).toBeHidden();
   } finally {
     await session.cleanup();
   }

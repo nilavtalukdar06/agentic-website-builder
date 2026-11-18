@@ -1,6 +1,11 @@
 import { realtime } from "inngest";
 import { z } from "zod";
-import { fileVerbs, sourceSchema, taskItemSchema } from "@/lib/agent/parts";
+import {
+  browserCheckSchema,
+  fileVerbs,
+  sourceSchema,
+  taskItemSchema,
+} from "@/lib/agent/parts";
 import { projectChannelName } from "@/lib/agent/realtime-topics";
 import { exportEventSchema } from "@/lib/github-export";
 
@@ -69,6 +74,21 @@ export const projectChannel = realtime.channel({
         stage: z.enum(["input", "output", "tool", "save"]),
         verdict: z.string(),
       }),
+    },
+    browser: {
+      schema: z.discriminatedUnion("phase", [
+        z.object({
+          phase: z.literal("session"),
+          liveUrl: z.url().nullable(),
+          round: z.number().int().nonnegative(),
+        }),
+        z.object({ phase: z.literal("check"), check: browserCheckSchema }),
+        z.object({
+          phase: z.literal("closed"),
+          status: z.enum(["passed", "failed", "skipped"]),
+          summary: z.string(),
+        }),
+      ]),
     },
   },
 });

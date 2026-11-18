@@ -15,18 +15,18 @@ import type { inngest } from "../client";
 import { createPublisher } from "../publisher";
 import type { AgentSpec } from "./agents/types";
 import { compactHistory, toolCallsFrom } from "./conversation";
-import type { SkillProgress } from "./execute-tool";
+import type { RunProgress, WrittenFile } from "./execute-tool";
 import { patternRedactor } from "./guardrails/redact";
 import { runModelTurn } from "./model";
 import {
   replayOf,
   type RunContext,
-  runToolStep,
+  runToolBatch,
   takeCheckpoint,
 } from "./runtime";
 import { classifyModelError, MODEL_UNAVAILABLE } from "./model-errors";
-import { type InstalledSkill, allowedInstalled, skillIndex } from "./skills";
 import { MAX_SEARCHES_PER_RUN, SEARCH_TOOL, type SearchRecord } from "./search";
+import { readOnlyToolNames } from "./tools";
 
 type Step = GetStepTools<typeof inngest>;
 
@@ -70,6 +70,7 @@ export type AgentRun = {
   finished: boolean;
   outOfCredits: boolean;
   stopped: boolean;
+  capped: boolean;
   messages: ModelMessage[];
   usage: TokenUsage;
   calls: BilledCall[];
@@ -79,10 +80,18 @@ export type AgentRun = {
   reasoningMs: number;
   written: string[];
   searches: SearchRecord[];
-  progress: SkillProgress;
+  progress: RunProgress;
   spentUsd: number;
   handoff: string | null;
+  modelMs: number;
+  toolMs: number;
 };
+
+export const TURN_CAP_NOTE =
+  "(You have used the turns this change allows. Don't call any tools. Reply now with the task_summary of what you changed.)";
+
+const isReadOnly = (name: string) =>
+  (readOnlyToolNames as readonly string[]).includes(name);
 
 export function createRunContext(
   input: Partial<RunContext> & { sandboxId: string; previewUrl?: string },
@@ -103,7 +112,7 @@ export function createRunContext(
   };
 }
 
-function writtenContents(input: unknown) {
+function writtenContents(input: unknown): WrittenFile[] {
   const files = (input as { files?: unknown })?.files;
   if (!Array.isArray(files)) return [];
   return files.flatMap((file: { path?: unknown; content?: unknown }) =>
@@ -146,12 +155,12 @@ export async function runAgentLoop({
   run: givenRun,
   model,
   messages: initialMessages,
-  installedSkills,
   budget,
   stepPrefix = spec.name,
   written: initialWritten = [],
-  progress: initialProgress = { readAgentsMd: false, loadedSkills: [] },
+  progress: initialProgress = {},
   expectWrites = false,
+  maxTurns,
   shouldStop,
 }: {
   step: Step;
@@ -161,24 +170,16 @@ export async function runAgentLoop({
   run?: RunContext;
   model: AgentModel;
   messages: ModelMessage[];
-  installedSkills: InstalledSkill[];
   budget: Budget;
   stepPrefix?: string;
   written?: string[];
-  progress?: SkillProgress;
+  progress?: RunProgress;
   expectWrites?: boolean;
+  maxTurns?: number;
   shouldStop?: () => Promise<boolean>;
 }): Promise<AgentRun> {
-  const instructions = spec.instructions(
-    skillIndex(installedSkills, spec.skills),
-  );
+  const instructions = spec.instructions;
   const toolNames = Object.keys(spec.tools);
-  const skills = {
-    allowed: [...spec.skills],
-    installed: allowedInstalled(installedSkills, spec.skills).map(
-      (skill) => skill.name,
-    ),
-  };
   let messages = initialMessages;
   let usage = emptyUsage;
   let spentUsd = 0;
@@ -193,22 +194,18 @@ export async function runAgentLoop({
   const reasoning: string[] = [];
   const searches: SearchRecord[] = [];
   let reasoningMs = 0;
+  let modelMs = 0;
+  let toolMs = 0;
   let output: string | null = null;
   let finished = false;
   let outOfCredits = false;
   let stopped = false;
+  let capped = false;
   let handoff: string | null = null;
   const run = givenRun ?? createRunContext({ sandboxId: sandboxId ?? "" });
   const step = trackSteps(rawStep, run);
 
   for (let turn = 0; ; turn++) {
-    if (
-      shouldStop &&
-      (await step.run(`${stepPrefix}-stop-${turn}`, () => shouldStop()))
-    ) {
-      stopped = true;
-      break;
-    }
     if (
       turn > 0 &&
       turn % CHECKPOINT_EVERY_TURNS === 0 &&
@@ -226,8 +223,12 @@ export async function runAgentLoop({
       messages = [...messages, { role: "user", content: SEARCH_CAP_NOTE }];
     }
     const handingOff = turn > 0 && nearRunBudget(run);
+    const lastTurn = maxTurns !== undefined && turn >= maxTurns - 1;
     if (handingOff) {
       messages = [...messages, { role: "user", content: HANDOFF_NOTE }];
+    } else if (lastTurn) {
+      capped = true;
+      messages = [...messages, { role: "user", content: TURN_CAP_NOTE }];
     }
     const activeTools = searchesLeft
       ? undefined
@@ -236,7 +237,9 @@ export async function runAgentLoop({
     const modelStep = handingOff
       ? `${stepPrefix}-handoff-${turn}`
       : `${stepPrefix}-model-${turn}`;
-    const result = await step.run(modelStep, async () => {
+    const outcome = await step.run(modelStep, async () => {
+      if (shouldStop && (await shouldStop())) return { stopped: true as const };
+      const started = Date.now();
       const publish = createPublisher(projectId, patternRedactor);
       if (turn > 0) await publish("status", { state: "thinking" });
       const turnOutput = await runModelTurn({
@@ -247,7 +250,7 @@ export async function runAgentLoop({
         instructions,
         tools: spec.tools,
         activeTools,
-        toolChoice: handingOff ? "none" : undefined,
+        toolChoice: handingOff || lastTurn ? "none" : undefined,
       }).catch(failModelTurn);
       await publish("credits", {
         used: creditsForCost(
@@ -260,13 +263,23 @@ export async function runAgentLoop({
           creditRate,
         ),
       });
-      return turnOutput;
+      return {
+        stopped: false as const,
+        turn: turnOutput,
+        ms: Date.now() - started,
+      };
     });
+    if (outcome.stopped) {
+      stopped = true;
+      break;
+    }
+    const result = outcome.turn;
+    modelMs += outcome.ms;
 
     const call: BilledCall = {
       generationIds: result.generationIds,
       estimatedUsd: result.estimatedUsd,
-      agent: "builder",
+      agent: spec.name,
       model: model.id,
       searches: result.searches.length,
     };
@@ -310,29 +323,40 @@ export async function runAgentLoop({
       break;
     }
 
+    const base = {
+      writtenPaths: [...written],
+      tools: toolNames,
+      progress,
+    };
+    const replay = replayOf(run);
+    const batch = await step.run(`${stepPrefix}-tools-${turn}`, async () => {
+      const started = Date.now();
+      const outcome = await runToolBatch({
+        calls: toolCalls,
+        projectId,
+        run,
+        base,
+        replay,
+        isReadOnly,
+      });
+      return { ...outcome, ms: Date.now() - started };
+    });
+    if (batch.sandbox) run.sandbox = batch.sandbox;
+    toolMs += batch.ms;
+
     const toolResults: ToolResultPart[] = [];
     for (const [index, toolCall] of toolCalls.entries()) {
-      const base = {
-        writtenPaths: [...written],
-        tools: toolNames,
-        skills,
-        progress,
-      };
-      const replay = replayOf(run);
-      const outcome = await step.run(
-        `${stepPrefix}-tool-${turn}-${index}`,
-        () => runToolStep({ call: toolCall, projectId, run, base, replay }),
-      );
-      if (outcome.sandbox) run.sandbox = outcome.sandbox;
-
+      const outcome = batch.outcomes[index];
       progress = outcome.progress;
       for (const path of outcome.writtenPaths) written.add(path);
-      if (toolCall.toolName === "createOrUpdateFiles") {
-        const changed = new Set(outcome.writtenPaths);
-        for (const file of writtenContents(toolCall.input)) {
-          if (changed.has(file.path))
-            run.pendingWrites.set(file.path, file.content);
-        }
+      const changed = new Set(outcome.writtenPaths);
+      const contents =
+        toolCall.toolName === "createOrUpdateFiles"
+          ? writtenContents(toolCall.input)
+          : (outcome.edited ?? []);
+      for (const file of contents) {
+        if (changed.has(file.path))
+          run.pendingWrites.set(file.path, file.content);
       }
       tasks.push(...outcome.tasks);
       if (outcome.terminal) {
@@ -366,6 +390,7 @@ export async function runAgentLoop({
     finished,
     outOfCredits,
     stopped,
+    capped,
     messages,
     usage,
     calls,
@@ -378,5 +403,7 @@ export async function runAgentLoop({
     progress,
     spentUsd,
     handoff,
+    modelMs,
+    toolMs,
   };
 }

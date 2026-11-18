@@ -21,6 +21,7 @@ import {
 } from "@/server/projects/delete";
 import { projectOperation } from "@/server/projects/operations";
 import { killSandbox } from "@/server/sandbox/admin";
+import { dropProjectMemory } from "@/server/memory";
 import { deleteAttachment } from "@/server/storage/attachments";
 import { promptFields, resolvePrompt, startAgent } from "./prompt";
 
@@ -237,6 +238,7 @@ export const projectRouter = createTRPCRouter({
       await removeProjectResources(resources, {
         killSandbox,
         deleteObject: deleteAttachment,
+        dropMemory: dropProjectMemory(ctx.session.user.id),
       });
       return { deleted: true as const };
     }),

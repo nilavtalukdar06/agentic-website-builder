@@ -1,6 +1,7 @@
 import { createCallerFactory, createTRPCRouter } from "../init";
 import { creditsRouter } from "./credits";
 import { githubRouter } from "./github";
+import { memoryRouter } from "./memory";
 import { messageRouter } from "./message";
 import { modelRouter } from "./model";
 import { projectRouter } from "./project";
@@ -15,6 +16,7 @@ export const appRouter = createTRPCRouter({
   message: messageRouter,
   version: versionRouter,
   sandbox: sandboxRouter,
+  memory: memoryRouter,
 });
 
 export type AppRouter = typeof appRouter;

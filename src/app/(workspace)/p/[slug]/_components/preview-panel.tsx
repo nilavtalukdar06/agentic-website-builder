@@ -8,6 +8,8 @@ import {
   BrainIcon,
   GlobeIcon,
   HammerIcon,
+  ListChecksIcon,
+  MousePointerClickIcon,
   type LucideIcon,
   MonitorCheckIcon,
   MonitorOffIcon,
@@ -45,6 +47,7 @@ import {
   type LiveStepKind,
 } from "@/lib/agent/live-run";
 import type { PreviewDevice } from "@/lib/search-params/workspace";
+import { BrowserSession } from "@/components/workspace/browser-session";
 import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
 import type { PreviewState } from "./use-preview";
@@ -70,6 +73,8 @@ const stepIcons: Record<LiveStepKind, LucideIcon | undefined> = {
   guard: ShieldAlertIcon,
   compile: HammerIcon,
   preview: MonitorCheckIcon,
+  note: ListChecksIcon,
+  browser: MousePointerClickIcon,
 };
 
 const startingRow: GeneratingFile = {
@@ -164,7 +169,9 @@ export function PreviewPanel({
   }, [building, live.tools, messages.data]);
 
   let body: React.ReactNode;
-  if (building) {
+  if (building && live.browser?.open) {
+    body = <BrowserSession browser={live.browser} />;
+  } else if (building) {
     body = (
       <GeneratingOverlay
         files={overlaySteps(live.steps)}

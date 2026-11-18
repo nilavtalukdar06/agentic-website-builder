@@ -75,6 +75,7 @@ async function main() {
   console.log(`project  ${slug}`);
   console.log(`model    ${model.id}`);
 
+  const startedAt = Date.now();
   const { ids } = await inngest.send(
     agentRun.create({ projectId, userId: user.id, messageId: message.id }),
   );
@@ -154,6 +155,24 @@ async function main() {
         }
       }
       console.log(`balance  ${after.balance} credits`);
+      console.log(`wall     ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+      const runMeta = (
+        debit?.meta as {
+          run?: {
+            intent?: string;
+            issues?: number;
+            timings?: Record<string, number>;
+          };
+        } | null
+      )?.run;
+      if (runMeta) {
+        console.log(
+          `intent   ${runMeta.intent ?? "-"} · ${runMeta.issues ?? 0} open issues`,
+        );
+        for (const [phase, ms] of Object.entries(runMeta.timings ?? {})) {
+          console.log(`phase    ${phase.padEnd(9)} ${(ms / 1000).toFixed(1)}s`);
+        }
+      }
       const [guards, ledger] = await Promise.all([
         db.guardEvent.findMany({
           where: { projectId },

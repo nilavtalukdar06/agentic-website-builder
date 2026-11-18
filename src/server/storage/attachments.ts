@@ -45,3 +45,7 @@ export function attachmentUrl(key: string) {
 export function deleteAttachment(key: string) {
   return files().delete(key);
 }
+
+export function listScreenshotObjects(cursor?: string) {
+  return files().list({ prefix: "qa/", limit: 200, cursor });
+}

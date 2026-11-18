@@ -1,6 +1,6 @@
 # Agent v2 — a fast, self-verifying builder (Phase 11 design)
 
-**Status: approved, 15 November 2026 (memory layer added the same day, §17). Nothing here is built.** The owner answered every open decision (§15). The build order, in small phases, is in [`docs/plan2.md`](plan2.md). Once approved, this file is the detailed design behind Phase 11 in `docs/plan.md`. The plan's ground rules still apply: package-first (§0.1), no secrets in sandboxes or model context, UI only from `~/Desktop/vibe-ui`, and the test and docs rules in `CLAUDE.md`.
+**Status: superseded 18 November 2026.** The owner discarded its build order (`docs/plan2.md`, deleted) for the leaner harness in [`docs/agent-harness.md`](agent-harness.md), which is what Phase 11 built. Read this file for the original diagnosis and for the ideas still deferred (browser QA, the visual critic, memory); the answers recorded below apply only if that deferred work is approved later.
 
 **Goal:** a first prompt gives a complete, working, good-looking multi-page app. A small follow-up edit finishes in under a minute and changes only what was asked. The agent proves its work in a real browser before it says it is done.
 

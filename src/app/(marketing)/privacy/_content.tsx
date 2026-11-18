@@ -52,6 +52,20 @@ export const privacySections: ArticleSection[] = [
             They are never placed in your project sandbox.
           </li>
           <li>
+            <Strong>Browser checks.</Strong> We collect page and interaction
+            check results and desktop/phone screenshots of generated previews,
+            which can contain content shown on your pages.
+          </li>
+          <li>
+            <Strong>Memory.</Strong> When memory is on (the default), the text
+            of the messages you send (with email addresses and phone numbers
+            removed, and never messages that look like they contain a key) is
+            stored with Supermemory, which turns it into short notes about your
+            preferences and each project&apos;s decisions. Agent replies, files,
+            websites and images are never saved to memory. We also keep your
+            on/off setting and monthly memory usage totals, not their content.
+          </li>
+          <li>
             <Strong>Safety checks.</Strong> When a prompt, a reply or the
             agent&apos;s code is blocked or flagged, we record the time, the
             kind of check, the result and a one-way fingerprint (hash) of the
@@ -102,6 +116,10 @@ export const privacySections: ArticleSection[] = [
         <li>
           To build what you ask for: running the agent, the sandbox and the
           preview, saving versions, and exporting to GitHub.
+        </li>
+        <li>
+          To remember your preferences and earlier decisions, when memory is on,
+          so you don&apos;t have to repeat them in every project.
         </li>
         <li>To meter credits and process payments.</li>
         <li>To keep Vibe working: debugging and preventing abuse.</li>
@@ -169,6 +187,18 @@ export const privacySections: ArticleSection[] = [
             <Strong>Stripe</Strong>: processes top-up payments.
           </li>
           <li>
+            <Strong>Browserbase</Strong>: runs cloud browsers that load your
+            preview address and rendered page content for automated checks and a
+            read-only live view. Stagehand sends page context through AI Gateway
+            to the selected model. We disable session recording in our
+            integration. Screenshots are stored in Neon Object Storage.
+          </li>
+          <li>
+            <Strong>Supermemory</Strong>: stores the text of your messages and
+            the preference notes derived from them when memory is on, and
+            searches them when the agent works on your projects.
+          </li>
+          <li>
             <Strong>Arcjet</Strong>: protects the app from abuse. It inspects
             request metadata (such as your IP address and headers) on every API
             route to block malicious traffic, bots and request floods, and
@@ -221,6 +251,19 @@ export const privacySections: ArticleSection[] = [
         </li>
         <li>Sessions: until they expire or you sign out.</li>
         <li>
+          Memory: until you forget it or clear it under Memory in your account
+          menu, or delete the project it belongs to. Turning memory off stops
+          Vibe from reading or adding to it but doesn&apos;t delete it.
+          Supermemory&apos;s own operational records follow its retention
+          policy.
+        </li>
+        <li>
+          Browser screenshots: scheduled for deletion after 30 days, or when the
+          project is deleted. Check results remain with the conversation.
+          Provider operational records follow the provider&apos;s retention
+          policies.
+        </li>
+        <li>
           Export records: for as long as the project exists. Deleting a project
           in Vibe does not delete its exported GitHub repository. You can revoke
           Vibe&apos;s GitHub access in your GitHub application settings.
@@ -228,9 +271,9 @@ export const privacySections: ArticleSection[] = [
         <li>
           Deleting a project: when you delete a project in Vibe we permanently
           remove its messages, saved versions, export records, the images you
-          attached to it and its sandbox. We keep credit and payment records,
-          and safety-check and resume records stay without a link to the
-          project.
+          attached to it, its sandbox and its project memory. We keep credit and
+          payment records, and safety-check and resume records stay without a
+          link to the project.
         </li>
         <li>
           Sandboxes: deleted automatically once a project has been idle for 14
@@ -273,6 +316,11 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             Revoke Vibe&apos;s access in GitHub under Settings → Applications.
+          </li>
+          <li>
+            Turn memory off, forget single items or clear all memory under
+            Memory in your account menu, or say &ldquo;forget that…&rdquo; in
+            any project.
           </li>
           <li>Sign out to end your session on a device.</li>
         </UL>

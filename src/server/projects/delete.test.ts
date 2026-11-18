@@ -26,7 +26,10 @@ function setup(overrides: Record<string, unknown> = {}, pending = 0) {
       update: vi.fn(),
       delete: vi.fn().mockResolvedValue({}),
     },
-    message: { count: vi.fn().mockResolvedValue(pending) },
+    message: {
+      count: vi.fn().mockResolvedValue(pending),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     attachment: {
       findMany: vi.fn().mockResolvedValue([{ key: "k1" }, { key: "k2" }]),
     },
@@ -50,6 +53,7 @@ describe("deleteProjectRecords", () => {
     const { tx, db } = setup();
     await expect(deleteProjectRecords(db, input)).resolves.toEqual({
       sandboxId: "sbx1",
+      projectId: "p1",
       attachmentKeys: ["k1", "k2"],
     });
     expect(tx.attachment.findMany).toHaveBeenCalledWith({
@@ -148,5 +152,51 @@ describe("removeProjectResources", () => {
       kind: "project-delete-cleanup",
       details: { sandboxFailed: true, failedObjects: 1 },
     });
+  });
+
+  test("drops the project's memory and alerts if that fails", async () => {
+    const dropMemory = vi.fn().mockResolvedValue(undefined);
+    await removeProjectResources(
+      { sandboxId: null, attachmentKeys: [], projectId: "p1" },
+      { killSandbox: vi.fn(), deleteObject: vi.fn(), dropMemory },
+    );
+    expect(dropMemory).toHaveBeenCalledWith("p1");
+    expect(raiseAlert).not.toHaveBeenCalled();
+    dropMemory.mockRejectedValue(new Error("down"));
+    await removeProjectResources(
+      { sandboxId: null, attachmentKeys: [], projectId: "p1" },
+      { killSandbox: vi.fn(), deleteObject: vi.fn(), dropMemory },
+    );
+    expect(raiseAlert.mock.calls[0][0]).toMatchObject({
+      details: { memoryFailed: true },
+    });
+  });
+});
+
+test("project deletion returns unique owned screenshots along with uploads", async () => {
+  const { tx, db } = setup();
+  const key = "qa/p1/run1/0-desktop.png";
+  tx.message.findMany.mockResolvedValue([
+    {
+      parts: [
+        {
+          type: "browser",
+          status: "passed",
+          reason: null,
+          checks: [],
+          screenshots: [
+            key,
+            key,
+            "qa/p2/run1/0-desktop.png",
+            "users/u2/private.png",
+          ].map((key) => ({ viewport: "desktop", key })),
+        },
+      ],
+    },
+  ]);
+  await expect(deleteProjectRecords(db, input)).resolves.toEqual({
+    sandboxId: "sbx1",
+    projectId: "p1",
+    attachmentKeys: ["k1", "k2", key],
   });
 });

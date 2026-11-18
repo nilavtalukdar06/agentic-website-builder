@@ -65,6 +65,7 @@ model User {
   accounts      Account[]
   projects      Project[]
   attachments   Attachment[]
+  memoryEnabled Boolean      @default(true)
 
   @@map("user")
 }
@@ -283,4 +284,14 @@ model SandboxEvent {
   createdAt DateTime       @default(now())
 
   @@index([createdAt])
+}
+
+model MemoryUsage {
+  month        String    @id
+  writeChars   Int       @default(0)
+  searches     Int       @default(0)
+  profiles     Int       @default(0)
+  estimatedUsd Float     @default(0)
+  alertedAt    DateTime?
+  updatedAt    DateTime  @updatedAt
 }

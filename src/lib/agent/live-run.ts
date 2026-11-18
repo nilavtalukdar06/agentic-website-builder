@@ -1,5 +1,5 @@
 import type { projectChannel } from "@/inngest/channels";
-import type { fileVerbs, Source, TaskItem } from "./parts";
+import type { BrowserCheck, fileVerbs, Source, TaskItem } from "./parts";
 import { stripSummaryTags } from "./parts";
 
 type Topics = typeof projectChannel.$infer;
@@ -44,7 +44,9 @@ export type LiveStepKind =
   | "search"
   | "guard"
   | "compile"
-  | "preview";
+  | "preview"
+  | "note"
+  | "browser";
 
 export type LiveStep = {
   id: string;
@@ -53,6 +55,15 @@ export type LiveStep = {
   detail: string | null;
   path: string | null;
   status: "active" | "done" | "error";
+};
+
+export type LiveBrowser = {
+  liveUrl: string | null;
+  round: number;
+  open: boolean;
+  checks: BrowserCheck[];
+  status: "passed" | "failed" | "skipped" | null;
+  summary: string | null;
 };
 
 export type LiveRun = {
@@ -69,6 +80,7 @@ export type LiveRun = {
   credits: number | null;
   previewUrl: string | null;
   steps: LiveStep[];
+  browser: LiveBrowser | null;
   events: number;
 };
 
@@ -86,6 +98,7 @@ export const emptyLiveRun = (): LiveRun => ({
   credits: null,
   previewUrl: null,
   steps: [],
+  browser: null,
   events: 0,
 });
 
@@ -172,6 +185,13 @@ function recordStep(run: LiveRun, event: LiveEvent) {
       if (item.kind === "sandbox") {
         pushStep(run, {
           kind: "sandbox",
+          label: item.label,
+          detail: null,
+          ...done,
+        });
+      } else if (item.kind === "note") {
+        pushStep(run, {
+          kind: "note",
           label: item.label,
           detail: null,
           ...done,
@@ -293,7 +313,81 @@ function recordStep(run: LiveRun, event: LiveEvent) {
         status: "done",
       });
       return;
+    case "browser": {
+      const data = event.data;
+      if (data.phase === "session") {
+        pushStep(run, {
+          kind: "browser",
+          label: "Opened the site in a cloud browser",
+          detail: null,
+          path: null,
+          status: "done",
+        });
+      } else if (data.phase === "check") {
+        const id = `browser-${data.check.id}`;
+        const status =
+          data.check.status === "running"
+            ? "active"
+            : data.check.status === "passed"
+              ? "done"
+              : "error";
+        const updated = updateStep(run, (step) => step.id === id, {
+          status,
+          detail: data.check.detail,
+        });
+        if (!updated) {
+          pushStep(
+            run,
+            {
+              kind: "browser",
+              label: data.check.label,
+              detail: data.check.detail,
+              path: null,
+              status,
+            },
+            id,
+          );
+        }
+      }
+      return;
+    }
   }
+}
+
+function applyBrowser(run: LiveRun, data: Topics["browser"]) {
+  if (data.phase === "session") {
+    run.browser = {
+      liveUrl: data.liveUrl,
+      round: data.round,
+      open: true,
+      checks: [],
+      status: null,
+      summary: null,
+    };
+    return;
+  }
+  const current: LiveBrowser = run.browser
+    ? { ...run.browser, checks: [...run.browser.checks] }
+    : {
+        liveUrl: null,
+        round: 0,
+        open: data.phase === "check",
+        checks: [],
+        status: null,
+        summary: null,
+      };
+  if (data.phase === "check") {
+    const index = current.checks.findIndex(
+      (check) => check.id === data.check.id,
+    );
+    if (index >= 0) current.checks[index] = data.check;
+    else current.checks.push(data.check);
+  } else {
+    current.open = false;
+    current.status = data.status;
+    current.summary = data.summary;
+  }
+  run.browser = current;
 }
 
 function applyEvent(run: LiveRun, event: LiveEvent) {
@@ -370,6 +464,9 @@ function applyEvent(run: LiveRun, event: LiveEvent) {
       break;
     case "preview":
       run.previewUrl = event.data.url;
+      break;
+    case "browser":
+      applyBrowser(run, event.data);
       break;
   }
 }

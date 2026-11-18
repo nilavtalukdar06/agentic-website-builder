@@ -3,9 +3,10 @@ import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { replyId } from "@/inngest/agent/persist";
 import { pendingPromptWhere, requestStop } from "@/inngest/agent/prompt-state";
-import { parseAgentParts } from "@/lib/agent/parts";
+import { type AgentPart, parseAgentParts } from "@/lib/agent/parts";
 import { orderConversation } from "@/lib/agent/conversation-order";
 import { attachmentUrl } from "@/server/storage/attachments";
+import { isProjectScreenshotKey } from "@/server/storage/screenshot-keys";
 import {
   assertProjectAvailable,
   projectTransaction,
@@ -40,6 +41,26 @@ async function signedUrl(key: string) {
   } catch {
     return null;
   }
+}
+
+async function withScreenshotUrls(parts: AgentPart[], projectId: string) {
+  return Promise.all(
+    parts.map(async (part) =>
+      part.type === "browser"
+        ? {
+            ...part,
+            screenshots: await Promise.all(
+              part.screenshots.map(async (shot) => ({
+                ...shot,
+                url: isProjectScreenshotKey(shot.key, projectId)
+                  ? await signedUrl(shot.key)
+                  : null,
+              })),
+            ),
+          }
+        : part,
+    ),
+  );
 }
 
 export const messageRouter = createTRPCRouter({
@@ -98,7 +119,10 @@ export const messageRouter = createTRPCRouter({
           id: message.id,
           role: message.role,
           content: message.content,
-          parts: parseAgentParts(message.parts) ?? [],
+          parts: await withScreenshotUrls(
+            parseAgentParts(message.parts) ?? [],
+            input.projectId,
+          ),
           model: message.model,
           replyToId: message.replyToId,
           createdAt: message.createdAt,

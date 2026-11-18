@@ -3,7 +3,7 @@ import { posix } from "node:path";
 export const APP_DIR = "/home/user/app";
 
 const blockedSegments = new Set(["node_modules", ".next", ".git"]);
-const readOnlySegments = new Set([".agents", ".claude"]);
+const readOnlySegments = new Set([".agents", ".claude", ".vibe"]);
 const readOnlyFiles = new Set(["skills-lock.json"]);
 
 export type PathMode = "read" | "write";

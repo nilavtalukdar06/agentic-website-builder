@@ -91,9 +91,8 @@ const run = {
 };
 const base = {
   writtenPaths: [],
-  tools: ["terminal", "createOrUpdateFiles", "readFiles", "loadSkill"],
-  skills: { allowed: ["shadcn"], installed: ["shadcn"] },
-  progress: { readAgentsMd: true, loadedSkills: ["shadcn"] },
+  tools: ["terminal", "createOrUpdateFiles", "editFile", "readFiles"],
+  progress: {},
 };
 
 beforeEach(() => {
@@ -139,7 +138,7 @@ describe("a pasted or printed key never leaks", () => {
       call: {
         toolCallId: "c2",
         toolName: "readFiles",
-        input: { paths: ["notes.txt"] },
+        input: { files: [{ path: "notes.txt" }] },
       },
       projectId: "p1",
       run,

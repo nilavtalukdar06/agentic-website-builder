@@ -52,7 +52,7 @@ function FileTag({ path }: { path: string }) {
 }
 
 function TaskRow({ item }: { item: Item }) {
-  if (item.kind === "sandbox") {
+  if (item.kind === "sandbox" || item.kind === "note") {
     return <TaskItem>{item.label}</TaskItem>;
   }
   if (item.kind === "install") {

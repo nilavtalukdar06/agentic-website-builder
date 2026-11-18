@@ -2,6 +2,8 @@ import "server-only";
 import { db } from "@/server/db";
 import {
   deleteOrphanUploads,
+  expireScreenshots,
+  expireScreenshotObjectsPage,
   killOrphanSandboxes,
   purgeExpiredRows,
   retireIdleSandboxes,
@@ -9,13 +11,16 @@ import {
 import { raiseAlert } from "@/server/ops/alert";
 import { checkSandboxHealth } from "@/server/ops/sandbox-events";
 import { killSandbox, listPausedSandboxes } from "@/server/sandbox/admin";
-import { deleteAttachment } from "@/server/storage/attachments";
+import {
+  deleteAttachment,
+  listScreenshotObjects,
+} from "@/server/storage/attachments";
 import { inngest } from "../client";
 
 export const cleanupResources = inngest.createFunction(
   {
     id: "cleanup-resources",
-    name: "Clean up idle sandboxes and unused uploads",
+    name: "Clean up idle sandboxes, unused uploads and expired screenshots",
     triggers: [{ cron: "0 4 * * *" }],
     concurrency: { limit: 1 },
     retries: 1,
@@ -33,10 +38,38 @@ export const cleanupResources = inngest.createFunction(
     const uploads = await step.run("delete-orphan-uploads", () =>
       deleteOrphanUploads(db, deleteAttachment),
     );
+    const screenshots = await step.run("expire-screenshots", () =>
+      expireScreenshots(db, deleteAttachment),
+    );
+    const screenshotSweepTime = await step.run("screenshot-sweep-time", () =>
+      Date.now(),
+    );
+    const screenshotObjects = { deleted: 0, failed: 0 };
+    let cursor: string | undefined;
+    let page = 0;
+    do {
+      const result = await step.run(`expire-screenshot-objects-${page}`, () =>
+        expireScreenshotObjectsPage(
+          listScreenshotObjects,
+          deleteAttachment,
+          screenshotSweepTime,
+          cursor,
+        ),
+      );
+      screenshotObjects.deleted += result.deleted;
+      screenshotObjects.failed += result.failed;
+      cursor = result.cursor ?? undefined;
+      page += 1;
+    } while (cursor);
     const purged = await step.run("purge-expired-rows", () =>
       purgeExpiredRows(db),
     );
-    const failures = idle.failed + orphans.failed + uploads.failed;
+    const failures =
+      idle.failed +
+      orphans.failed +
+      uploads.failed +
+      screenshots.failed +
+      screenshotObjects.failed;
     if (failures > 0) {
       await step.run("alert-cleanup", () =>
         raiseAlert({
@@ -46,7 +79,7 @@ export const cleanupResources = inngest.createFunction(
         }),
       );
     }
-    return { idle, orphans, uploads, purged };
+    return { idle, orphans, uploads, screenshots, screenshotObjects, purged };
   },
 );
 

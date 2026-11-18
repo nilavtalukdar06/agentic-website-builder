@@ -204,3 +204,157 @@ describe("purgeExpiredRows", () => {
     );
   });
 });
+
+describe("expireScreenshots", () => {
+  const key = "qa/p1/run1/0-desktop.png";
+  const other = "qa/p1/run1/0-phone.png";
+  const browser = (keys: string[]) => ({
+    type: "browser",
+    status: "passed",
+    reason: null,
+    checks: [],
+    screenshots: keys.map((key) => ({ viewport: "desktop", key })),
+  });
+
+  test("reaches old screenshots beyond a full page of screenshot-free messages", async () => {
+    const { expireScreenshots, SCREENSHOT_RETENTION_MS } =
+      await import("./cleanup");
+    const findMany = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Array.from({ length: 200 }, (_, i) => ({
+          id: `m${i.toString().padStart(3, "0")}`,
+          projectId: "p1",
+          parts: [],
+        })),
+      )
+      .mockResolvedValueOnce([
+        { id: "m200", projectId: "p1", parts: [browser([key])] },
+      ]);
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const remove = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      expireScreenshots(
+        { message: { findMany, updateMany } } as never,
+        remove,
+        now,
+      ),
+    ).resolves.toEqual({ deleted: 1, failed: 0 });
+    expect(findMany.mock.calls[0][0].where).toEqual({
+      role: "ASSISTANT",
+      createdAt: { lt: new Date(now - SCREENSHOT_RETENTION_MS) },
+    });
+    expect(findMany.mock.calls[1][0].where.id).toEqual({ gt: "m199" });
+    expect(remove).toHaveBeenCalledWith(key);
+  });
+
+  test("preserves failed keys, checks and unknown parts, then retries successfully", async () => {
+    const { expireScreenshots } = await import("./cleanup");
+    let parts = [
+      browser([key, key, other]),
+      { type: "future", payload: "keep" },
+    ];
+    const findMany = vi.fn(async () => [{ id: "m1", projectId: "p1", parts }]);
+    const updateMany = vi.fn(async (args) => {
+      parts = args.data.parts;
+      return { count: 1 };
+    });
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("unavailable"))
+      .mockResolvedValue(undefined);
+    const db = { message: { findMany, updateMany } } as never;
+    await expect(expireScreenshots(db, remove, now)).resolves.toEqual({
+      deleted: 1,
+      failed: 1,
+    });
+    expect(parts).toEqual([
+      browser([key, key]),
+      { type: "future", payload: "keep" },
+    ]);
+    expect(updateMany.mock.calls[0][0].where.parts.equals).toEqual([
+      browser([key, key, other]),
+      { type: "future", payload: "keep" },
+    ]);
+    await expect(expireScreenshots(db, remove, now)).resolves.toEqual({
+      deleted: 1,
+      failed: 0,
+    });
+    expect(parts).toEqual([browser([]), { type: "future", payload: "keep" }]);
+    expect(remove.mock.calls).toEqual([[key], [other], [key]]);
+  });
+
+  test("never deletes foreign keys and tolerates a concurrently removed message", async () => {
+    const { expireScreenshots } = await import("./cleanup");
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: "m1",
+        projectId: "p1",
+        parts: [browser(["qa/p2/run1/0-desktop.png", key])],
+      },
+    ]);
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const remove = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      expireScreenshots(
+        { message: { findMany, updateMany } } as never,
+        remove,
+        now,
+      ),
+    ).resolves.toEqual({ deleted: 1, failed: 0 });
+    expect(remove.mock.calls).toEqual([[key]]);
+    expect(updateMany.mock.calls[0][0].data.parts).toEqual([browser([])]);
+  });
+});
+
+describe("expireScreenshotObjectsPage", () => {
+  test("expires unreferenced older rounds and failed jobs, but keeps fresh objects and uploads", async () => {
+    const { expireScreenshotObjectsPage, SCREENSHOT_RETENTION_MS } =
+      await import("./cleanup");
+    const cutoff = now - SCREENSHOT_RETENTION_MS;
+    const list = vi.fn().mockResolvedValue({
+      items: [
+        {
+          key: "qa/p1/failed-run/0-desktop.png",
+          lastModified: cutoff - 100 * DAY,
+        },
+        { key: "qa/p1/run1/0-phone.png", lastModified: cutoff - 1 },
+        { key: "qa/p1/run1/1-phone.png", lastModified: cutoff },
+        { key: "users/u1/upload.png", lastModified: cutoff - 1 },
+        { key: "qa/p1/no-date/0-phone.png" },
+      ],
+      cursor: "next",
+    });
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("storage down"))
+      .mockResolvedValue(undefined);
+    await expect(
+      expireScreenshotObjectsPage(list, remove, now, "previous"),
+    ).resolves.toEqual({ deleted: 1, failed: 2, cursor: "next" });
+    expect(list).toHaveBeenCalledWith("previous");
+    expect(remove.mock.calls).toEqual([
+      ["qa/p1/failed-run/0-desktop.png"],
+      ["qa/p1/run1/0-phone.png"],
+    ]);
+  });
+
+  test("propagates list failures for durable retries and rejects stalled cursors", async () => {
+    const { expireScreenshotObjectsPage } = await import("./cleanup");
+    await expect(
+      expireScreenshotObjectsPage(
+        vi.fn().mockRejectedValue(new Error("down")),
+        vi.fn(),
+        now,
+      ),
+    ).rejects.toThrow("down");
+    await expect(
+      expireScreenshotObjectsPage(
+        vi.fn().mockResolvedValue({ items: [], cursor: "same" }),
+        vi.fn(),
+        now,
+        "same",
+      ),
+    ).rejects.toThrow("cursor did not advance");
+  });
+});

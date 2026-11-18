@@ -250,7 +250,7 @@ describe("ensureAgentInstructions", () => {
   });
 
   test("does nothing when the rules are there", async () => {
-    const sandbox = fakeSandbox("## Always start here\n");
+    const sandbox = fakeSandbox("## House rules\n");
     await expect(ensureAgentInstructions(sandbox as never)).resolves.toBe(
       false,
     );

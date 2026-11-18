@@ -1292,3 +1292,71 @@ describe("GitHub exports", () => {
     );
   });
 });
+
+describe("screenshot signing", () => {
+  test("signs only the owned project's canonical screenshot keys and replaces stored URLs", async () => {
+    const { attachmentUrl } = await import("@/server/storage/attachments");
+    vi.mocked(attachmentUrl).mockClear();
+    const { ctx, db } = makeContext({ session: makeSession("u1") });
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    const keys = [
+      "qa/p1/run1/0-desktop.png",
+      "qa/p10/run1/0-desktop.png",
+      "qa/p2/run1/0-desktop.png",
+      "qa/p1/../0-desktop.png",
+      "qa/p1/%2e%2e/0-desktop.png",
+      "users/u2/private.png",
+    ];
+    db.message.findMany.mockResolvedValue([
+      {
+        id: "m1",
+        role: "ASSISTANT",
+        content: "Done",
+        model: null,
+        replyToId: null,
+        createdAt: new Date(),
+        stopRequestedAt: null,
+        _count: { replies: 0 },
+        attachments: [],
+        parts: [
+          {
+            type: "browser",
+            status: "passed",
+            reason: null,
+            checks: [],
+            screenshots: keys.map((key) => ({
+              viewport: "desktop",
+              key,
+              url: "https://untrusted.test",
+            })),
+          },
+        ],
+      },
+    ]);
+    const result = await createCaller(ctx).message.list({ projectId: "p1" });
+    expect(attachmentUrl).toHaveBeenCalledTimes(1);
+    expect(attachmentUrl).toHaveBeenCalledWith(keys[0]);
+    const part = result.messages[0].parts[0];
+    expect(part.type).toBe("browser");
+    if (part.type === "browser")
+      expect(part.screenshots.map((shot) => shot.url)).toEqual([
+        `https://files.test/${keys[0]}`,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ]);
+  });
+
+  test("does not read messages or sign objects for an unowned project", async () => {
+    const { attachmentUrl } = await import("@/server/storage/attachments");
+    vi.mocked(attachmentUrl).mockClear();
+    const { ctx, db } = makeContext({ session: makeSession("u1") });
+    await expect(
+      createCaller(ctx).message.list({ projectId: "p2" }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(db.message.findMany).not.toHaveBeenCalled();
+    expect(attachmentUrl).not.toHaveBeenCalled();
+  });
+});

@@ -32,6 +32,17 @@ describe("withAgentRules", () => {
     expect(withAgentRules(`${AGENT_RULES}${managedBlock}`)).toBeNull();
   });
 
+  test("replaces the old load-skills-first rules and keeps the managed block", () => {
+    const legacy = `# Instructions for AI coding agents\n\n## Always start here\n\n1. Read this file.\n\n${managedBlock}`;
+    const patched = withAgentRules(legacy);
+    expect(patched).toBe(`${AGENT_RULES}\n${managedBlock}`);
+    expect(patched).not.toContain("Always start here");
+  });
+
+  test("replaces old rules without a managed block with the new rules", () => {
+    expect(withAgentRules("## Always start here\nold")).toBe(AGENT_RULES);
+  });
+
   test("writes the rules when AGENTS.md is missing or empty", () => {
     expect(withAgentRules(null)).toBe(AGENT_RULES);
     expect(withAgentRules("")).toBe(AGENT_RULES);

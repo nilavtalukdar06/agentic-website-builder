@@ -100,7 +100,7 @@ describe("sanitizeHistory", () => {
     const clean = await sanitizeHistory(db as never, history);
     expect(JSON.stringify(clean)).not.toContain(secret);
     expect(
-      JSON.stringify(historyToMessages(clean, [], { vision: false })),
+      JSON.stringify(historyToMessages(clean, "", { vision: false })),
     ).not.toContain(secret);
     expect(db.message.update).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(db.message.update.mock.calls)).not.toContain(secret);

@@ -3,3 +3,5 @@ prisma/migrations
 bun.lock
 .agents
 .claude
+src/inngest/agent/blocks.generated.ts
+sandbox-templates/nextjs/agents-rules.md

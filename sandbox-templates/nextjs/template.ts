@@ -61,7 +61,7 @@ export const template = Template()
   )
   .copy("agents-rules.md", "/tmp/agents-rules.md")
   .runCmd(
-    "cat /tmp/agents-rules.md AGENTS.md > AGENTS.merged && mv AGENTS.merged AGENTS.md && grep -q 'Always start here' AGENTS.md && grep -q 'BEGIN:nextjs-agent-rules' AGENTS.md",
+    "cat /tmp/agents-rules.md AGENTS.md > AGENTS.merged && mv AGENTS.merged AGENTS.md && grep -q '## House rules' AGENTS.md && grep -q 'BEGIN:nextjs-agent-rules' AGENTS.md",
   )
   .setStartCmd(
     "npx next dev --turbopack -p 3000",

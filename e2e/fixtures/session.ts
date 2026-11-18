@@ -78,6 +78,11 @@ export async function createTestSession(name: string) {
         INSERT INTO "Version" (id, "projectId", number, status, "runId", title, files, "creditCost", "createdAt")
         VALUES (${randomUUID()}, ${version.projectId}, ${version.number}, 'READY', ${version.runId ?? null}, ${version.title}, ${JSON.stringify(version.files)}::jsonb, ${version.creditCost ?? 0}, ${(version.createdAt ?? new Date()).toISOString()})`;
     },
+    memoryEnabled: async () => {
+      const [row] =
+        await sql`SELECT "memoryEnabled" FROM "user" WHERE id = ${userId}`;
+      return row.memoryEnabled as boolean;
+    },
     cookie: {
       name: "better-auth.session_token",
       value: await sign(token, process.env.BETTER_AUTH_SECRET!),

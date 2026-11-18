@@ -25,6 +25,10 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import {
+  BrowserReport,
+  BrowserSession,
+} from "@/components/workspace/browser-session";
 import { FileChip } from "@/components/workspace/file-chip";
 import { GeneratingOverlay } from "@/components/workspace/generating-overlay";
 import { ChatHeader } from "@/components/workspace/chat-header";
@@ -34,6 +38,7 @@ import {
 } from "@/components/workspace/workspace-toolbar";
 import type { PreviewDevice } from "@/lib/search-params/workspace";
 import {
+  sampleBrowserChecks,
   sampleCredits,
   sampleGeneratingFiles,
   sampleRunSteps,
@@ -186,6 +191,54 @@ export function PatternsSection() {
                 />
               </div>
             </div>
+          </Example>
+          <Example
+            title="BrowserSession · live view"
+            description="Shown in the preview while the agent checks the build in a cloud browser. Read-only live view on the left (stacked on phones), checks streaming in on the right."
+          >
+            <div className="h-[34rem] overflow-hidden rounded-lg border md:h-96">
+              <BrowserSession
+                browser={{
+                  liveUrl: null,
+                  round: 1,
+                  open: true,
+                  checks: sampleBrowserChecks,
+                  status: null,
+                  summary: null,
+                }}
+              />
+            </div>
+          </Example>
+          <Example
+            title="BrowserReport"
+            description="Saved on the reply after the run: every check with pass or fail, plus desktop and phone screenshots."
+          >
+            <BrowserReport
+              part={{
+                type: "browser",
+                status: "failed",
+                reason: null,
+                checks: sampleBrowserChecks.map((check) =>
+                  check.status === "running"
+                    ? {
+                        ...check,
+                        status: "passed",
+                        detail: "Buy milk is listed",
+                      }
+                    : check,
+                ),
+                screenshots: [],
+              }}
+            />
+            <BrowserReport
+              part={{
+                type: "browser",
+                status: "skipped",
+                reason: "no Browserbase key is set",
+                checks: [],
+                screenshots: [],
+              }}
+            />
           </Example>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Example title="CreditsCard">

@@ -2,8 +2,9 @@
 
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useQueryStates } from "nuqs";
-import { EyeIcon } from "lucide-react";
+import { EyeIcon, MousePointerClickIcon } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -210,6 +211,19 @@ export function Workspace({
           )}
         >
           {chatHeader}
+          {project.building && live.browser?.open ? (
+            <div className="px-2 pb-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => setMobilePane("main")}
+              >
+                <MousePointerClickIcon data-icon="inline-start" />
+                Watch the browser check the site
+              </Button>
+            </div>
+          ) : null}
           {chatPanel}
         </div>
         <div
