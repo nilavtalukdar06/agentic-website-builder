@@ -11,6 +11,7 @@ import {
   MoonIcon,
   SunIcon,
   SunMoonIcon,
+  BellIcon,
   BrainIcon,
 } from "lucide-react";
 import { useSignOut } from "@/components/auth/use-sign-out";
@@ -34,6 +35,7 @@ import {
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { MemoryDialog } from "./memory-dialog";
+import { NotificationsDialog } from "./notifications-dialog";
 import { initials } from "@/lib/initials";
 
 export type ShellUser = {
@@ -53,6 +55,7 @@ export function UserMenu({ user }: { user: ShellUser }) {
   const { signOut, pending } = useSignOut();
   const { theme, setTheme } = useTheme();
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   return (
     <>
@@ -97,6 +100,10 @@ export function UserMenu({ user }: { user: ShellUser }) {
               <BrainIcon />
               Memory
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setNotificationsOpen(true)}>
+              <BellIcon />
+              Notifications
+            </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <SunMoonIcon />
@@ -132,6 +139,12 @@ export function UserMenu({ user }: { user: ShellUser }) {
       </DropdownMenu>
       {memoryOpen ? (
         <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} />
+      ) : null}
+      {notificationsOpen ? (
+        <NotificationsDialog
+          open={notificationsOpen}
+          onOpenChange={setNotificationsOpen}
+        />
       ) : null}
     </>
   );

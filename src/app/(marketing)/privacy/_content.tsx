@@ -57,6 +57,14 @@ export const privacySections: ArticleSection[] = [
             which can contain content shown on your pages.
           </li>
           <li>
+            <Strong>Email notifications.</Strong> Your email address (from your
+            GitHub account), your on/off setting for notification emails, and
+            daily totals of how many emails we sent. Each email names your
+            project and says what happened (a build finished, failed or ran out
+            of credits, or a GitHub export finished or failed). It never
+            contains your prompts, code or files.
+          </li>
+          <li>
             <Strong>Memory.</Strong> When memory is on (the default), the text
             of the messages you send (with email addresses and phone numbers
             removed, and never messages that look like they contain a key) is
@@ -116,6 +124,10 @@ export const privacySections: ArticleSection[] = [
         <li>
           To build what you ask for: running the agent, the sandbox and the
           preview, saving versions, and exporting to GitHub.
+        </li>
+        <li>
+          To email you when a build finishes, fails or runs out of credits and
+          when a GitHub export finishes or fails, unless you turn that off.
         </li>
         <li>
           To remember your preferences and earlier decisions, when memory is on,
@@ -194,6 +206,11 @@ export const privacySections: ArticleSection[] = [
             integration. Screenshots are stored in Neon Object Storage.
           </li>
           <li>
+            <Strong>Resend</Strong>: sends the notification emails. It receives
+            your email address, the project name and the outcome in each
+            message, and keeps delivery records under its own retention policy.
+          </li>
+          <li>
             <Strong>Supermemory</Strong>: stores the text of your messages and
             the preference notes derived from them when memory is on, and
             searches them when the agent works on your projects.
@@ -250,6 +267,12 @@ export const privacySections: ArticleSection[] = [
           accounting or legal reasons.
         </li>
         <li>Sessions: until they expire or you sign out.</li>
+        <li>
+          Notification emails: we don&apos;t keep a copy of what we send. We
+          keep your on/off setting while your account exists and daily send
+          totals for operations. Resend&apos;s own delivery records follow its
+          retention policy.
+        </li>
         <li>
           Memory: until you forget it or clear it under Memory in your account
           menu, or delete the project it belongs to. Turning memory off stops
@@ -316,6 +339,10 @@ export const privacySections: ArticleSection[] = [
           </li>
           <li>
             Revoke Vibe&apos;s access in GitHub under Settings → Applications.
+          </li>
+          <li>
+            Turn notification emails off under Notifications in your account
+            menu.
           </li>
           <li>
             Turn memory off, forget single items or clear all memory under

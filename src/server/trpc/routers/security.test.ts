@@ -72,6 +72,7 @@ describe("tRPC surface", () => {
       "memory.clear",
       "memory.list",
       "model.list",
+      "notifications.get",
     ]);
   });
 
@@ -99,6 +100,7 @@ describe("tRPC surface", () => {
       "memory.setEnabled",
       "message.retry",
       "message.send",
+      "notifications.setEnabled",
       "project.create",
       "project.delete",
       "sandbox.wake",

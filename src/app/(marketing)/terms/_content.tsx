@@ -254,6 +254,14 @@ export const termsSections: ArticleSection[] = [
           review it or clear it under Memory in your account menu.
         </P>
         <P>
+          Notification emails are on by default: Vibe emails you through Resend
+          when a build finishes, fails or runs out of credits and when a GitHub
+          export finishes or fails. They are a convenience, not a guarantee:
+          delivery can be delayed or fail, so the workspace remains the place to
+          check the state of your project. You can turn them off under
+          Notifications in your account menu.
+        </P>
+        <P>
           To keep Vibe fast and fair, we limit how often you can start builds,
           create projects, upload images and start checkouts. If you reach a
           limit, wait a few minutes and try again.

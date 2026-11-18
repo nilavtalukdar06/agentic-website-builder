@@ -28,6 +28,7 @@ import {
 import { writeVersionToSandbox } from "@/server/sandbox/workspace";
 import { inngest } from "../client";
 import { githubExport } from "../events";
+import { queueNotification } from "../notify";
 
 export const exportGithub = inngest.createFunction(
   {
@@ -41,6 +42,14 @@ export const exportGithub = inngest.createFunction(
       await step.run("record-export-failure", () =>
         failExport(db, event.data.event.data, error),
       );
+      const failed = event.data.event.data;
+      await queueNotification(step, {
+        kind: "export-failed",
+        userId: failed.userId,
+        projectId: failed.projectId,
+        exportId: failed.exportId,
+        key: failed.requestId,
+      });
     },
   },
   async ({ event, step, runId }) => {
@@ -242,6 +251,13 @@ export const exportGithub = inngest.createFunction(
         commitSha,
       ),
     );
+    await queueNotification(step, {
+      kind: "export-finished",
+      userId: request.userId,
+      projectId: request.projectId,
+      exportId: request.exportId,
+      key: request.requestId,
+    });
     return {
       status: "succeeded",
       repository: repository.repository,

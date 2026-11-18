@@ -66,6 +66,7 @@ model User {
   projects      Project[]
   attachments   Attachment[]
   memoryEnabled Boolean      @default(true)
+  notifyEmail   Boolean      @default(true)
 
   @@map("user")
 }
@@ -295,3 +296,11 @@ model MemoryUsage {
   alertedAt    DateTime?
   updatedAt    DateTime  @updatedAt
 }
+
+model EmailUsage {
+  day       String    @id
+  sent      Int       @default(0)
+  alertedAt DateTime?
+  updatedAt DateTime  @updatedAt
+}
+

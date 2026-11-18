@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   client: vi.fn(),
   ensure: vi.fn(),
   push: vi.fn(),
+  send: vi.fn(),
   recover: vi.fn(),
   write: vi.fn(),
   snapshot: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/inngest/client", () => ({
       options,
       handler,
     }),
+    send: mocks.send,
   },
 }));
 vi.mock("@/server/github/client", () => ({ githubClient: mocks.client }));
@@ -154,6 +156,18 @@ describe("durable GitHub export", () => {
         installInBackground: false,
       });
       expect(mocks.ensure).toHaveBeenCalledOnce();
+      expect(mocks.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "notify/send",
+          data: expect.objectContaining({
+            kind: "export-finished",
+            userId: request.userId,
+            projectId: request.projectId,
+            exportId: request.exportId,
+            key: request.requestId,
+          }),
+        }),
+      );
       expect(mocks.git.createCommit).toHaveBeenCalledWith(
         expect.objectContaining({
           parents: ["base"],
@@ -230,6 +244,15 @@ describe("durable GitHub export", () => {
       step: { run: async (_name: string, fn: () => Promise<unknown>) => fn() },
     });
     expect(mocks.fail).toHaveBeenCalledWith(mocks.db, request, error);
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notify/send",
+        data: expect.objectContaining({
+          kind: "export-failed",
+          exportId: request.exportId,
+        }),
+      }),
+    );
     expect(worker.options.concurrency).toEqual({
       key: "event.data.projectId",
       limit: 1,

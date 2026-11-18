@@ -93,6 +93,7 @@ External services:
 | Sandbox                     | E2B with a custom template (`sandbox-templates/nextjs/`)                                               |
 | Payments                    | Stripe Checkout (one-time, custom amount)                                                              |
 | GitHub export               | `@octokit/rest` + `@octokit/plugin-retry`                                                              |
+| Email                       | Resend (`resend` 6.38.1): build, failure and export notifications through an Inngest function          |
 | Memory                      | Supermemory v5 (`supermemory` 5.1.2), read and written by code, never by the model                     |
 | Guardrails                  | `@secretlint/core` + own patterns, `openai/gpt-oss-safeguard-20b` classifier, `npq` in the sandbox     |
 | Env validation              | `@t3-oss/env-core` + `zod` (`src/config/env.ts`)                                                       |
@@ -173,7 +174,7 @@ Why each package was chosen, and what it beat, is in `docs/decisions.md`.
 
 **Billing.** `CreditLedger` is append-only: `+` for top-ups and welcome credits, `−` for runs. **The balance is always `SUM(delta)`** for the user; there is no mutable balance column. `Payment` records each Stripe Checkout session. Two unique keys make payments idempotent: `Payment.providerRef` (the Checkout session id) and `CreditLedger.paymentId`.
 
-**Operations.** `GuardEvent` logs guardrail decisions with a **hash** of the text, never the text itself. `ThrottleWindow` holds the per-user rate-limit counters. `SandboxEvent` records each sandbox resume, rebuild or failure for health alerts. `MemoryUsage` holds one row per month of memory usage and its estimated cost for the budget guard; `User.memoryEnabled` is the "Use memory" switch.
+**Operations.** `GuardEvent` logs guardrail decisions with a **hash** of the text, never the text itself. `ThrottleWindow` holds the per-user rate-limit counters. `SandboxEvent` records each sandbox resume, rebuild or failure for health alerts. `MemoryUsage` holds one row per month of memory usage and its estimated cost for the budget guard; `User.memoryEnabled` is the "Use memory" switch. `EmailUsage` counts notification emails per UTC day for the Resend limit; `User.notifyEmail` is the notifications switch.
 
 Ids derived from the Inngest run id (`run_<runId>_reply`, `run_<runId>_debit`, `checkpoint_<chainId>`) make every write idempotent: a retried step can never create a second reply, version or charge.
 
@@ -362,16 +363,17 @@ How it works:
 
 Every procedure requires a session and scopes its data to the caller. Mutations that start work are rate limited (`security.test.ts` fails if a mutation loses its limit).
 
-| Router    | Procedures                                                                  |
-| --------- | --------------------------------------------------------------------------- |
-| `project` | `list`, `recent`, `bySlug`, `create`                                        |
-| `message` | `list`, `send`, `stop`, `retry`                                             |
-| `version` | `list`, `files`, `restore`                                                  |
-| `sandbox` | `wake`                                                                      |
-| `credits` | `balance`, `usage`, `checkout`                                              |
-| `model`   | `list` (curated models intersected with the gateway's live list and prices) |
-| `github`  | `status`, `start`, `retry`                                                  |
-| `memory`  | `list`, `setEnabled`, `forget`, `clear`                                     |
+| Router          | Procedures                                                                  |
+| --------------- | --------------------------------------------------------------------------- |
+| `project`       | `list`, `recent`, `bySlug`, `create`                                        |
+| `message`       | `list`, `send`, `stop`, `retry`                                             |
+| `version`       | `list`, `files`, `restore`                                                  |
+| `sandbox`       | `wake`                                                                      |
+| `credits`       | `balance`, `usage`, `checkout`                                              |
+| `model`         | `list` (curated models intersected with the gateway's live list and prices) |
+| `github`        | `status`, `start`, `retry`                                                  |
+| `memory`        | `list`, `setEnabled`, `forget`, `clear`                                     |
+| `notifications` | `get`, `setEnabled`                                                         |
 
 ### Route handlers (`src/app/api/`)
 
@@ -392,6 +394,7 @@ Every procedure requires a session and scopes its data to the caller. Mutations 
 | `export-github`     | event `github/export` | 1 per project             |
 | `cleanup-resources` | cron `0 4 * * *`      | —                         |
 | `monitor-sandboxes` | cron `*/30 * * * *`   | —                         |
+| `send-notification` | event `notify/send`   | 3                         |
 
 ### Rate limits (per user, `src/server/rate-limit.ts`)
 
@@ -404,6 +407,7 @@ Every procedure requires a session and scopes its data to the caller. Mutations 
 | `sandbox.wake`                                                            | 30 per 10 minutes  |
 | `version.restore`                                                         | 20 per 10 minutes  |
 | `memory.setEnabled`, `memory.forget`, `memory.clear` (together)           | 30 per 10 minutes  |
+| `notifications.setEnabled`                                                | 30 per 10 minutes  |
 | `POST /api/attachments`                                                   | 40 per 10 minutes  |
 | `POST /api/realtime/token`                                                | 120 per 10 minutes |
 
@@ -445,6 +449,7 @@ Notes:
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                      | Stripe Checkout and webhooks                                             |
 | `ALERT_WEBHOOK_URL`                                                               | Optional Slack- or Discord-compatible alert webhook                      |
 | `SUPERMEMORY_API_KEY`, `AGENT_MEMORY`, `MEMORY_MONTHLY_USD`                       | Memory: key (empty turns memory off), `on`/`off`, monthly budget in USD  |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_NOTIFICATIONS`, `EMAIL_DAILY_LIMIT`        | Email: key (empty turns email off), sender, `on`/`off`, daily limit      |
 
 ## 19. Scripts
 
@@ -521,3 +526,9 @@ Vibe remembers each user's preferences across projects and each project's correc
 Users manage memory under **Memory** in the account menu (list, forget one, clear all, the "Use memory" switch, on by default), or in chat with "remember that…" and "forget that…" (forgetting always asks for confirmation). Deleting a project drops its memory. A monthly guard (`MemoryUsage`) stops writes at 80% of `MEMORY_MONTHLY_USD` and reads at 100%, and alerts once.
 
 Set `SUPERMEMORY_API_KEY` and apply the `20261118120000_memory_layer` migration to turn it on. Supermemory is disclosed in the Privacy Policy and Terms, pending the owner's review. Details are in `docs/agent-harness.md`.
+
+## Email notifications
+
+Vibe emails a user when a build finishes after a minute or more, fails or runs out of credits, and when a GitHub export finishes or fails, through Resend. `run-agent` and `export-github` queue a small `notify/send` event; the `send-notification` function loads the user and project, applies the rules (the user's switch, a daily budget, no email for quick builds), renders the message and sends it with an idempotency key, so a retry never sends twice. A failed send can never affect a build. Emails contain the project name, the outcome and a link, never prompts, code or files. Users switch them off under **Notifications** in the account menu (`User.notifyEmail`, on by default).
+
+Set `RESEND_API_KEY` and apply the `20261119090000_email_notifications` migration to turn it on. `EMAIL_FROM` defaults to Resend's free `onboarding@resend.dev` sender, which only delivers to the email address of your own Resend account; verify a domain at resend.com/domains and change `EMAIL_FROM` to reach every user. The free plan allows 100 emails a day: finished-build and export emails stop at 80% of `EMAIL_DAILY_LIMIT`, failure emails at 100%, with one alert a day. Resend is disclosed in the Privacy Policy and Terms, pending the owner's review.

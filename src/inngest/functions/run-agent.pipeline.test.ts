@@ -16,12 +16,16 @@ const mocks = vi.hoisted(() => ({
   checkProject: vi.fn(),
   answerQuestion: vi.fn(),
   browse: vi.fn(),
+  send: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/server/db", () => ({ db: mocks.db }));
 vi.mock("@/inngest/client", () => ({
-  inngest: { createFunction: (_options: unknown, handler: unknown) => handler },
+  inngest: {
+    createFunction: (_options: unknown, handler: unknown) => handler,
+    send: mocks.send,
+  },
 }));
 vi.mock("@/inngest/publisher", () => ({
   createPublisher: () => mocks.publish,
@@ -318,6 +322,18 @@ describe("create intent", () => {
       issues: 0,
     });
     expect(mocks.loop).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notify/send",
+        data: {
+          kind: "run-finished",
+          userId: "u1",
+          projectId: "p1",
+          messageId: "m1",
+          key: "r1",
+        },
+      }),
+    );
     expect(mocks.db.project.updateMany).toHaveBeenCalledWith({
       where: { id: "p1", userId: "u1" },
       data: { name: "Night Owl" },

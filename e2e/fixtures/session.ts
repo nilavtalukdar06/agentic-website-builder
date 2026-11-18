@@ -78,6 +78,11 @@ export async function createTestSession(name: string) {
         INSERT INTO "Version" (id, "projectId", number, status, "runId", title, files, "creditCost", "createdAt")
         VALUES (${randomUUID()}, ${version.projectId}, ${version.number}, 'READY', ${version.runId ?? null}, ${version.title}, ${JSON.stringify(version.files)}::jsonb, ${version.creditCost ?? 0}, ${(version.createdAt ?? new Date()).toISOString()})`;
     },
+    notifyEmail: async () => {
+      const [row] =
+        await sql`SELECT "notifyEmail" FROM "user" WHERE id = ${userId}`;
+      return row.notifyEmail as boolean;
+    },
     memoryEnabled: async () => {
       const [row] =
         await sql`SELECT "memoryEnabled" FROM "user" WHERE id = ${userId}`;

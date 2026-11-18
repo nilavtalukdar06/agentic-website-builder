@@ -26,6 +26,7 @@ export default defineConfig({
       ARCJET_KEY: "test-arcjet-key",
       BROWSERBASE_API_KEY: "test-browserbase-key",
       SUPERMEMORY_API_KEY: "test-supermemory-key",
+      RESEND_API_KEY: "re_test_key",
     },
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],

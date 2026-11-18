@@ -109,6 +109,7 @@ import { takeCheckpoint } from "../agent/runtime";
 import { mentionsSite, uniqueSources } from "../agent/search";
 import { inngest } from "../client";
 import { agentRun } from "../events";
+import { queueNotification } from "../notify";
 import { createPublisher } from "../publisher";
 
 const OUT_OF_CREDITS =
@@ -286,6 +287,13 @@ export const runAgent = inngest.createFunction(
           replyToId: messageId,
         });
         await createPublisher(projectId)("status", { state: "error", message });
+      });
+      await queueNotification(step, {
+        kind: "run-failed",
+        userId: event.data.event.data.userId,
+        projectId,
+        messageId,
+        key: runId,
       });
     },
   },
@@ -1242,6 +1250,16 @@ export const runAgent = inngest.createFunction(
       }
       await publish("status", { state: stopped ? "stopped" : "done" });
     });
+
+    if (!stopped && !(outOfCredits && written.length === 0)) {
+      await queueNotification(step, {
+        kind: outOfCredits ? "run-out-of-credits" : "run-finished",
+        userId,
+        projectId,
+        messageId,
+        key: runId,
+      });
+    }
 
     return {
       status: stopped

@@ -1,5 +1,6 @@
 import { eventType } from "inngest";
 import { z } from "zod";
+import { notificationKinds } from "@/server/email/notify";
 
 export const agentRun = eventType("agent/run", {
   schema: z.object({
@@ -32,5 +33,16 @@ export const githubExport = eventType("github/export", {
     userId: z.string().min(1),
     attempt: z.number().int().positive(),
     requestId: z.string().min(1),
+  }),
+});
+
+export const notifyUser = eventType("notify/send", {
+  schema: z.object({
+    kind: z.enum(notificationKinds),
+    userId: z.string().min(1),
+    projectId: z.string().min(1),
+    messageId: z.string().min(1).optional(),
+    exportId: z.string().min(1).optional(),
+    key: z.string().min(1).max(200),
   }),
 });
