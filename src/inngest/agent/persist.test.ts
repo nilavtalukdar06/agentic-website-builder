@@ -282,6 +282,7 @@ describe("checkpoints", () => {
           .mockResolvedValueOnce({ files: { draft: "1" } })
           .mockResolvedValueOnce(null)
           .mockResolvedValueOnce({ files: { ready: "1" } }),
+        findUnique: vi.fn().mockResolvedValue(null),
       },
     };
     await expect(
@@ -293,6 +294,24 @@ describe("checkpoints", () => {
     expect(db.version.findFirst).toHaveBeenLastCalledWith(
       expect.objectContaining({ where: { projectId: "p1", status: "READY" } }),
     );
+  });
+
+  test("restores the user's unsaved edits before the latest ready version, but after a run's own checkpoint", async () => {
+    const findUnique = vi.fn().mockResolvedValue({ files: { edited: "1" } });
+    const findFirst = vi.fn().mockResolvedValue({ files: { ready: "1" } });
+    const db = { version: { findFirst, findUnique } };
+    await expect(
+      loadRestoreFiles(db as never, { projectId: "p1" }),
+    ).resolves.toEqual({ edited: "1" });
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: "edit_p1" },
+      select: { files: true },
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+    findFirst.mockResolvedValueOnce({ files: { checkpoint: "1" } });
+    await expect(
+      loadRestoreFiles(db as never, { projectId: "p1", chainId: "r0" }),
+    ).resolves.toEqual({ checkpoint: "1" });
   });
 
   test("saving the real version deletes the chain's draft", async () => {

@@ -1,3 +1,4 @@
+import { draftId } from "@/server/code/ids";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { AgentPart } from "@/lib/agent/parts";
 import type { TokenUsage } from "@/server/billing/pricing";
@@ -87,8 +88,15 @@ export async function loadRestoreFiles(
         select: { files: true },
       })
     : null;
+  const edited = draft
+    ? null
+    : await db.version.findUnique({
+        where: { id: draftId(projectId) },
+        select: { files: true },
+      });
   const latest =
     draft ??
+    edited ??
     (await db.version.findFirst({
       where: { projectId, ...READY },
       orderBy: { number: "desc" },

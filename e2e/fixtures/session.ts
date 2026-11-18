@@ -78,6 +78,18 @@ export async function createTestSession(name: string) {
         INSERT INTO "Version" (id, "projectId", number, status, "runId", title, files, "creditCost", "createdAt")
         VALUES (${randomUUID()}, ${version.projectId}, ${version.number}, 'READY', ${version.runId ?? null}, ${version.title}, ${JSON.stringify(version.files)}::jsonb, ${version.creditCost ?? 0}, ${(version.createdAt ?? new Date()).toISOString()})`;
     },
+    versionRows: async (projectId: string) => {
+      const rows =
+        await sql`SELECT id, number, status, title, "creditCost", files FROM "Version" WHERE "projectId" = ${projectId} ORDER BY number NULLS LAST`;
+      return rows as {
+        id: string;
+        number: number | null;
+        status: string;
+        title: string;
+        creditCost: number;
+        files: Record<string, string>;
+      }[];
+    },
     notifyEmail: async () => {
       const [row] =
         await sql`SELECT "notifyEmail" FROM "user" WHERE id = ${userId}`;

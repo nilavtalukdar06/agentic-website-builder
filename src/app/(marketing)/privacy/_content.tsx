@@ -39,10 +39,16 @@ export const privacySections: ArticleSection[] = [
           <li>
             <Strong>Your projects.</Strong> Project names and slugs, your
             prompts and chat messages, the AI model you chose for each message,
-            the images you attach as references, the files the agent writes,
-            saved versions, the preview address and the linked GitHub repository
-            after you export. When you stop a request, we record when you
-            stopped it.
+            the images you attach as references, the files the agent writes or
+            you edit, unsaved edits kept as a draft, saved versions, the preview
+            address and the linked GitHub repository after you export. When you
+            stop a request, we record when you stopped it.
+          </li>
+          <li>
+            <Strong>Terminal.</Strong> Commands you run in the workspace
+            terminal run in your project&apos;s sandbox, which E2B hosts. Vibe
+            does not store the commands or their output. Files a command changes
+            are kept as unsaved edits to your project.
           </li>
           <li>
             <Strong>GitHub exports.</Strong> Repository name and visibility, the

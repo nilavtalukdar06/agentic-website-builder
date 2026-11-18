@@ -25,6 +25,9 @@ vi.mock("@/server/storage/attachments", () => ({
 }));
 vi.mock("@/server/sandbox/admin", () => ({ killSandbox: vi.fn() }));
 vi.mock("@/server/ai/gateway", () => gateway);
+vi.mock("@/server/memory", () => ({
+  dropProjectMemory: () => vi.fn().mockResolvedValue(undefined),
+}));
 
 const sonnet = {
   id: "anthropic/claude-sonnet-5.5",
@@ -98,6 +101,8 @@ function makeContext(overrides: Partial<TRPCContext> = {}) {
     },
     version: {
       findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockResolvedValue({}),
     },
@@ -764,6 +769,37 @@ describe("message.send", () => {
     );
   });
 
+  test("saves unsaved edits as a version before the follow-up is queued", async () => {
+    const { ctx, db } = signedIn();
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.message.create.mockResolvedValue({ id: "m9" });
+    db.version.findUnique.mockResolvedValueOnce({
+      files: { "app/page.tsx": "edited" },
+    });
+    db.version.findFirst.mockResolvedValueOnce({
+      number: 4,
+      files: { "app/page.tsx": "old" },
+    });
+    await createCaller(ctx).message.send({
+      projectId: "p1",
+      prompt: "Add a footer",
+    });
+    expect(db.version.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        projectId: "p1",
+        number: 5,
+        title: "Edited app/page.tsx",
+        creditCost: 0,
+      }),
+    });
+    expect(db.version.deleteMany).toHaveBeenCalled();
+    const order = [
+      db.version.create.mock.invocationCallOrder[0],
+      db.message.create.mock.invocationCallOrder.at(-1),
+    ];
+    expect(order[0]).toBeLessThan(order[1]!);
+  });
+
   test("rejects images for a model without vision", async () => {
     const { ctx, db } = signedIn();
     db.project.findFirst.mockResolvedValue({ id: "p1" });
@@ -869,6 +905,57 @@ describe("message.retry", () => {
   });
 });
 
+describe("unsaved edits", () => {
+  const reply = {
+    projectId: "p1",
+    replyToId: "u1",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+  };
+
+  test("retry and restore wait until the edits are saved or discarded", async () => {
+    const { ctx, db } = signedIn();
+    db.message.findFirst.mockResolvedValue(reply);
+    db.project.findFirst.mockResolvedValue({ id: "p1" });
+    db.version.findUnique.mockResolvedValue({ id: "edit_p1" });
+    await expect(
+      createCaller(ctx).message.retry({ messageId: "r1" }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("edits"),
+    });
+    await expect(
+      createCaller(ctx).version.restore({ projectId: "p1", number: 1 }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("edits"),
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("version.files shows the unsaved working copy, marked as such", async () => {
+    const { ctx, db } = signedIn();
+    db.version.findFirst
+      .mockResolvedValueOnce({
+        number: 2,
+        title: "Footer",
+        files: { "app/page.tsx": "saved" },
+      })
+      .mockResolvedValueOnce({ files: { "app/page.tsx": "older" } });
+    db.version.findUnique.mockResolvedValueOnce({
+      files: { "app/page.tsx": "edited", "new.ts": "x" },
+    });
+    await expect(
+      createCaller(ctx).version.files({ projectId: "p1" }),
+    ).resolves.toEqual({
+      number: 2,
+      title: "Your unsaved edits",
+      files: { "app/page.tsx": "edited", "new.ts": "x" },
+      dirty: true,
+      changes: { "app/page.tsx": "M", "new.ts": "A" },
+    });
+  });
+});
+
 describe("version.files", () => {
   test("returns the latest version with A / M markers", async () => {
     const { ctx, db } = signedIn();
@@ -885,6 +972,7 @@ describe("version.files", () => {
       number: 2,
       title: "Footer",
       files: { "app/page.tsx": "new", "components/footer.tsx": "x", a: "1" },
+      dirty: false,
       changes: { "app/page.tsx": "M", "components/footer.tsx": "A" },
     });
     expect(db.version.findFirst).toHaveBeenNthCalledWith(

@@ -5,6 +5,8 @@ import { replyId } from "@/inngest/agent/persist";
 import { pendingPromptWhere } from "@/inngest/agent/prompt-state";
 import type { AgentPart } from "@/lib/agent/parts";
 import { diffVersions } from "@/lib/agent/version-diff";
+import { draftId } from "@/server/code/ids";
+import { hasDraft } from "@/server/code/draft";
 import { writeVersionToSandbox } from "@/server/sandbox/workspace";
 import {
   assertProjectAvailable,
@@ -76,14 +78,23 @@ export const versionRouter = createTRPCRouter({
         orderBy: { number: "desc" },
         select: { files: true },
       });
-      const files = (version.files ?? {}) as Files;
+      const saved = (version.files ?? {}) as Files;
+      const draft =
+        input.number === undefined
+          ? await ctx.db.version.findUnique({
+              where: { id: draftId(input.projectId) },
+              select: { files: true },
+            })
+          : null;
+      const files = draft ? ((draft.files ?? {}) as Files) : saved;
       return {
         number: version.number,
-        title: version.title,
+        title: draft ? "Your unsaved edits" : version.title,
         files,
+        dirty: draft !== null,
         changes: diffVersions(
           files,
-          previous ? ((previous.files ?? {}) as Files) : null,
+          draft ? saved : previous ? ((previous.files ?? {}) as Files) : null,
         ),
       };
     }),
@@ -105,6 +116,12 @@ export const versionRouter = createTRPCRouter({
             throw new TRPCError({
               code: "CONFLICT",
               message: "Wait for the current request to finish, or stop it.",
+            });
+          }
+          if (await hasDraft(tx, project.id)) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "Save or discard your edits before restoring a version.",
             });
           }
           const source = await tx.version.findFirst({

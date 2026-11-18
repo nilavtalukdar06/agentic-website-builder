@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { replyId } from "@/inngest/agent/persist";
+import { hasDraft, promoteDraft } from "@/server/code/draft";
 import { pendingPromptWhere, requestStop } from "@/inngest/agent/prompt-state";
 import { type AgentPart, parseAgentParts } from "@/lib/agent/parts";
 import { orderConversation } from "@/lib/agent/conversation-order";
@@ -163,6 +164,7 @@ export const messageRouter = createTRPCRouter({
         userId,
         async (tx, project) => {
           assertProjectAvailable(project);
+          await promoteDraft(tx, project.id);
           const message = await tx.message.create({
             data: {
               projectId: input.projectId,
@@ -218,6 +220,12 @@ export const messageRouter = createTRPCRouter({
         userId,
         async (tx, project) => {
           assertProjectAvailable(project);
+          if (await hasDraft(tx, project.id)) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "Save or discard your edits before retrying.",
+            });
+          }
           const [newer, pending] = await Promise.all([
             tx.message.count({
               where: {

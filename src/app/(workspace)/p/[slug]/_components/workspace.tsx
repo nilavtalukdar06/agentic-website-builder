@@ -155,6 +155,7 @@ export function Workspace({
           projectId={project.id}
           projectSlug={project.slug}
           latestVersion={project.version}
+          building={project.building}
         />
       ) : (
         <PreviewPanel

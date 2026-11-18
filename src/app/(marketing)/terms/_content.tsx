@@ -254,6 +254,14 @@ export const termsSections: ArticleSection[] = [
           review it or clear it under Memory in your account menu.
         </P>
         <P>
+          You can edit your project&apos;s files and run commands in a terminal
+          in its sandbox while no build is running. You are responsible for what
+          you run. Don&apos;t use the terminal to attack or scan other systems,
+          mine cryptocurrency, send spam or break the law; we may limit commands
+          or stop a sandbox that is abused. Unsaved edits are kept as a draft
+          until you save them as a version or discard them.
+        </P>
+        <P>
           Notification emails are on by default: Vibe emails you through Resend
           when a build finishes, fails or runs out of credits and when a GitHub
           export finishes or fails. They are a convenience, not a guarantee:

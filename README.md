@@ -298,7 +298,7 @@ The same information is persisted in `Message.parts` (and `GithubExport` for exp
 - The server component prefetches `project.bySlug` and `message.list` through a tRPC caller and hands the dehydrated React Query cache to the client with `<HydrateClient>`, so the first paint has data.
 - The client reads with `useSuspenseQuery`. While a prompt is pending it subscribes to realtime **and** polls every 5 seconds, so a missed realtime event can never leave the page stuck.
 - URL state lives in `nuqs`: `?view=preview|code`, `?file=…`, `?device=desktop|tablet|mobile`.
-- Code mode reads `version.files` (no sandbox round trip), marks files Added or Modified against the previous version, and downloads ZIPs with `client-zip`.
+- Code mode reads `version.files` (no sandbox round trip), marks files Added or Modified against the previous version, and downloads ZIPs with `client-zip`. The latest version is **editable** (CodeMirror, autosave to the preview, locked while an agent runs) and a **terminal** runs commands in the sandbox; see [Editing and the terminal](#editing-and-the-terminal).
 - On open, if nothing is building, `sandbox.wake` resumes the paused sandbox or rebuilds it (section 12) and shows "Waking up the preview…".
 - Below 768 px the workspace switches to one full-screen view at a time (chat or preview) with a bottom bar; there is no Code mode on phones.
 
@@ -374,6 +374,7 @@ Every procedure requires a session and scopes its data to the caller. Mutations 
 | `github`        | `status`, `start`, `retry`                                                  |
 | `memory`        | `list`, `setEnabled`, `forget`, `clear`                                     |
 | `notifications` | `get`, `setEnabled`                                                         |
+| `code`          | `write`, `remove`, `saveVersion`, `discard`                                 |
 
 ### Route handlers (`src/app/api/`)
 
@@ -382,6 +383,7 @@ Every procedure requires a session and scopes its data to the caller. Mutations 
 | `GET/POST /api/auth/[...all]` | Better Auth (sign-in, callback, sessions, link account) |
 | `POST /api/trpc/[trpc]`       | tRPC                                                    |
 | `POST /api/attachments`       | Image upload to Neon Object Storage                     |
+| `POST /api/terminal`          | Streams a command run in the project's sandbox          |
 | `POST /api/realtime/token`    | Realtime subscription token for one project             |
 | `POST /api/webhooks/stripe`   | Signed Stripe events                                    |
 | `GET/POST/PUT /api/inngest`   | Inngest serve endpoint                                  |
@@ -398,18 +400,20 @@ Every procedure requires a session and scopes its data to the caller. Mutations 
 
 ### Rate limits (per user, `src/server/rate-limit.ts`)
 
-| Action                                                                    | Limit              |
-| ------------------------------------------------------------------------- | ------------------ |
-| Agent starts (`project.create`, `message.send`, `message.retry` together) | 20 per 10 minutes  |
-| `project.create`                                                          | 10 per hour        |
-| `credits.checkout`                                                        | 10 per hour        |
-| `github.start`, `github.retry`                                            | 10 per hour        |
-| `sandbox.wake`                                                            | 30 per 10 minutes  |
-| `version.restore`                                                         | 20 per 10 minutes  |
-| `memory.setEnabled`, `memory.forget`, `memory.clear` (together)           | 30 per 10 minutes  |
-| `notifications.setEnabled`                                                | 30 per 10 minutes  |
-| `POST /api/attachments`                                                   | 40 per 10 minutes  |
-| `POST /api/realtime/token`                                                | 120 per 10 minutes |
+| Action                                                                     | Limit              |
+| -------------------------------------------------------------------------- | ------------------ |
+| Agent starts (`project.create`, `message.send`, `message.retry` together)  | 20 per 10 minutes  |
+| `project.create`                                                           | 10 per hour        |
+| `credits.checkout`                                                         | 10 per hour        |
+| `github.start`, `github.retry`                                             | 10 per hour        |
+| `sandbox.wake`                                                             | 30 per 10 minutes  |
+| `version.restore`                                                          | 20 per 10 minutes  |
+| `memory.setEnabled`, `memory.forget`, `memory.clear` (together)            | 30 per 10 minutes  |
+| `code.write`, `code.remove`, `code.saveVersion`, `code.discard` (together) | 600 per 10 minutes |
+| `POST /api/terminal`                                                       | 60 per 10 minutes  |
+| `notifications.setEnabled`                                                 | 30 per 10 minutes  |
+| `POST /api/attachments`                                                    | 40 per 10 minutes  |
+| `POST /api/realtime/token`                                                 | 120 per 10 minutes |
 
 Limits are fixed-window counters in Postgres (`ThrottleWindow`, one atomic upsert per request). tRPC answers `TOO_MANY_REQUESTS` with a readable wait; route handlers answer 429 with `Retry-After`. Sign-in endpoints use Better Auth's own database-backed limiter in production.
 
@@ -500,6 +504,7 @@ After editing, export the SVG from Excalidraw (Export image → SVG, background 
 | Data flow, levels 0 and 1         | `dfd-context`, `dfd-level1`   |
 | Sign-in sequence                  | `seq-auth`                    |
 | Generation sequence               | `seq-generation`              |
+| Editing and terminal sequence     | `seq-edit`                    |
 | run-agent pipeline                | `agent-pipeline`              |
 | Workspace data flow               | `workspace-client`            |
 | Sandbox lifecycle                 | `sandbox-lifecycle`           |
@@ -532,3 +537,14 @@ Set `SUPERMEMORY_API_KEY` and apply the `20261118120000_memory_layer` migration 
 Vibe emails a user when a build finishes after a minute or more, fails or runs out of credits, and when a GitHub export finishes or fails, through Resend. `run-agent` and `export-github` queue a small `notify/send` event; the `send-notification` function loads the user and project, applies the rules (the user's switch, a daily budget, no email for quick builds), renders the message and sends it with an idempotency key, so a retry never sends twice. A failed send can never affect a build. Emails contain the project name, the outcome and a link, never prompts, code or files. Users switch them off under **Notifications** in the account menu (`User.notifyEmail`, on by default).
 
 Set `RESEND_API_KEY` and apply the `20261119090000_email_notifications` migration to turn it on. `EMAIL_FROM` defaults to Resend's free `onboarding@resend.dev` sender, which only delivers to the email address of your own Resend account; verify a domain at resend.com/domains and change `EMAIL_FROM` to reach every user. The free plan allows 100 emails a day: finished-build and export emails stop at 80% of `EMAIL_DAILY_LIMIT`, failure emails at 100%, with one alert a day. Resend is disclosed in the Privacy Policy and Terms, pending the owner's review.
+
+## Editing and the terminal
+
+![Editing and terminal sequence](docs/diagrams/seq-edit.svg)
+
+The Code view of the latest version is an editor (CodeMirror 6, loaded only when a file is opened), and a terminal is one click away. Both lock while an agent is running, and both are unavailable on phones.
+
+- **Edits** autosave about a second after typing stops (⌘S saves at once). Each edit is checked on the server (path guard, text files only, size limit, secret scan, valid `package.json`), saved into a draft version (`DRAFT`, id `edit_<projectId>`, holding every file) and written to the running sandbox, so the preview reloads. A lost sandbox is rebuilt from the draft, so edits are never only in the sandbox.
+- **Versions.** A bar shows "unsaved edits" with **Save version** and **Discard**. Sending the next message saves the edits as the next version first (0 credits, "Edited <file>"), so the agent always works from them. Retry and Restore wait until the edits are saved or discarded. GitHub export uses saved versions, so save first.
+- **Terminal.** `POST /api/terminal` streams the output of one command run in the project's sandbox (100 second timeout, 200,000 characters of output, the agent's command guard: no `sudo`, no starting or stopping the dev server, no `kill`, no destructive deletes). It is a command runner, not a full terminal: no interactive programs and no cancel. Files a command changes (for example `npm install zod`) become unsaved edits.
+- **Not yet:** creating, renaming and deleting files from the tree, inline error markers, format on save, and AI inline edit. Design and decisions: `docs/plan.md` §6.7 and `docs/decisions.md`.

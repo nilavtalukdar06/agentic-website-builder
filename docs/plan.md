@@ -53,6 +53,7 @@ Priority order when several fit: **AI Elements / shadcn registry component → w
 | Web search           | AI Gateway search tool, Builder only, when the user references a website (§5.8)                                   | `ai` (`gateway.tools.parallelSearch`); works with every model, billed per search through the gateway                                             |
 | Agent browser (P11)  | Browserbase cloud Chrome driven by Stagehand v4 for browser QA (Phase 11)                                         | `@browserbasehq/stagehand` 4.4.0 and `@browserbasehq/sdk` 2.28.0 (pinned), behind an own `BrowserProvider`; an in-memory fake provider for tests |
 | Memory (P11)         | Supermemory v5 as a memory layer: user preferences and project decisions from the user's own words                | `supermemory` 5.1.2 (pinned), behind an own `MemoryProvider`; an in-memory fake provider for tests                                               |
+| Editor (§6.7)        | CodeMirror 6 (`@uiw/react-codemirror` 4.25.12 and language packs, pinned), loaded only when a file is opened      | Monaco rejected: megabytes of JavaScript and no need for IntelliSense, because the sandbox type-checks                                           |
 | Email (P11)          | Resend sends notification emails (build finished, failed, out of credits, GitHub export) from an Inngest function | `resend` 6.38.1 (pinned), behind an own `EmailProvider`; an in-memory fake for tests                                                             |
 | Guardrails           | Own layers + AI SDK middleware + `openai/gpt-oss-safeguard-20b` through the gateway (§5.9–5.10)                   | `@secretlint/core` + preset (in-process), `npq` 3.27.4 in the sandbox template; no new vendor                                                    |
 | Voice input          | Browser Web Speech API                                                                                            | no runtime package; `@types/dom-speech-recognition` (types only, dev)                                                                            |
@@ -585,19 +586,20 @@ AI Elements, installed and themed in Phase 1:
 - **Waking a paused sandbox** (§5.11): opening a project whose sandbox is paused resumes it with `connect` and shows "Waking up the preview…" (skeleton over the frame) until the dev server answers; a sandbox that is gone is rebuilt from the latest Version
 - **Generating overlay** while building: faded page outline + a rolling timeline of **every step of the run** (owner's request after Phase 6), newest seven, each with its icon: thinking (brain), sandbox (box), skill loaded (sparkles), files read (book), package installed (package), command running / ran / failed (terminal, red when it fails), file creating / created / editing / edited (file-type icon), deleted (trash), web search (globe), safety check (shield), compiling and saving (hammer), preview ready (monitor). The active step is large with a Shimmer; elapsed time below. Before the first event it shows "Starting the agent"
 
-### 6.3 Code mode (read-only)
+### 6.3 Code mode
 
-Scope is **view, copy, download**, nothing editable.
+Scope was **view, copy, download**. _Changed at the owner's request on 19 November 2026: the latest version is now editable, and there is a user terminal (§6.7). Older versions stay read-only._
 
-| Need                    | Candidates (evaluate first)                                                       | Fallback                        |
-| ----------------------- | --------------------------------------------------------------------------------- | ------------------------------- |
-| File explorer           | AI Elements `file-tree`                                                           | `react-arborist`                |
-| Code viewer             | AI Elements `code-block` (Shiki, line numbers, copy)                              | `shiki` + own wrapper           |
-| Copy to clipboard       | `usehooks-ts` `useCopyToClipboard`, or the copy built into `code-block`/`snippet` | `navigator.clipboard.writeText` |
-| Download single file    | own 10-line `Blob` + `URL.createObjectURL` helper, or `file-saver`                | —                               |
-| Download project as ZIP | `client-zip` (small, streaming) vs `jszip` vs `fflate`                            | —                               |
-| File tabs               | shadcn `Tabs`                                                                     | —                               |
-| A / M markers           | derive from the Version diff                                                      | —                               |
+| Need                    | Candidates (evaluate first)                                                       | Fallback                               |
+| ----------------------- | --------------------------------------------------------------------------------- | -------------------------------------- |
+| File explorer           | AI Elements `file-tree`                                                           | `react-arborist`                       |
+| Code viewer             | AI Elements `code-block` (Shiki, line numbers, copy)                              | `shiki` + own wrapper                  |
+| Copy to clipboard       | `usehooks-ts` `useCopyToClipboard`, or the copy built into `code-block`/`snippet` | `navigator.clipboard.writeText`        |
+| Download single file    | own 10-line `Blob` + `URL.createObjectURL` helper, or `file-saver`                | —                                      |
+| Download project as ZIP | `client-zip` (small, streaming) vs `jszip` vs `fflate`                            | —                                      |
+| File tabs               | shadcn `Tabs`                                                                     | —                                      |
+| Editor (§6.7)           | CodeMirror 6 through `@uiw/react-codemirror`                                      | Monaco (heavier, no IntelliSense need) |
+| A / M markers           | derive from the Version diff                                                      | —                                      |
 
 - Files come from the latest `Version.files` (fast, no sandbox round-trip). Optionally refresh from the sandbox via `files.list`/`read` when it's alive.
 - Large files: virtualize lines if they're long (evaluate `@tanstack/react-virtual`)
@@ -644,6 +646,20 @@ Neither is in the canvas (`~/Desktop/vibe-ui` has no delete control), so the pie
 - **Kept on purpose:** `CreditLedger` rows (the usage page already shows a deleted project's activity without a name), and the exported GitHub repository.
 
 **Done when:** a full generation shows live in chat + overlay, the preview loads, Code mode browses/copies/downloads files and ZIP, and all three states match the canvas in light/dark.
+
+---
+
+### 6.7 Editing and the terminal (owner's request, 19 November 2026)
+
+The owner asked for an editor, not only a viewer, and for a terminal "controlled by the user". Decisions: edits **autosave to the preview**, the editor is **locked whenever an agent is running**, and the terminal is a **command runner** (not a full interactive TTY).
+
+- **Where edits live.** A user edit is written to a `DRAFT` version with the id `edit_<projectId>` (the same kind of row the agent uses for checkpoints) holding every file, and to the running sandbox, so the preview reloads. `version.files` returns the draft as the working copy (`dirty: true`) when the latest version is open. A lost sandbox is rebuilt from the draft first (`loadRestoreFiles`), so edits are never only in the sandbox.
+- **Saving a version.** The **Save version** button, or sending the next message, turns the draft into the next READY version (title "Edited <file>", 0 credits, a reply "Saved your edit to … as version N") through `promoteDraft`. The agent therefore always sees the user's edits. **Discard** drops the draft and puts the saved files back in the sandbox. Retry and Restore refuse while edits are unsaved.
+- **Locks.** `code.write/remove/saveVersion/discard` and `/api/terminal` refuse while a prompt is pending, an export, restore or wake is running, or there is no saved version yet. The editor and terminal show why.
+- **Checks on every edit** (`checkEdit`): the agent's path guard (no `node_modules`, `.git`, `.env*`, installed skills), text files only, 300,000 characters, valid JSON for `package.json` (a changed manifest triggers `npm install` in the background), and the same secret scan the agent's files go through. Rate limits: 600 edits and 60 commands per 10 minutes per user.
+- **Autosave** one second after typing stops (also on ⌘S and when the editor loses focus). A change from outside (agent, terminal) replaces unsaved typing with a notice. A failed save shows its reason and is not retried in a loop.
+- **Terminal** (`POST /api/terminal`, streamed): Arcjet, session, rate limit, ownership; commands go through the agent's command guard (blocks `sudo`, starting or stopping the dev server, `kill`, destructive deletes); runs in the project folder with a 100 s timeout and a 200,000-character output cap. No interactive programs (vim, prompts) and no cancel, because the route is serverless. After a command the sandbox files are compared with the working copy and real changes (confirmed deletions only, never from a truncated snapshot; `AGENTS.md` ignored) become unsaved edits.
+- **Not built yet:** creating, renaming and deleting files from the tree (the server supports writing a new path and removing one), inline error markers, format on save, and AI inline edit (⌘K). Code mode stays off phones.
 
 ---
 
@@ -931,6 +947,7 @@ The deferred Phase 11 work would add `AI_PLANNER_MODEL`, `AI_CRITIC_MODEL` and `
   - [x] Progress and measurement: `note` task rows, phase timings in the ledger and `agent:smoke`
   - [x] Browser QA frontend: read-only live view, mobile access, saved checks and desktop/phone screenshots; provider/privacy and retention documentation
   - [ ] Browser QA live cloud-session verification (requires credentials)
+  - [x] Editable Code mode and user terminal (§6.7): CodeMirror editor, autosave to the preview, draft version, Save version / Discard, lock while building, streamed command runner, legal update (flagged to the owner)
   - [x] Browser checks with Browserbase: desktop and phone page checks, planned interactions on the user's model, repair of findings, live read-only view (responsive), saved checks and screenshots, 30-day retention, legal update (flagged to the owner)
   - [x] Email notifications with Resend: events, send function, templates, switch, budget guard, legal update (flagged to the owner)
   - [ ] Verified sending domain for Resend (needed to email every user; the free sender only reaches the owner)

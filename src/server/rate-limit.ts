@@ -23,6 +23,8 @@ export const rateRules = {
   realtimeToken: { name: "realtime-token", limit: 120, windowMs: 10 * MINUTE },
   memory: { name: "memory", limit: 30, windowMs: 10 * MINUTE },
   notifications: { name: "notifications", limit: 30, windowMs: 10 * MINUTE },
+  codeEdit: { name: "code-edit", limit: 600, windowMs: 10 * MINUTE },
+  terminal: { name: "terminal", limit: 60, windowMs: 10 * MINUTE },
 } as const satisfies Record<string, RateRule>;
 
 export type RateDecision =

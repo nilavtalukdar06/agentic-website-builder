@@ -92,6 +92,10 @@ describe("tRPC surface", () => {
       }
     }
     expect(limited.sort()).toEqual([
+      "code.discard",
+      "code.remove",
+      "code.saveVersion",
+      "code.write",
       "credits.checkout",
       "github.retry",
       "github.start",

@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   db: {
     project: { update: vi.fn() },
-    version: { findFirst: vi.fn() },
+    version: {
+      findFirst: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 vi.mock("e2b", () => ({

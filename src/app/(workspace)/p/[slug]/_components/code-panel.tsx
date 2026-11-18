@@ -9,6 +9,8 @@ import {
   FileArchiveIcon,
   FolderOpenIcon,
   HistoryIcon,
+  LockIcon,
+  TerminalIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -64,6 +66,9 @@ import {
 import { workspaceSearchParams } from "@/lib/search-params/workspace";
 import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
+import { EditableFile } from "./editable-file";
+import { UnsavedEditsBar } from "./unsaved-edits-bar";
+import { UserTerminal } from "./user-terminal";
 
 const MAX_TABS = 6;
 const preferredFiles = ["app/page.tsx", "app/layout.tsx", "package.json"];
@@ -173,10 +178,12 @@ export function CodePanel({
   projectId,
   projectSlug,
   latestVersion,
+  building = false,
 }: {
   projectId: string;
   projectSlug: string;
   latestVersion: number | null;
+  building?: boolean;
 }) {
   const trpc = useTRPC();
   const [{ file, version: versionParam }, setParams] = useQueryStates(
@@ -194,6 +201,7 @@ export function CodePanel({
   );
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [zipping, setZipping] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
 
   const files = useMemo(() => query.data?.files ?? {}, [query.data]);
   const paths = useMemo(() => Object.keys(files).sort(), [files]);
@@ -267,6 +275,11 @@ export function CodePanel({
     content && !isBinarySnapshotValue(content)
       ? content.split("\n").length
       : null;
+  const editable =
+    pinned === null &&
+    selected !== null &&
+    content !== null &&
+    !isBinarySnapshotValue(content);
 
   return (
     <div className="flex size-full min-h-0 flex-col">
@@ -287,6 +300,18 @@ export function CodePanel({
           >
             Back to latest
           </Button>
+        </div>
+      ) : null}
+      {pinned === null && version.dirty ? (
+        <UnsavedEditsBar projectId={projectId} locked={building} />
+      ) : null}
+      {pinned === null && building ? (
+        <div
+          role="status"
+          className="flex h-9 shrink-0 items-center gap-2 border-b bg-muted px-3 text-sm text-muted-foreground"
+        >
+          <LockIcon className="size-4" />
+          Vibe is building. Editing and the terminal unlock when it finishes.
         </div>
       ) : null}
       <div className="grid min-h-0 flex-1 grid-cols-[16rem_1fr]">
@@ -361,6 +386,29 @@ export function CodePanel({
                 ))}
               </TabsList>
             </Tabs>
+            {pinned === null ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant={terminalOpen ? "secondary" : "ghost"}
+                      size="icon-sm"
+                      className="ml-2"
+                      aria-label={
+                        terminalOpen
+                          ? "Close the terminal"
+                          : "Open the terminal"
+                      }
+                      aria-pressed={terminalOpen}
+                      onClick={() => setTerminalOpen((open) => !open)}
+                    />
+                  }
+                >
+                  <TerminalIcon />
+                </TooltipTrigger>
+                <TooltipContent>Terminal</TooltipContent>
+              </Tooltip>
+            ) : null}
             {selected && content !== null ? (
               <Tooltip>
                 <TooltipTrigger
@@ -398,9 +446,21 @@ export function CodePanel({
                   )}
                 </BreadcrumbList>
               </Breadcrumb>
-              <ScrollArea className="relative min-h-0 flex-1">
-                <FileBody path={selected} value={content} />
-              </ScrollArea>
+              {editable ? (
+                <div className="relative min-h-0 flex-1">
+                  <EditableFile
+                    key={selected}
+                    projectId={projectId}
+                    path={selected}
+                    serverValue={content}
+                    locked={building}
+                  />
+                </div>
+              ) : (
+                <ScrollArea className="relative min-h-0 flex-1">
+                  <FileBody path={selected} value={content} />
+                </ScrollArea>
+              )}
             </>
           ) : (
             <Empty className="flex-1">
@@ -410,6 +470,15 @@ export function CodePanel({
               </EmptyHeader>
             </Empty>
           )}
+          {pinned === null && terminalOpen ? (
+            <div className="h-64 shrink-0">
+              <UserTerminal
+                projectId={projectId}
+                locked={building}
+                onClose={() => setTerminalOpen(false)}
+              />
+            </div>
+          ) : null}
           <div className="flex h-8 items-center gap-4 border-t px-3 text-xs text-muted-foreground">
             {selected ? <span>{languageLabel(selected)}</span> : null}
             {lineCount !== null ? <span>{lineCount} lines</span> : null}
