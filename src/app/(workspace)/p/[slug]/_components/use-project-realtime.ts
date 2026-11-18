@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useRealtime } from "inngest/react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   advanceLive,
   emptyTracker,
@@ -30,11 +30,17 @@ export function useRefreshWorkspace() {
 
 export function useProjectRealtime(projectId: string, building: boolean) {
   const refresh = useRefreshWorkspace();
+  const [runStart, setRunStart] = useState(0);
+  const [seenBuilding, setSeenBuilding] = useState(building);
+  if (building !== seenBuilding) {
+    setSeenBuilding(building);
+    if (building) setRunStart((count) => count + 1);
+  }
   const realtime = useRealtime({
     channel: projectChannelName(projectId),
     topics: projectTopics.filter((topic) => topic !== "export"),
     token: () => fetchRealtimeToken(projectId),
-    key: projectId,
+    key: `${projectId}:${runStart}`,
     enabled: building,
     historyLimit: null,
     bufferInterval: 100,

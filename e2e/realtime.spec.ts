@@ -390,3 +390,92 @@ test("a running prompt's live reply stays under it, ahead of a queued follow-up,
     await session.cleanup();
   }
 });
+
+test("a new message after a finished build starts a fresh live reply without a reload", async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.DATABASE_URL || !(await devServerUp()),
+    "needs the database and a running Inngest dev server",
+  );
+  test.setTimeout(90_000);
+  const session = await createTestSession("E2E Fresh Run");
+  try {
+    await page.context().addCookies([session.cookie]);
+    const suffix = randomUUID().slice(0, 8);
+    const projectId = await session.addProject({
+      slug: `fresh-${suffix}`,
+      name: "Fresh site",
+    });
+    const first = await session.addMessage({
+      projectId,
+      role: "USER",
+      content: "Build a bakery site",
+      startedAt: new Date(Date.now() - 60_000),
+      createdAt: new Date(Date.now() - 60_000),
+    });
+
+    const inngest = new Inngest({ id: "vibe-e2e-fresh", isDev: true });
+    const channel = projectChannel({ projectId });
+    type Topics = typeof projectChannel.$infer;
+    const publish = <T extends keyof Topics>(topic: T, data: Topics[T]) =>
+      inngest.realtime.publish(
+        channel[topic] as Realtime.TopicRef<Topics[T]>,
+        data,
+      );
+
+    const tokenResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/realtime/token") &&
+        response.status() === 200,
+    );
+    await page.goto(`/p/fresh-${suffix}`);
+    await tokenResponse;
+    const chat = page.getByRole("log");
+
+    await expect(async () => {
+      await publish("task", {
+        kind: "note",
+        label: "First run: created card.tsx",
+      });
+      await expect(chat.getByText("First run: created card.tsx")).toBeVisible({
+        timeout: 1000,
+      });
+    }).toPass({ timeout: 15_000 });
+
+    await session.addMessage({
+      projectId,
+      role: "ASSISTANT",
+      content: "Done with the first build.",
+      replyToId: first,
+    });
+    await expect(chat.getByText("Done with the first build.")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(chat.getByText("First run: created card.tsx")).toHaveCount(0);
+
+    const input = page.getByRole("textbox", { name: "Message Vibe" });
+    const send = page.getByRole("button", { name: "Send message" });
+    await expect(async () => {
+      await input.fill("Add a footer");
+      await expect(send).toBeEnabled({ timeout: 1000 });
+    }).toPass();
+    await send.click();
+    await expect(chat.getByText("Add a footer")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(chat.getByText("Starting…")).toBeVisible({ timeout: 20_000 });
+    await expect(chat.getByText("First run: created card.tsx")).toHaveCount(0);
+
+    await expect(async () => {
+      await publish("status", { state: "thinking" });
+      await publish("task", { kind: "note", label: "Second run: footer" });
+      await expect(chat.getByText("Second run: footer")).toBeVisible({
+        timeout: 1000,
+      });
+    }).toPass({ timeout: 15_000 });
+    await expect(chat.getByText("First run: created card.tsx")).toHaveCount(0);
+  } finally {
+    await session.cleanup();
+  }
+});
