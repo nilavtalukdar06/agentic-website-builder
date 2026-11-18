@@ -26,6 +26,7 @@ import {
 } from "./runtime";
 import { classifyModelError, MODEL_UNAVAILABLE } from "./model-errors";
 import { MAX_SEARCHES_PER_RUN, SEARCH_TOOL, type SearchRecord } from "./search";
+import { StopRequested, withStopWatch } from "./stop-watch";
 import { readOnlyToolNames } from "./tools";
 
 type Step = GetStepTools<typeof inngest>;
@@ -242,16 +243,25 @@ export async function runAgentLoop({
       const started = Date.now();
       const publish = createPublisher(projectId, patternRedactor);
       if (turn > 0) await publish("status", { state: "thinking" });
-      const turnOutput = await runModelTurn({
-        messages: compactHistory(messages),
-        turn,
-        model,
-        publish,
-        instructions,
-        tools: spec.tools,
-        activeTools,
-        toolChoice: handingOff || lastTurn ? "none" : undefined,
-      }).catch(failModelTurn);
+      let turnOutput;
+      try {
+        turnOutput = await withStopWatch(shouldStop, (abortSignal) =>
+          runModelTurn({
+            messages: compactHistory(messages),
+            turn,
+            model,
+            publish,
+            instructions,
+            tools: spec.tools,
+            activeTools,
+            toolChoice: handingOff || lastTurn ? "none" : undefined,
+            abortSignal,
+          }).catch(failModelTurn),
+        );
+      } catch (error) {
+        if (error instanceof StopRequested) return { stopped: true as const };
+        throw error;
+      }
       await publish("credits", {
         used: creditsForCost(
           usdBefore +

@@ -32,18 +32,22 @@ const stateLabels: Partial<Record<AgentState, string>> = {
 export function LiveReply({
   live,
   projectName,
+  stopping = false,
 }: {
   live: LiveRun;
   projectName: string;
+  stopping?: boolean;
 }) {
   const active = live.files.findLast((file) => !file.written) ?? null;
   const restricted = live.guard.some(
     (event) => event.stage === "input" && event.verdict === "review",
   );
   const text = visibleLiveText(live.text);
-  const label = (live.state && stateLabels[live.state]) ?? "Starting…";
+  const label = stopping
+    ? "Stopping…"
+    : ((live.state && stateLabels[live.state]) ?? "Starting…");
   const reasoningStreaming =
-    live.state === "thinking" && live.text.length === 0 && !active;
+    !stopping && live.state === "thinking" && live.text.length === 0 && !active;
 
   return (
     <Message from="assistant" aria-busy="true">

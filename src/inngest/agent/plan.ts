@@ -24,6 +24,11 @@ export const fonts = [
 const PACKAGE_NAME = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
 
 export const buildPlanSchema = z.object({
+  projectName: z
+    .string()
+    .describe(
+      "The name of the product or site itself, one to three words, e.g. 'Ember & Oak' or 'Task Flow'. Never a sentence or a description of the request.",
+    ),
   title: z
     .string()
     .describe("Short version title, e.g. 'Coffee roastery landing page'."),

@@ -187,10 +187,15 @@ describe("checkInBrowser", () => {
     });
     const broken = fakeBrowserProvider({ failOpen: new Error("quota") });
     const failed = await run(broken.provider).result;
-    expect(failed).toMatchObject({ status: "skipped", diagnostics: [] });
+    expect(failed).toMatchObject({
+      status: "skipped",
+      reason: "the browser couldn't start (quota)",
+      diagnostics: [],
+    });
     expect(published().at(-1)).toMatchObject({
       phase: "closed",
       status: "skipped",
+      summary: "Browser check skipped: the browser couldn't start (quota).",
     });
   });
 

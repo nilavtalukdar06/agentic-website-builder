@@ -321,3 +321,72 @@ test("the agent's browser check streams into the preview on desktop and phone", 
     await session.cleanup();
   }
 });
+
+test("a running prompt's live reply stays under it, ahead of a queued follow-up, and says Stopping after Stop", async ({
+  page,
+}) => {
+  test.skip(
+    !process.env.DATABASE_URL || !(await devServerUp()),
+    "needs the database and a running Inngest dev server",
+  );
+  const session = await createTestSession("E2E Live Order");
+  try {
+    await page.context().addCookies([session.cookie]);
+    const suffix = randomUUID().slice(0, 8);
+    const projectId = await session.addProject({
+      slug: `order-${suffix}`,
+      name: "Order site",
+    });
+    await session.addMessage({
+      projectId,
+      role: "USER",
+      content: "Build a bakery site",
+      startedAt: new Date(Date.now() - 60_000),
+      createdAt: new Date(Date.now() - 60_000),
+    });
+    await session.addMessage({
+      projectId,
+      role: "USER",
+      content: "Also add a footer",
+      createdAt: new Date(Date.now() - 30_000),
+    });
+
+    const tokenResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/realtime/token") &&
+        response.status() === 200,
+    );
+    await page.goto(`/p/order-${suffix}`);
+    await tokenResponse;
+
+    const inngest = new Inngest({ id: "vibe-e2e-order", isDev: true });
+    const channel = projectChannel({ projectId });
+    await expect(async () => {
+      await inngest.realtime.publish(
+        channel.status as Realtime.TopicRef<{ state: "thinking" }>,
+        { state: "thinking" },
+      );
+      await expect(page.getByText("Thinking…")).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
+
+    const order = async () => {
+      const text = await page.getByRole("log").innerText();
+      return [
+        text.indexOf("Build a bakery site"),
+        text.indexOf("Thinking…"),
+        text.indexOf("Also add a footer"),
+      ];
+    };
+    const [first, live, queued] = await order();
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(live).toBeGreaterThan(first);
+    expect(queued).toBeGreaterThan(live);
+
+    await page.getByRole("button", { name: "Stop" }).click();
+    const log = page.getByRole("log");
+    await expect(log.getByText("Stopping…").first()).toBeVisible();
+    await expect(log.getByText("Thinking…")).toHaveCount(0);
+  } finally {
+    await session.cleanup();
+  }
+});

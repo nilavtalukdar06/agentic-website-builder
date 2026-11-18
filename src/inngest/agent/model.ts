@@ -86,7 +86,9 @@ export async function runModelTurn({
   activeTools,
   toolChoice,
   redactor = patternRedactor,
+  abortSignal,
 }: {
+  abortSignal?: AbortSignal;
   redactor?: Redactor;
   messages: ModelMessage[];
   turn: number;
@@ -117,6 +119,7 @@ export async function runModelTurn({
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     maxRetries: 2,
     providerOptions,
+    abortSignal,
     onLanguageModelCallEnd({ providerMetadata }) {
       const id = generationIdOf(providerMetadata);
       if (id) generationIds.push(id);
@@ -145,12 +148,15 @@ export async function runModelTurn({
       const record = searchRecord(part.input, part.output);
       searches.push(record);
       await publish("search", record);
+    } else if (part.type === "abort") {
+      throw new Error("The model call was aborted.");
     } else if (part.type === "error") {
       throw part.error instanceof Error
         ? part.error
         : new Error(String(part.error));
     }
   }
+  if (abortSignal?.aborted) throw new Error("The model call was aborted.");
   await Promise.all([reasoning.drain(), text.drain()]);
 
   const [responseMessages, totalUsage, finalText, reasoningText, finish] =
@@ -213,12 +219,14 @@ export async function generateStructured<T>({
   messages,
   schema,
   maxOutputTokens = MAX_OUTPUT_TOKENS,
+  abortSignal,
 }: {
   model: AgentModel;
   instructions: string;
   messages: ModelMessage[];
   schema: z.ZodType<T>;
   maxOutputTokens?: number;
+  abortSignal?: AbortSignal;
 }): Promise<StructuredCall<T>> {
   const prepared = cacheable(
     model,
@@ -236,6 +244,7 @@ export async function generateStructured<T>({
     maxOutputTokens,
     maxRetries: 2,
     providerOptions,
+    abortSignal,
   });
   const usage = toTokenUsage(result.totalUsage);
   const generationId = generationIdOf(result.providerMetadata);
@@ -252,11 +261,13 @@ export async function generatePlainText({
   instructions,
   messages,
   maxOutputTokens = MAX_OUTPUT_TOKENS,
+  abortSignal,
 }: {
   model: AgentModel;
   instructions: string;
   messages: ModelMessage[];
   maxOutputTokens?: number;
+  abortSignal?: AbortSignal;
 }): Promise<ModelCall & { text: string; finishReason: string }> {
   const prepared = cacheable(
     model,
@@ -273,6 +284,7 @@ export async function generatePlainText({
     maxOutputTokens,
     maxRetries: 2,
     providerOptions,
+    abortSignal,
   });
   const usage = toTokenUsage(result.totalUsage);
   const generationId = generationIdOf(result.providerMetadata);

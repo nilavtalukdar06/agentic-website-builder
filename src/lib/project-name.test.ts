@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  cleanProjectName,
   projectNameFromPrompt,
   slugFromName,
   withSlugSuffix,
@@ -9,12 +10,18 @@ describe("projectNameFromPrompt", () => {
   test.each([
     [
       "A landing page for my coffee roastery with a shop section…",
-      "Landing page for my coffee roastery with a shop",
+      "Landing page for my coffee roastery",
     ],
     ["Build me a portfolio. Dark theme, serif.", "Portfolio"],
     ["please create an admin dashboard!", "Admin dashboard"],
     ["  event page\nwith a schedule", "Event page"],
     ["The Ember & Oak site", "Ember & Oak site"],
+    [
+      "Admin dashboard with a sidebar, stat cards, a revenue chart and a users table",
+      "Admin dashboard",
+    ],
+    ["A todo app, dark mode, with local storage", "Todo app"],
+    ["Pricing", "Pricing"],
   ])("%s → %s", (prompt, name) => {
     expect(projectNameFromPrompt(prompt)).toBe(name);
   });
@@ -31,6 +38,30 @@ describe("projectNameFromPrompt", () => {
 
   test("falls back when the prompt has no words", () => {
     expect(projectNameFromPrompt("...")).toBe("Untitled project");
+  });
+});
+
+describe("cleanProjectName", () => {
+  test.each([
+    ["  “Ember & Oak”  ", "Ember & Oak"],
+    ["task flow.", "Task flow"],
+    [
+      "Admin Dashboard — a modern admin panel",
+      "Admin Dashboard — a modern admin panel",
+    ],
+  ])("%s → %s", (value, name) => {
+    expect(cleanProjectName(value)).toBe(name);
+  });
+
+  test("caps the length on a word boundary", () => {
+    const name = cleanProjectName("word ".repeat(40));
+    expect(name!.length).toBeLessThanOrEqual(48);
+  });
+
+  test("rejects empty or one-character names", () => {
+    expect(cleanProjectName("   ")).toBeNull();
+    expect(cleanProjectName("...")).toBeNull();
+    expect(cleanProjectName("A")).toBeNull();
   });
 });
 

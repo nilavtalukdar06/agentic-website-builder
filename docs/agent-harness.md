@@ -137,6 +137,10 @@ Browserbase is now a provider. Privacy and Terms disclose browser page content, 
 
 Supermemory is now a provider too (see "Memory layer" below).
 
+### Stopping a run
+
+Stop sets `stopRequestedAt` on the prompt. Every model call (builder/editor/repair turn, planner, file writers, answers) runs under `withStopWatch`, which checks the flag every 1.5 s and aborts the call, so a run ends within a couple of seconds instead of at the end of the current step. Steps also check the flag before they start. The chat shows "Stopping…" until the run ends, and the live reply stays under the prompt that is running.
+
 ## 6. How the owner verifies it live
 
 1. Run `bun run agent:smoke` with three prompts, before and after deploying: a todo app, a landing page and, with `--project <slug>`, "make the hero button blue". Compare `wall` and the `phase` lines.

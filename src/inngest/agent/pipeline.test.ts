@@ -181,6 +181,7 @@ describe("routeRequest", () => {
 });
 
 const plan = {
+  projectName: "Night Owl",
   title: "Night Owl Coffee",
   summary: "A café site.",
   design: {
@@ -245,6 +246,34 @@ describe("makePlan", () => {
       messages: [{ role: "user", content: "A café site" }],
     });
     expect(result.plan).toBeNull();
+  });
+
+  test("a stop during the planning call ends it as stopped, not as a failed plan", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.generateStructured.mockImplementation(
+        ({ abortSignal }: { abortSignal?: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abortSignal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
+      const pending = makePlan({
+        step: step as never,
+        projectId: "p1",
+        model,
+        messages: [{ role: "user", content: "A café site" }],
+        shouldStop: async () => true,
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(pending).resolves.toMatchObject({
+        plan: null,
+        stopped: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -345,6 +374,48 @@ describe("generateFromPlan", () => {
     });
     expect(result.stopped).toBe(true);
     expect(mocks.generatePlainText).not.toHaveBeenCalled();
+  });
+
+  test("aborts a writer that is mid-call when the user stops", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.connectOrRecover.mockResolvedValue({
+        sandbox: sandbox({}),
+        recovered: null,
+      });
+      let aborted = 0;
+      mocks.generatePlainText.mockImplementation(
+        ({ abortSignal }: { abortSignal?: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abortSignal?.addEventListener("abort", () => {
+              aborted++;
+              reject(new Error("aborted"));
+            }),
+          ),
+      );
+      let requested = false;
+      const pending = generateFromPlan({
+        step: step as never,
+        projectId: "p1",
+        run: createRunContext({ runId: "r1", sandboxId: "s1" }),
+        model,
+        plan,
+        request: "A café site",
+        designNotes: "",
+        budget: { balance: 1000, spentUsd: 0, searches: 0 },
+        shouldStop: async () => requested,
+      });
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(aborted).toBe(0);
+      requested = true;
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await pending;
+      expect(aborted).toBeGreaterThan(0);
+      expect(result.stopped).toBe(true);
+      expect(result.spend.calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

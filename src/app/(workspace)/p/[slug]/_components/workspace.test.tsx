@@ -3,10 +3,12 @@ import { describe, expect, test, vi } from "vitest";
 import { ThemeProvider } from "@/components/theme/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatHeader } from "@/components/workspace/chat-header";
+import { emptyLiveRun } from "@/lib/agent/live-run";
 import { MobileBar } from "@/components/workspace/mobile-bar";
 import { WorkspaceToolbar } from "@/components/workspace/workspace-toolbar";
 import { ChatMessage, type ConversationMessage } from "./chat-message";
 import { pickDefaultFile } from "./code-panel";
+import { LiveReply } from "./live-reply";
 import { overlaySteps } from "./preview-panel";
 
 vi.mock("next/navigation", () => ({
@@ -105,6 +107,19 @@ describe("ChatMessage", () => {
     );
     expect(screen.getByText("Add a footer")).toBeInTheDocument();
     expect(screen.getByText("Queued")).toBeInTheDocument();
+  });
+});
+
+describe("LiveReply", () => {
+  test("says Thinking while it works and Stopping once the user stopped it", () => {
+    const live = { ...emptyLiveRun(), state: "thinking" as const };
+    const { rerender } = render(
+      <LiveReply live={live} projectName="Ember & Oak" />,
+    );
+    expect(screen.getByText("Thinking…")).toBeInTheDocument();
+    rerender(<LiveReply live={live} projectName="Ember & Oak" stopping />);
+    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).toBeNull();
   });
 });
 

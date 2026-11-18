@@ -6,6 +6,7 @@ import {
   stripSummaryTags,
   type TaskItem,
 } from "@/lib/agent/parts";
+import { cleanProjectName } from "@/lib/project-name";
 import { findAgentModel, lookupGenerationCost } from "@/server/ai/gateway";
 import { getCreditBalance } from "@/server/billing/balance";
 import { creditRate } from "@/server/billing/credit-rate";
@@ -647,19 +648,39 @@ export const runAgent = inngest.createFunction(
         projectId,
         model,
         messages,
+        shouldStop,
       });
       phases = addSpend(phases, answered.spend);
       timings.answer = answered.ms;
       answer = answered.text;
+      stopped = answered.stopped === true;
     }
 
     if (!outOfCredits && mode === "pipeline") {
-      const planned = await makePlan({ step, projectId, model, messages });
+      const planned = await makePlan({
+        step,
+        projectId,
+        model,
+        messages,
+        shouldStop,
+      });
       phases = addSpend(phases, planned.spend);
       budget = spendPhase(budget, planned.spend);
       timings.plan = planned.ms;
       plan = planned.plan;
-      if (!plan) {
+      stopped = planned.stopped === true;
+      const projectName = plan ? cleanProjectName(plan.projectName) : null;
+      if (projectName && !setup.hasVersion) {
+        await step.run("name-project", async () => {
+          await db.project.updateMany({
+            where: { id: projectId, userId },
+            data: { name: projectName },
+          });
+        });
+      }
+      if (stopped) {
+        plan = null;
+      } else if (!plan) {
         mode = "builder";
       } else if (!exhausted(budget)) {
         const generated = await generateFromPlan({
@@ -991,15 +1012,16 @@ export const runAgent = inngest.createFunction(
     const notes = summary ? stripSummaryTags(summary) : null;
     const answered = mode === "answer" || mode === "memory";
     const saveVersion = !answered && (!stopped || written.length > 0);
-    const rawReply = answered
-      ? (answer ?? "")
-      : stopped
-        ? saveVersion
-          ? STOPPED
-          : STOPPED_NO_CHANGES
-        : outOfCredits
-          ? [notes, STOPPED_FOR_CREDITS].filter(Boolean).join("\n\n")
-          : `${notes ?? ""}${issuesNote(diagnostics)}`;
+    const rawReply =
+      answered && !stopped
+        ? (answer ?? "")
+        : stopped
+          ? saveVersion
+            ? STOPPED
+            : STOPPED_NO_CHANGES
+          : outOfCredits
+            ? [notes, STOPPED_FOR_CREDITS].filter(Boolean).join("\n\n")
+            : `${notes ?? ""}${issuesNote(diagnostics)}`;
 
     const reviewed = await step.run("guard-output", async () => {
       const text = await redactPatterns(rawReply);

@@ -9,6 +9,7 @@ import {
 
 function plan(overrides: Partial<BuildPlan> = {}): BuildPlan {
   return {
+    projectName: "Ember & Oak",
     title: "Ember & Oak",
     summary: "A coffee roastery site.",
     design: {

@@ -312,6 +312,40 @@ describe("runAgentLoop", () => {
   });
 });
 
+describe("stopping during a model call", () => {
+  test("aborts the call in flight and ends the run as stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      runModelTurn.mockImplementation(
+        ({ abortSignal }: { abortSignal?: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abortSignal?.addEventListener("abort", () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            }),
+          ),
+      );
+      let requested = false;
+      const shouldStop = vi.fn(async () => requested);
+      const pending = run({ shouldStop });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(aborted).toBe(false);
+      requested = true;
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await pending;
+      expect(aborted).toBe(true);
+      expect(result.stopped).toBe(true);
+      expect(result.calls).toHaveLength(0);
+      expect(step.run.mock.calls.map(([id]) => id)).toEqual([
+        "builder-model-0",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("checkpoints", () => {
   test("the builder saves a checkpoint every 5 turns", async () => {
     const write = {

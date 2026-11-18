@@ -85,6 +85,15 @@ function skipped(
   };
 }
 
+function startFailure(error: unknown) {
+  const message =
+    error instanceof Error ? error.message.replace(/\s+/gu, " ").trim() : "";
+  const safe = patternRedactor.redact(message.slice(0, 160));
+  return safe
+    ? `the browser couldn't start (${safe})`
+    : "the browser couldn't start";
+}
+
 export async function checkInBrowser({
   projectId,
   runId,
@@ -153,15 +162,10 @@ export async function checkInBrowser({
     });
   } catch (error) {
     clearTimeout(timer);
-    void error;
-    await close(
-      "skipped",
-      `Browser check skipped: ${stoppedReason ?? "the browser couldn't start"}.`,
-    );
-    return {
-      ...skipped(stoppedReason ?? "the browser couldn't start", started, now),
-      calls,
-    };
+    const reason = stoppedReason ?? startFailure(error);
+    if (!stoppedReason) console.warn("[browser] couldn't start", error);
+    await close("skipped", `Browser check skipped: ${reason}.`);
+    return { ...skipped(reason, started, now), calls };
   }
 
   const checks: BrowserCheck[] = [];

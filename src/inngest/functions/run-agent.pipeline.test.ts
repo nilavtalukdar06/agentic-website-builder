@@ -238,6 +238,7 @@ describe("question intent", () => {
 
 describe("create intent", () => {
   const plan = {
+    projectName: "Night Owl",
     title: "Night Owl Coffee",
     summary: "A café site for late-night studying.",
     design: {
@@ -317,6 +318,10 @@ describe("create intent", () => {
       issues: 0,
     });
     expect(mocks.loop).not.toHaveBeenCalled();
+    expect(mocks.db.project.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", userId: "u1" },
+      data: { name: "Night Owl" },
+    });
     expect(mocks.checkProject).toHaveBeenCalledTimes(1);
     expect(mocks.checkProject).toHaveBeenCalledWith(
       expect.objectContaining({ routes: ["/"], changed: ["app/page.tsx"] }),
@@ -428,6 +433,7 @@ describe("create intent", () => {
 describe("browser findings", () => {
   test("go to the repair agent with screenshots, then the site is checked again", async () => {
     const plan = {
+      projectName: "Todo",
       title: "Todo",
       summary: "A todo app.",
       design: {

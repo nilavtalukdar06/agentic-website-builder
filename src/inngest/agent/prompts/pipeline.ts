@@ -25,6 +25,7 @@ ${blockCatalog()}
 ${presetCatalog()}
 
 ## How to plan
+- projectName: the name of the product or site itself, one to three words in Title Case (for example "Ember & Oak", "Task Flow", "Northwind Admin"). Use the brand if the request gives one, otherwise invent a fitting one. Never a sentence, never a description of the request.
 - Read the request closely and build exactly that, complete. A "todo app" is a polished, working app with add, complete, edit, delete, filters, counts, empty state and localStorage; a "landing page" has 6–9 rich sections with real copy.
 - Choose the preset, fonts and theme that fit the brand. Use "system" theme unless the brand needs a fixed light or dark look.
 - Pages: list every route with its sections in order. Keep it to what the request needs (most sites are 1–4 routes).

@@ -49,6 +49,7 @@ import { clientDirectiveFixes } from "./fixes";
 import { patternRedactor } from "./guardrails/redact";
 import { type AgentRun, type Budget, failModelTurn } from "./loop";
 import { generatePlainText, generateStructured, type ModelCall } from "./model";
+import { StopRequested, withStopWatch } from "./stop-watch";
 import {
   type BuildPlan,
   buildPlanSchema,
@@ -322,6 +323,7 @@ export type PlanResult = {
   warnings: string[];
   spend: Spend;
   ms: number;
+  stopped?: boolean;
 };
 
 export async function makePlan({
@@ -329,11 +331,13 @@ export async function makePlan({
   projectId,
   model,
   messages,
+  shouldStop,
 }: {
   step: Step;
   projectId: string;
   model: AgentModel;
   messages: ModelMessage[];
+  shouldStop?: () => Promise<boolean>;
 }): Promise<PlanResult> {
   return step.run("plan", async () => {
     const started = Date.now();
@@ -341,14 +345,26 @@ export async function makePlan({
     await publish("status", { state: "thinking" });
     let result;
     try {
-      result = await generateStructured({
-        model,
-        instructions: PLANNER_PROMPT,
-        messages,
-        schema: buildPlanSchema,
-        maxOutputTokens: PLAN_OUTPUT_TOKENS,
-      });
+      result = await withStopWatch(shouldStop, (abortSignal) =>
+        generateStructured({
+          model,
+          instructions: PLANNER_PROMPT,
+          messages,
+          schema: buildPlanSchema,
+          maxOutputTokens: PLAN_OUTPUT_TOKENS,
+          abortSignal,
+        }),
+      );
     } catch (error) {
+      if (error instanceof StopRequested) {
+        return {
+          plan: null,
+          warnings: [] as string[],
+          spend: noSpend,
+          ms: Date.now() - started,
+          stopped: true,
+        };
+      }
       if (NoObjectGeneratedError.isInstance(error)) {
         console.warn("[run-agent] the planner returned no valid plan", error);
         return {
@@ -570,12 +586,22 @@ export async function generateFromPlan({
           for (let attempt = 0; attempt < 2; attempt++) {
             const todo = assigned.filter((file) => !produced.has(file.path));
             if (todo.length === 0) break;
-            const result = await generatePlainText({
-              model,
-              instructions: WORKER_PROMPT,
-              messages: [{ role: "user", content: brief(todo) }],
-              maxOutputTokens: WORKER_OUTPUT_TOKENS,
-            }).catch(failModelTurn);
+            let result;
+            try {
+              result = await withStopWatch(shouldStop, (abortSignal) =>
+                generatePlainText({
+                  model,
+                  instructions: WORKER_PROMPT,
+                  messages: [{ role: "user", content: brief(todo) }],
+                  maxOutputTokens: WORKER_OUTPUT_TOKENS,
+                  abortSignal,
+                }).catch(failModelTurn),
+              );
+            } catch (error) {
+              if (error instanceof StopRequested)
+                return { stopped: true as const };
+              throw error;
+            }
             calls.push(result);
             for (const block of parseFileBlocks(result.text)) {
               const path = normalizeWorkerPath(block.path);
@@ -881,20 +907,38 @@ export async function answerQuestion({
   projectId,
   model,
   messages,
+  shouldStop,
 }: {
   step: Step;
   projectId: string;
   model: AgentModel;
   messages: ModelMessage[];
+  shouldStop?: () => Promise<boolean>;
 }) {
   return step.run("answer", async () => {
     const started = Date.now();
-    const result = await generatePlainText({
-      model,
-      instructions: QUESTION_PROMPT,
-      messages,
-      maxOutputTokens: 2000,
-    }).catch(failModelTurn);
+    let result;
+    try {
+      result = await withStopWatch(shouldStop, (abortSignal) =>
+        generatePlainText({
+          model,
+          instructions: QUESTION_PROMPT,
+          messages,
+          maxOutputTokens: 2000,
+          abortSignal,
+        }).catch(failModelTurn),
+      );
+    } catch (error) {
+      if (error instanceof StopRequested) {
+        return {
+          text: "",
+          spend: noSpend,
+          ms: Date.now() - started,
+          stopped: true as const,
+        };
+      }
+      throw error;
+    }
     await createPublisher(projectId, patternRedactor)("text", {
       turn: 0,
       delta: result.text,
@@ -903,6 +947,7 @@ export async function answerQuestion({
       text: result.text.trim(),
       spend: spendOf(result, "answer", model),
       ms: Date.now() - started,
+      stopped: false as const,
     };
   });
 }

@@ -17,6 +17,27 @@ function truncateOnWord(value: string, max: number) {
     .trim();
 }
 
+const clauseBreak =
+  /\s*[,;:–—]\s+|\s+(?:with|that|which|featuring|including|using|where)\s+(?=\S)/iu;
+
+function headClause(value: string) {
+  const [head] = value.split(clauseBreak);
+  return head.trim().split(/\s+/u).length >= 2 ? head.trim() : value;
+}
+
+export function cleanProjectName(value: string) {
+  const name = truncateOnWord(
+    value
+      .replace(/["“”`]/gu, "")
+      .replace(/\s+/gu, " ")
+      .replace(/^[\s\p{P}]+|[\s.,;:!?–—-]+$/gu, "")
+      .trim(),
+    MAX_NAME_LENGTH,
+  );
+  if (name.length < 2) return null;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 export function projectNameFromPrompt(prompt: string) {
   const firstSentence = prompt
     .trim()
@@ -25,7 +46,10 @@ export function projectNameFromPrompt(prompt: string) {
     .replace(/\s+/gu, " ")
     .trim();
   const stripped = firstSentence.replace(leadingFiller, "").trim();
-  const name = truncateOnWord(stripped || firstSentence, MAX_NAME_LENGTH);
+  const name = truncateOnWord(
+    headClause(stripped || firstSentence),
+    MAX_NAME_LENGTH,
+  );
   if (!name) return FALLBACK_NAME;
   return name.charAt(0).toUpperCase() + name.slice(1);
 }

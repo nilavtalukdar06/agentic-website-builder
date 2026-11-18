@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import {
   useMutation,
   useQueryClient,
@@ -12,6 +13,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { toast } from "@/components/ui/toast";
+import { liveReplyAnchor } from "@/lib/agent/live-anchor";
 import type { LiveRun } from "@/lib/agent/live-run";
 import { useTRPC } from "@/trpc/client";
 import { ChatComposer, type SendInput } from "./chat-composer";
@@ -79,6 +81,7 @@ export function ChatPanel({
     (message) => message.role === "ASSISTANT",
   );
   const busy = building || restore.isPending || operationBusy;
+  const liveAfter = liveReplyAnchor(messages, building);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -91,28 +94,33 @@ export function ChatPanel({
             />
           ) : null}
           {messages.map((message) => (
-            <ChatMessage
-              key={message.id}
-              projectId={projectId}
-              message={message}
-              status={
-                message.stopping
-                  ? "stopping"
-                  : message.pending && message.id !== running
-                    ? "queued"
-                    : null
-              }
-              canRetry={!busy && message.id === lastReply?.id}
-              canRestore={!busy}
-              onRetry={() => retry.mutate({ messageId: message.id })}
-              isLatestVersion={message.version?.number === latestVersion}
-              onRestore={(number) => restore.mutate({ projectId, number })}
-              onViewCode={onViewCode}
-            />
+            <Fragment key={message.id}>
+              <ChatMessage
+                projectId={projectId}
+                message={message}
+                status={
+                  message.stopping
+                    ? "stopping"
+                    : message.pending && message.id !== running
+                      ? "queued"
+                      : null
+                }
+                canRetry={!busy && message.id === lastReply?.id}
+                canRestore={!busy}
+                onRetry={() => retry.mutate({ messageId: message.id })}
+                isLatestVersion={message.version?.number === latestVersion}
+                onRestore={(number) => restore.mutate({ projectId, number })}
+                onViewCode={onViewCode}
+              />
+              {message.id === liveAfter ? (
+                <LiveReply
+                  live={live}
+                  projectName={projectName}
+                  stopping={stopping || stop.isPending}
+                />
+              ) : null}
+            </Fragment>
           ))}
-          {building ? (
-            <LiveReply live={live} projectName={projectName} />
-          ) : null}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
