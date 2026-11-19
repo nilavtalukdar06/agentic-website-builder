@@ -162,6 +162,7 @@ export async function runAgentLoop({
   progress: initialProgress = {},
   expectWrites = false,
   maxTurns,
+  turnOffset = 0,
   shouldStop,
 }: {
   step: Step;
@@ -177,6 +178,7 @@ export async function runAgentLoop({
   progress?: RunProgress;
   expectWrites?: boolean;
   maxTurns?: number;
+  turnOffset?: number;
   shouldStop?: () => Promise<boolean>;
 }): Promise<AgentRun> {
   const instructions = spec.instructions;
@@ -242,13 +244,15 @@ export async function runAgentLoop({
       if (shouldStop && (await shouldStop())) return { stopped: true as const };
       const started = Date.now();
       const publish = createPublisher(projectId, patternRedactor);
-      if (turn > 0) await publish("status", { state: "thinking" });
+      if (turn > 0 || turnOffset > 0) {
+        await publish("status", { state: "thinking" });
+      }
       let turnOutput;
       try {
         turnOutput = await withStopWatch(shouldStop, (abortSignal) =>
           runModelTurn({
             messages: compactHistory(messages),
-            turn,
+            turn: turnOffset + turn,
             model,
             publish,
             instructions,

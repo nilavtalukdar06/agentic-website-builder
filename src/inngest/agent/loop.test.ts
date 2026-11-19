@@ -26,8 +26,9 @@ const recover = vi.hoisted(() => ({
   connectOrRecover: vi.fn(),
 }));
 vi.mock("@/server/sandbox/recover", () => recover);
+const publish = vi.hoisted(() => vi.fn());
 vi.mock("../publisher", () => ({
-  createPublisher: () => vi.fn().mockResolvedValue(undefined),
+  createPublisher: () => publish,
 }));
 vi.mock("@/server/ai/gateway", () => ({
   gateway: { tools: { parallelSearch: () => ({}) } },
@@ -107,6 +108,7 @@ async function run(
 }
 
 beforeEach(async () => {
+  publish.mockReset().mockResolvedValue(undefined);
   runModelTurn.mockReset();
   step.run.mockClear();
   dbMock.version.upsert.mockReset().mockResolvedValue({});
@@ -118,6 +120,30 @@ beforeEach(async () => {
 });
 
 describe("runAgentLoop", () => {
+  test("a continued loop numbers its turns after the earlier ones and says it is thinking", async () => {
+    runModelTurn
+      .mockResolvedValueOnce(turn("", [{ toolName: "listFiles", input: {} }]))
+      .mockResolvedValueOnce(turn("<task_summary>Fixed</task_summary>"));
+    await run({ turnOffset: 7 });
+    expect(runModelTurn.mock.calls.map(([input]) => input.turn)).toEqual([
+      7, 8,
+    ]);
+    expect(
+      publish.mock.calls.filter(
+        ([topic, data]) => topic === "status" && data.state === "thinking",
+      ),
+    ).toHaveLength(2);
+  });
+
+  test("a fresh loop starts at turn 0 without an extra thinking status", async () => {
+    runModelTurn.mockResolvedValueOnce(
+      turn("<task_summary>Done</task_summary>"),
+    );
+    await run();
+    expect(runModelTurn.mock.calls[0][0].turn).toBe(0);
+    expect(publish).not.toHaveBeenCalledWith("status", { state: "thinking" });
+  });
+
   test("namespaces steps and stops when the builder answers", async () => {
     runModelTurn.mockResolvedValueOnce(
       turn("<task_summary>Done</task_summary>"),
