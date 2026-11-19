@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronDownIcon,
   CircleCheckIcon,
+  CircleDashedIcon,
   CircleXIcon,
   MonitorIcon,
   MousePointerClickIcon,
@@ -61,6 +62,14 @@ function StatusIcon({ status }: { status: BrowserCheck["status"] }) {
       <CircleCheckIcon
         aria-label="Passed"
         className="mt-0.5 size-4 shrink-0 text-success"
+      />
+    );
+  }
+  if (status === "skipped") {
+    return (
+      <CircleDashedIcon
+        aria-label="Couldn't test"
+        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
       />
     );
   }
@@ -405,6 +414,9 @@ export function BrowserReport({ part }: { part: BrowserPart }) {
   const failed = part.checks.filter(
     (check) => check.status === "failed",
   ).length;
+  const untested = part.checks.filter(
+    (check) => check.status === "skipped",
+  ).length;
   const shots = part.screenshots.filter(
     (shot): shot is typeof shot & { url: string } => !!shot.url,
   );
@@ -421,7 +433,7 @@ export function BrowserReport({ part }: { part: BrowserPart }) {
               ? `Checked in the browser: ${failed} still failing`
               : part.status === "failed"
                 ? "The browser check did not finish successfully"
-                : `Checked in the browser: ${part.checks.filter((check) => check.status === "passed").length} checks passed`
+                : `Checked in the browser: ${part.checks.filter((check) => check.status === "passed").length} checks passed${untested > 0 ? `, ${untested} couldn't be tested` : ""}`
         }
       />
       {shots.length > 0 ? (

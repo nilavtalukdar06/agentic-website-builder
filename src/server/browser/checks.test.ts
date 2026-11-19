@@ -4,6 +4,7 @@ import {
   pageReportToDiagnostics,
   pageSummary,
   parseVerdict,
+  verdictInstruction,
 } from "./checks";
 import { cleanReport } from "./fake";
 import { assertSameOrigin, OriginError, previewTarget } from "./types";
@@ -94,24 +95,36 @@ describe("interactionDiagnostic", () => {
 
 describe("parseVerdict", () => {
   test.each([
-    ["PASS: the cart shows 1 item", true, "the cart shows 1 item"],
-    ["FAIL: the list is still empty", false, "the list is still empty"],
-    ["**pass** - looks right", true, "looks right"],
-    [{ extraction: "FAIL. Nothing happened" }, false, "Nothing happened"],
-    ["PASS", true, "as expected"],
-  ])("%j", (input, passed, detail) => {
-    expect(parseVerdict(input)).toEqual({ passed, detail });
+    ["PASS: the cart shows 1 item", "passed", "the cart shows 1 item"],
+    ["FAIL: the list is still empty", "failed", "the list is still empty"],
+    ["**pass** - looks right", "passed", "looks right"],
+    [{ extraction: "FAIL. Nothing happened" }, "failed", "Nothing happened"],
+    ["PASS", "passed", "as expected"],
+    [
+      "UNSURE: the highlight is only a colour",
+      "untestable",
+      "the highlight is only a colour",
+    ],
+    ["unsure", "untestable", "the page can't show this"],
+  ])("%j", (input, outcome, detail) => {
+    expect(parseVerdict(input)).toEqual({ outcome, detail });
   });
 
-  test("an answer without a verdict counts as a failure", () => {
+  test("an answer without a verdict can't count as a failure", () => {
     expect(parseVerdict("I am not sure")).toEqual({
-      passed: false,
+      outcome: "untestable",
       detail: "I am not sure",
     });
     expect(parseVerdict(null)).toEqual({
-      passed: false,
+      outcome: "untestable",
       detail: "the result couldn't be read",
     });
+  });
+
+  test("the verdict instruction allows UNSURE for styling", () => {
+    expect(verdictInstruction("The nav item is highlighted")).toContain(
+      "answer UNSURE",
+    );
   });
 });
 

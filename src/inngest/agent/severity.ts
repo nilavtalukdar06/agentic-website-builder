@@ -57,3 +57,26 @@ export function restorePlan({
   }
   return { restore, remove, restorable };
 }
+
+const INTERACTION_SPLIT = " didn't work as expected";
+
+export function problemKey(diagnostic: Diagnostic) {
+  if (diagnostic.source === "browser") {
+    const at = diagnostic.message.indexOf(INTERACTION_SPLIT);
+    return `browser|${at === -1 ? diagnostic.message : diagnostic.message.slice(0, at)}`;
+  }
+  return `${diagnostic.source}|${diagnostic.path}|${diagnostic.line}|${diagnostic.message}`;
+}
+
+export function sameProblems(a: Diagnostic[], b: Diagnostic[]) {
+  const left = new Set(a.map(problemKey));
+  const right = new Set(b.map(problemKey));
+  return left.size === right.size && [...left].every((key) => right.has(key));
+}
+
+export function onlyBrowser(diagnostics: Diagnostic[]) {
+  return (
+    diagnostics.length > 0 &&
+    diagnostics.every((diagnostic) => diagnostic.source === "browser")
+  );
+}

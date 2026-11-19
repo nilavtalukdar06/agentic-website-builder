@@ -692,13 +692,17 @@ async function updatePlan(call: ToolCall, ctx: ToolContext) {
   if (!parsed.success) {
     return outcome(ctx, `Invalid input: ${parsed.error.message}`);
   }
-  const { plan, labels } = mergePlan(ctx.progress.plan, parsed.data);
+  const { plan, labels, dropped } = mergePlan(ctx.progress.plan, parsed.data);
   const tasks: TaskItem[] = labels.map((label) => ({
     kind: "note",
     label: label.slice(0, 400),
   }));
   for (const task of tasks) await ctx.publish("task", task);
-  return outcome(ctx, `Plan updated:\n${planText(plan)}`, {
+  const note =
+    dropped.length > 0
+      ? `\n\nBrowser checks dropped, because a browser can't test them:\n${dropped.map((line) => `- ${line}`).join("\n")}\nUse a click, typed entry or form submit whose result is visible text.`
+      : "";
+  return outcome(ctx, `Plan updated:\n${planText(plan)}${note}`, {
     tasks,
     progress: { ...ctx.progress, plan },
   });

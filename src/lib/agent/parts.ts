@@ -36,7 +36,12 @@ export const taskItemSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const browserViewports = ["desktop", "phone"] as const;
-export const browserCheckStatuses = ["running", "passed", "failed"] as const;
+export const browserCheckStatuses = [
+  "running",
+  "passed",
+  "failed",
+  "skipped",
+] as const;
 
 export const browserCheckSchema = z.object({
   id: z.string(),

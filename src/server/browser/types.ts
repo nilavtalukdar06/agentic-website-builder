@@ -22,7 +22,9 @@ export type PageReport = {
   emptyMain: boolean;
 };
 
-export type InteractionResult = { passed: boolean; detail: string };
+export const interactionOutcomes = ["passed", "failed", "untestable"] as const;
+export type InteractionOutcome = (typeof interactionOutcomes)[number];
+export type InteractionResult = { outcome: InteractionOutcome; detail: string };
 
 export type BrowserModelCall = {
   usage: TokenUsage;

@@ -67,12 +67,12 @@ export function fakeBrowserProvider(script: FakeBrowserScript = {}) {
             generationIds: [],
           });
           const result = script.interactions?.[action] ?? {
-            passed: true,
+            outcome: "passed" as const,
             detail: "it worked",
           };
           if (result.navigateTo) current = result.navigateTo;
           assertSameOrigin(previewUrl, current);
-          return { passed: result.passed, detail: result.detail };
+          return { outcome: result.outcome, detail: result.detail };
         },
         async close() {
           closed += 1;

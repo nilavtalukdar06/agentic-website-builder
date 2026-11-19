@@ -61,7 +61,7 @@ vi.mock("@browserbasehq/stagehand", () => ({
 }));
 vi.mock("./llm", () => ({ createGenerate: () => vi.fn() }));
 
-const { browserbaseProvider } = await import("./browserbase");
+const { ACTION_SETTLE_MS, browserbaseProvider } = await import("./browserbase");
 
 const model = {
   id: "openai/test",
@@ -107,5 +107,32 @@ describe("browserbaseProvider", () => {
       "init failed",
     );
     expect(mocks.browser.close).toHaveBeenCalledOnce();
+  });
+
+  test("an action the browser can't find is untestable, not a failure", async () => {
+    mocks.stagehand.act.mockResolvedValueOnce({
+      data: { success: false, message: "No action found" },
+    });
+    const session = await browserbaseProvider("bb_key").open(input);
+    await expect(
+      session.interact("Resize the viewport", "It fits"),
+    ).resolves.toEqual({ outcome: "untestable", detail: "No action found" });
+    expect(mocks.stagehand.extract).not.toHaveBeenCalled();
+  });
+
+  test("waits for the page to settle after an action, then reads the verdict", async () => {
+    mocks.stagehand.act.mockResolvedValueOnce({ data: { success: true } });
+    mocks.stagehand.extract.mockResolvedValueOnce({
+      data: "FAIL: all rows are still listed",
+    });
+    mocks.page.waitForTimeout.mockClear();
+    const session = await browserbaseProvider("bb_key").open(input);
+    await expect(
+      session.interact("Type Ada in the search box", "Only Ada is listed"),
+    ).resolves.toEqual({
+      outcome: "failed",
+      detail: "all rows are still listed",
+    });
+    expect(mocks.page.waitForTimeout).toHaveBeenCalledWith(ACTION_SETTLE_MS);
   });
 });

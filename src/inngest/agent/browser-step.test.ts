@@ -124,7 +124,7 @@ describe("checkInBrowser", () => {
     const fake = fakeBrowserProvider({
       interactions: {
         "Add a task called Buy milk": {
-          passed: false,
+          outcome: "failed",
           detail: "the list is still empty",
         },
       },
@@ -155,11 +155,46 @@ describe("checkInBrowser", () => {
     ).toEqual(["failed", "passed"]);
   });
 
+  test("a step the browser couldn't test is shown as skipped and isn't a problem", async () => {
+    const fake = fakeBrowserProvider({
+      interactions: {
+        "Click a sidebar nav item": {
+          outcome: "untestable",
+          detail: "No action found",
+        },
+      },
+    });
+    const outcome = await run(fake.provider, {
+      routes: [],
+      interactions: [
+        {
+          route: "/",
+          action: "Click a sidebar nav item",
+          expect: "The customers page is shown",
+        },
+        { route: "/", action: "Type Ada in the search box", expect: "Ada" },
+      ],
+    }).result;
+    expect(outcome.status).toBe("passed");
+    expect(outcome.diagnostics).toEqual([]);
+    expect(outcome.untestable).toBe(1);
+    const steps = outcome.checks.filter(
+      (check) => check.kind === "interaction",
+    );
+    expect(steps.map((check) => check.status)).toEqual(["skipped", "passed"]);
+    expect(steps[0].detail).toBe("Couldn't test this step: No action found");
+    expect(published().at(-1)).toMatchObject({
+      phase: "closed",
+      status: "passed",
+      summary: expect.stringContaining("(1 step couldn't be tested)"),
+    });
+  });
+
   test("stops at once when an action leaves the preview", async () => {
     const fake = fakeBrowserProvider({
       interactions: {
         "Click the external link": {
-          passed: true,
+          outcome: "passed",
           detail: "ok",
           navigateTo: "https://evil.example/",
         },

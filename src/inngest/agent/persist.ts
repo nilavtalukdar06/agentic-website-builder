@@ -208,7 +208,7 @@ export async function debitCredits(
       turns?: number;
       gateCycles?: number;
       blockers?: { first: number; final: number };
-      browse?: { status: string; reason: string | null };
+      browse?: { status: string; reason: string | null; untestable?: number };
       memory?: { read: string; reads: number; write: string };
     };
   },

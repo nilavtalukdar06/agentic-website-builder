@@ -3,8 +3,10 @@ import type { Diagnostic } from "@/server/sandbox/diagnostics";
 import {
   compareSeverity,
   isBlocker,
+  onlyBrowser,
   restorePlan,
   routesLoad,
+  sameProblems,
   severityOf,
 } from "./severity";
 
@@ -90,5 +92,27 @@ describe("restorePlan", () => {
         versionFiles: ["components/ui/button.tsx"],
       }).restorable,
     ).toBe(false);
+  });
+});
+
+describe("problem keys", () => {
+  const finding = (seen: string): Diagnostic => ({
+    source: "browser",
+    path: null,
+    line: null,
+    message: `/: "Type Ada" didn't work as expected. Expected: Ada. Seen: ${seen}`,
+  });
+
+  test("a browser finding is the same problem whatever the browser saw", () => {
+    expect(sameProblems([finding("all rows")], [finding("every row")])).toBe(
+      true,
+    );
+    expect(sameProblems([finding("x")], [finding("x"), browser])).toBe(false);
+  });
+
+  test("onlyBrowser is true only for a non-empty list of browser findings", () => {
+    expect(onlyBrowser([browser, finding("x")])).toBe(true);
+    expect(onlyBrowser([browser, route])).toBe(false);
+    expect(onlyBrowser([])).toBe(false);
   });
 });

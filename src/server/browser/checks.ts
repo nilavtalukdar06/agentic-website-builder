@@ -1,5 +1,10 @@
 import type { Diagnostic } from "@/server/sandbox/diagnostics";
-import { type PageReport, type ViewportName, viewports } from "./types";
+import {
+  type InteractionResult,
+  type PageReport,
+  type ViewportName,
+  viewports,
+} from "./types";
 
 export const INIT_SCRIPT = `(() => {
   if (window.__vibe) return;
@@ -138,27 +143,34 @@ export function pageSummary(diagnostics: Diagnostic[]) {
 }
 
 export function verdictInstruction(expect: string) {
-  return `Look at the page as it is now and decide whether this is true: "${expect}". Answer with PASS or FAIL, a colon, and one short sentence describing what the page shows, for example "FAIL: the list is still empty".`;
+  return `Look at the page as it is now and decide whether this is true: "${expect}". Answer with PASS or FAIL, a colon, and one short sentence describing what the page shows, for example "FAIL: the list is still empty". If the page's text and controls can't show whether it is true (for example it depends on colours, highlights or animation), answer UNSURE and say why.`;
 }
 
-export function parseVerdict(data: unknown) {
+export function parseVerdict(data: unknown): InteractionResult {
   const raw =
     typeof data === "string"
       ? data
       : data && typeof data === "object" && "extraction" in data
         ? String((data as { extraction: unknown }).extraction)
         : "";
-  const match = /^\W*(PASS|FAIL)\b\W*([\s\S]*)$/i.exec(raw.trim());
+  const match = /^\W*(PASS|FAIL|UNSURE)\b\W*([\s\S]*)$/i.exec(raw.trim());
   if (!match) {
     return {
-      passed: false,
+      outcome: "untestable",
       detail: raw.trim().slice(0, 200) || "the result couldn't be read",
     };
   }
+  const word = match[1].toUpperCase();
+  const outcome =
+    word === "PASS" ? "passed" : word === "FAIL" ? "failed" : "untestable";
   return {
-    passed: match[1].toUpperCase() === "PASS",
+    outcome,
     detail:
       match[2].trim().slice(0, 200) ||
-      (match[1].toUpperCase() === "PASS" ? "as expected" : "not as expected"),
+      (outcome === "passed"
+        ? "as expected"
+        : outcome === "failed"
+          ? "not as expected"
+          : "the page can't show this"),
   };
 }

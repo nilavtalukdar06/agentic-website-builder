@@ -140,4 +140,40 @@ describe("browser session", () => {
       screen.getByText("The browser check did not finish successfully"),
     ).toBeVisible();
   });
+  it("shows a step the browser couldn't test as muted, not failed", () => {
+    render(
+      <BrowserReport
+        part={{
+          ...part,
+          checks: [
+            ...part.checks,
+            {
+              id: "act-0",
+              kind: "interaction",
+              label: "Click a sidebar nav item",
+              route: "/",
+              viewport: "desktop",
+              status: "skipped",
+              detail: "Couldn't test this step: No action found",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Checked in the browser: 1 checks passed, 1 couldn't be tested",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByText(
+        "Checked in the browser: 1 checks passed, 1 couldn't be tested",
+      ),
+    );
+    expect(screen.getByLabelText("Couldn't test")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Failed")).toBeNull();
+    expect(
+      screen.getByText("Couldn't test this step: No action found"),
+    ).not.toHaveClass("text-destructive");
+  });
 });

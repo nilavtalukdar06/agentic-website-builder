@@ -34,19 +34,19 @@ export const updatePlanInput = z.object({
         action: z
           .string()
           .describe(
-            "One user action in plain words, e.g. 'Type Buy milk in the new task field and press Enter'.",
+            "One click, typed entry or form submit on a visible control, e.g. 'Type Buy milk in the new task field and press Enter'. Never opening a page, resizing or scrolling.",
           ),
         expect: z
           .string()
           .describe(
-            "What must be visible afterwards, e.g. 'A task called Buy milk appears in the list'.",
+            "Text or content that must be visible afterwards, e.g. 'A task called Buy milk appears in the list'. Never colours, highlights or other styling.",
           ),
       }),
     )
     .max(MAX_PLAN_CHECKS)
     .optional()
     .describe(
-      "Up to 5 key interactions a real browser will try when you finish, most important first.",
+      "Up to 5 key interactions a real browser will try when you finish, most important first. Each starts on its route; every page is also opened at phone width automatically.",
     ),
 });
 
@@ -65,7 +65,23 @@ export function normalizeRoute(route: string) {
   return trimmed.startsWith("/") ? trimmed || "/" : `/${trimmed}`;
 }
 
+const NOT_AN_ACTION =
+  /^\s*(open|go to|goto|visit|navigate|load|reload|refresh)\b|\b(resize|viewport|mobile|phone width|tablet|screen size|scroll)/i;
+const NOT_VISIBLE_TEXT =
+  /\b(highlight\w*|colou?rs?|active (state|style|class)|hover\w*|animat\w*|fonts?|styl(e|es|ed|ing)|transition\w*|shadow\w*)\b/i;
+
+export function untestableReason(check: { action: string; expect: string }) {
+  if (NOT_AN_ACTION.test(check.action)) {
+    return "it isn't a click or typed entry (the route already opens the page, and phone width is checked automatically)";
+  }
+  if (NOT_VISIBLE_TEXT.test(check.expect)) {
+    return "the result is styling, which the browser can't read";
+  }
+  return null;
+}
+
 export function mergePlan(previous: RunPlan | undefined, input: PlanInput) {
+  const dropped: string[] = [];
   const checks = (input.checks ?? previous?.checks ?? [])
     .map((check) => ({
       route: normalizeRoute(check.route),
@@ -73,6 +89,11 @@ export function mergePlan(previous: RunPlan | undefined, input: PlanInput) {
       expect: check.expect.trim().slice(0, 300),
     }))
     .filter((check) => check.action && check.expect)
+    .filter((check) => {
+      const reason = untestableReason(check);
+      if (reason && input.checks) dropped.push(`"${check.action}": ${reason}`);
+      return !reason;
+    })
     .slice(0, MAX_PLAN_CHECKS);
   const steps = input.steps.map((item) => ({
     step: item.step.trim(),
@@ -94,7 +115,7 @@ export function mergePlan(previous: RunPlan | undefined, input: PlanInput) {
         )
         .map((item) => `Done: ${item.step}`)
     : [`Plan: ${steps.map((item) => item.step).join(" · ")}`];
-  return { plan, labels };
+  return { plan, labels, dropped };
 }
 
 export function planText(plan: RunPlan) {

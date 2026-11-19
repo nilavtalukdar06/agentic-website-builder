@@ -43,6 +43,7 @@ export type BrowserCheckResult = {
   checks: BrowserCheck[];
   screenshots: { viewport: BrowserViewport; key: string }[];
   diagnostics: Diagnostic[];
+  untestable?: number;
   calls: BrowserModelCall[];
   ms: number;
 };
@@ -259,7 +260,7 @@ export async function checkInBrowser({
           interaction.action,
           interaction.expect,
         );
-        if (!result.passed) {
+        if (result.outcome === "failed") {
           diagnostics.push(
             interactionDiagnostic(
               interaction.route,
@@ -271,8 +272,11 @@ export async function checkInBrowser({
         }
         await emit({
           ...check,
-          status: result.passed ? "passed" : "failed",
-          detail: result.detail,
+          status: result.outcome === "untestable" ? "skipped" : result.outcome,
+          detail:
+            result.outcome === "untestable"
+              ? `Couldn't test this step: ${result.detail}`
+              : result.detail,
         });
       } catch (error) {
         if (stoppedReason) break;
@@ -281,19 +285,11 @@ export async function checkInBrowser({
           await emit({ ...check, status: "failed", detail: error.message });
           break;
         }
-        const message = error instanceof Error ? error.message : String(error);
-        diagnostics.push(
-          interactionDiagnostic(
-            interaction.route,
-            interaction.action,
-            interaction.expect,
-            `the step couldn't be completed (${message.slice(0, 160)})`,
-          ),
-        );
+        console.warn("[browser] interaction couldn't run", error);
         await emit({
           ...check,
-          status: "failed",
-          detail: "Couldn't complete this step",
+          status: "skipped",
+          detail: "Couldn't test this step: the browser couldn't perform it",
         });
       }
     }
@@ -309,12 +305,17 @@ export async function checkInBrowser({
   const status =
     diagnostics.length > 0 ? "failed" : stoppedReason ? "skipped" : "passed";
   const pages = checks.filter((check) => check.kind === "page").length;
-  const acts = checks.filter((check) => check.kind === "interaction").length;
+  const acts = checks.filter(
+    (check) => check.kind === "interaction" && check.status !== "skipped",
+  ).length;
+  const untestable = checks.filter(
+    (check) => check.kind === "interaction" && check.status === "skipped",
+  ).length;
   const summary =
     status === "skipped"
       ? `Browser check incomplete: ${stoppedReason}.`
       : status === "passed"
-        ? `Checked ${pages} page views${acts > 0 ? ` and ${acts} interactions` : ""} in the browser: all good${stoppedReason ? ` (stopped early: ${stoppedReason})` : ""}.`
+        ? `Checked ${pages} page views${acts > 0 ? ` and ${acts} interactions` : ""} in the browser: all good${untestable > 0 ? ` (${untestable} ${untestable === 1 ? "step" : "steps"} couldn't be tested)` : ""}${stoppedReason ? ` (stopped early: ${stoppedReason})` : ""}.`
         : `The browser found ${diagnostics.length} ${diagnostics.length === 1 ? "problem" : "problems"}.`;
   await close(status, summary);
   return {
@@ -323,6 +324,7 @@ export async function checkInBrowser({
     checks,
     screenshots,
     diagnostics: patternRedactor.redactDeep(diagnostics),
+    untestable,
     calls,
     ms: now() - started,
   };

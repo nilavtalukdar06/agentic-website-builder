@@ -575,3 +575,11 @@ Design in `docs/agent-v2.md`. These are proposals until the owner approves; each
 - **Blocks and presets as tools** (`addBlocks`, `applyPreset`) → code applying them from a plan.
 - **Known model gaps** → a deterministic lucide `title` → `aria-label` fix and house rules (lucide, "every import must resolve"), instead of hoping the model knows.
 - **Eval script** (`scripts/agent-eval.ts`, five fixed cases, run by the owner with real keys) → no measurement. No new package, provider, data store or environment variable, so the legal pages and the env list are unchanged.
+
+## Browser findings without false alarms (owner's report, 19 November 2026)
+
+- **A third interaction outcome, "couldn't test"** (no control found, an error, an unreadable or `UNSURE` verdict) → counting every non-pass as a site bug. False findings drove three gate cycles and a 25-minute run on a working site.
+- **The check status is `skipped` in the saved parts** (adding to `browserCheckStatuses`) → hiding untested steps. It stays honest, and old messages stay valid.
+- **The agent's browser checks are filtered by wording** (navigation, viewport and styling) → letting Stagehand try them. The browser can't resize itself, or read styling, through `act` and `extract`.
+- **Browser-only findings get one gate cycle, and repeated findings stop the gate** (keyed by route and action, because the "Seen" text varies between runs) → the full 3 cycles that code errors get.
+- **Settle time after an action is 1.5 s** → 0.6 s, which was too short for debounced filters. No new package, provider, data or environment variable, so the legal pages and the env list are unchanged.

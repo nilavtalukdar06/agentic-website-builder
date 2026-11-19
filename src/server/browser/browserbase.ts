@@ -24,6 +24,7 @@ import {
 export const SESSION_TIMEOUT_SECONDS = 300;
 const NAVIGATION_TIMEOUT_MS = 20_000;
 const SETTLE_MS = 600;
+export const ACTION_SETTLE_MS = 1500;
 
 export function browserbaseProvider(apiKey: string): BrowserProvider {
   return {
@@ -90,11 +91,11 @@ export function browserbaseProvider(apiKey: string): BrowserProvider {
             assertSameOrigin(previewUrl, await page.url());
             if (!acted.data.success) {
               return {
-                passed: false,
-                detail: acted.data.message || "the control couldn't be used",
+                outcome: "untestable",
+                detail: acted.data.message || "the control couldn't be found",
               };
             }
-            await page.waitForTimeout(SETTLE_MS);
+            await page.waitForTimeout(ACTION_SETTLE_MS);
             const verdict = await agent.extract(verdictInstruction(expect), {
               page,
             });

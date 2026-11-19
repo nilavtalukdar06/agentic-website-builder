@@ -46,6 +46,20 @@ agent/run → guard-input · claim · load-project
 - **Metrics:** `meta.run` adds `turns`, `gateCycles`, `blockers { first, final }` and `browse { status, reason }`.
 - **Eval:** `bun run agent:eval` (`scripts/agent-eval.ts`) runs five fixed cases (todo app, landing page, dashboard with sidebar, an edit, and a fix of a deliberately broken home page) through the real pipeline and prints a scorecard. It exits non-zero unless every case ends with zero issues.
 
+### Browser findings without false alarms (19 November 2026)
+
+A small dashboard build ran for about 25 minutes because the browser reported four interaction "failures" three times, and the site worked fine. They were steps the browser couldn't actually do ("Open the dashboard home page", "Resize the viewport to mobile width") or couldn't see ("an active highlight").
+
+- **Three outcomes per interaction:** passed, failed, or couldn't test.
+  - "Couldn't test" covers: Stagehand finding no control, a thrown error, an unreadable verdict, and the new `UNSURE` verdict for things the page text can't show.
+  - It shows as a muted "Couldn't test" row (check status `skipped`), adds no problem, and doesn't fail the browser check. `meta.run.browse.untestable` counts these steps.
+- **Settle time:** the page gets 1.5 s to settle after an action (page loads keep 0.6 s), so debounced search boxes have time to filter.
+- **The checks the agent writes are filtered** (`plan.ts` `untestableReason`): navigation, resizing and scrolling actions, and styling expectations, are dropped. The agent is told why. The route already opens the page, and phone width is checked automatically.
+- **The gate:**
+  - Browser-only findings get one fix cycle.
+  - It stops at once when the same browser findings come back, compared by route and action (`severity.ts` `problemKey`).
+  - Its message lists browser findings separately, as possibly wrong: the agent reads the code first and changes nothing when it already works.
+
 ## v4.4 How the owner verifies it live
 
 1. With the dev server and Inngest dev running, run `bun run agent:eval`. Target: 5/5 cases with blockers `→0`, zero issues and a passed browser check.

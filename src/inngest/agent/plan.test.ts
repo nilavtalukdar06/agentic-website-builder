@@ -4,6 +4,7 @@ import {
   mergePlan,
   normalizeRoute,
   planText,
+  untestableReason,
   updatePlanInput,
 } from "./plan";
 
@@ -71,4 +72,46 @@ test.each([
   ["/blog?x=1#top", "/blog"],
 ])("normalizeRoute(%s)", (input, output) => {
   expect(normalizeRoute(input)).toBe(output);
+});
+
+describe("browser checks the browser can't perform", () => {
+  test("drops navigation, resizing and styling checks and keeps real interactions", () => {
+    const { plan, dropped } = mergePlan(undefined, {
+      steps: [{ step: "Dashboard", status: "pending" }],
+      checks: [
+        {
+          route: "/",
+          action: "Open the dashboard home page",
+          expect: "The dashboard is shown",
+        },
+        {
+          route: "/",
+          action: "Resize the viewport to mobile width",
+          expect: "The sidebar collapses",
+        },
+        {
+          route: "/",
+          action: "Click a sidebar nav item",
+          expect: "The item shows an active highlight",
+        },
+        {
+          route: "/customers",
+          action: "Type Ada into the search box",
+          expect: "Only rows containing Ada are listed",
+        },
+      ],
+    });
+    expect(plan.checks.map((check) => check.action)).toEqual([
+      "Type Ada into the search box",
+    ]);
+    expect(dropped).toHaveLength(3);
+    expect(dropped[0]).toContain("Open the dashboard home page");
+    expect(dropped[2]).toContain("styling");
+  });
+
+  test("untestableReason accepts clicks and typed entries", () => {
+    expect(
+      untestableReason({ action: "Click Add task", expect: "A new row" }),
+    ).toBeNull();
+  });
 });

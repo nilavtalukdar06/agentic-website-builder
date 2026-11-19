@@ -65,7 +65,9 @@ import { wrapUntrusted } from "../agent/guardrails/untrusted";
 import { buildRepoMap, designNotes } from "../agent/repo-map";
 import {
   compareSeverity,
+  onlyBrowser,
   restorePlan,
+  sameProblems,
   routesLoad,
   type Severity,
   severityOf,
@@ -158,6 +160,7 @@ export const TURN_BUDGETS: Record<Intent, number> = {
 export const RESUMED_TURNS = 40;
 export const GATE_CYCLES = 3;
 export const GATE_TURNS = 12;
+export const BROWSER_ONLY_CYCLES = 1;
 
 function firstSentence(text: string) {
   const line = text.split("\n").find((entry) => entry.trim()) ?? "";
@@ -172,8 +175,17 @@ export function gateMessage({
   diagnostics: Diagnostic[];
   screenshots: { label: string; key: string }[];
 }): ModelMessage {
-  const fromBrowser = diagnostics.some((item) => item.source === "browser");
-  const text = `(Your work was checked when you finished${fromBrowser ? ", including opening the site in a real browser at desktop and phone width" : ""}, and ${diagnostics.length} ${diagnostics.length === 1 ? "problem remains" : "problems remain"}. Fix every one of them now: create any missing file you import, keep the design and behaviour, and change as little else as possible.${fromBrowser ? " A page that scrolls sideways at phone width needs a responsive fix (wrapping, smaller fixed widths, overflow handling), not a hidden overflow on the body." : ""} Run check until it passes, then reply with the task_summary for the whole request again.)\n\nProblems:\n${wrapUntrusted("checks", formatDiagnostics(diagnostics))}`;
+  const code = diagnostics.filter((item) => item.source !== "browser");
+  const browser = diagnostics.filter((item) => item.source === "browser");
+  const sections = [
+    code.length > 0
+      ? `Problems (fix every one: create any missing file you import, keep the design and behaviour, and change as little else as possible):\n${wrapUntrusted("checks", formatDiagnostics(code))}`
+      : null,
+    browser.length > 0
+      ? `Browser findings (from an automated browser at desktop and phone width; they can be wrong). For each one, read the code first. Fix it only if the code really doesn't do it; if it already works, change nothing and say so in your summary. A page that scrolls sideways at phone width needs a responsive fix (wrapping, smaller fixed widths, overflow handling), not a hidden overflow on the body:\n${wrapUntrusted("checks", formatDiagnostics(browser))}`
+      : null,
+  ].filter(Boolean);
+  const text = `(Your work was checked when you finished, and ${diagnostics.length} ${diagnostics.length === 1 ? "finding remains" : "findings remain"}. Run check until it passes, then reply with the task_summary for the whole request again.)\n\n${sections.join("\n\n")}`;
   if (screenshots.length === 0) return { role: "user", content: text };
   return {
     role: "user",
@@ -667,6 +679,8 @@ export const runAgent = inngest.createFunction(
         files: Record<string, string> | null;
       };
       let best: Snapshot | null = null;
+      let previousProblems: Diagnostic[] | null = null;
+      let browserOnlyCycles = 0;
       let current: Snapshot | null = null;
       for (let cycle = 0; ; cycle++) {
         const check = await checkProject({
@@ -742,6 +756,19 @@ export const runAgent = inngest.createFunction(
         }
         if (problems.length === 0) break;
         if (cycle >= GATE_CYCLES || exhausted(budget)) break;
+        if (
+          onlyBrowser(problems) &&
+          (browserOnlyCycles >= BROWSER_ONLY_CYCLES ||
+            (previousProblems !== null &&
+              sameProblems(
+                problems,
+                previousProblems.filter((item) => item.source === "browser"),
+              )))
+        ) {
+          break;
+        }
+        if (onlyBrowser(problems)) browserOnlyCycles += 1;
+        previousProblems = problems;
 
         gateCycles += 1;
         const fix: AgentRun = await runAgentLoop({
@@ -1159,6 +1186,7 @@ export const runAgent = inngest.createFunction(
           browse: {
             status: browserResult?.status ?? "not-run",
             reason: browserResult?.reason ?? null,
+            untestable: browserResult?.untestable ?? 0,
           },
           memory: {
             read: route?.memory.status ?? "off",

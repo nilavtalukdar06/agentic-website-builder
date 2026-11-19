@@ -398,7 +398,7 @@ describe("create intent", () => {
         run: expect.objectContaining({
           gateCycles: 0,
           blockers: { first: 0, final: 0 },
-          browse: { status: "passed", reason: null },
+          browse: { status: "passed", reason: null, untestable: 0 },
         }),
       }),
     );
@@ -514,6 +514,66 @@ describe("create intent", () => {
     const result = await runCreate().done;
     expect(result.status).toBe("stopped");
     expect(mocks.checkProject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("browser findings in the done gate", () => {
+  const finding = {
+    source: "browser",
+    path: null,
+    line: null,
+    message:
+      '/customers: "Type Ada in the search box" didn\'t work as expected. Expected: Only Ada. Seen: all rows',
+  };
+  const failedBrowser = {
+    ...passedBrowser,
+    status: "failed",
+    diagnostics: [finding],
+  };
+
+  test("get one fix cycle, then the run finishes and lists them", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject.mockResolvedValue(checked([]));
+    mocks.browse.mockResolvedValue(failedBrowser);
+    const result = await runCreate().done;
+    expect(mocks.loop).toHaveBeenCalledTimes(2);
+    expect(mocks.browse).toHaveBeenCalledTimes(2);
+    expect(result.issues).toBe(1);
+    const message = JSON.stringify(mocks.loop.mock.calls[1][0].messages[2]);
+    expect(message).toContain("they can be wrong");
+    expect(message).toContain("read the code first");
+  });
+
+  test("stop at once when they repeat while code problems are fixed", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject
+      .mockResolvedValueOnce(checked([typeError]))
+      .mockResolvedValue(checked([]));
+    mocks.browse.mockResolvedValue({
+      ...failedBrowser,
+      diagnostics: [
+        { ...finding, message: `${finding.message.split(" Seen")[0]} Seen: x` },
+      ],
+    });
+    mocks.browse.mockResolvedValueOnce(failedBrowser);
+    await runCreate().done;
+    expect(mocks.loop).toHaveBeenCalledTimes(2);
+    expect(mocks.checkProject).toHaveBeenCalledTimes(2);
+  });
+
+  test("record how many steps couldn't be tested", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject.mockResolvedValue(checked([]));
+    mocks.browse.mockResolvedValue({ ...passedBrowser, untestable: 2 });
+    await runCreate().done;
+    expect(mocks.debitCredits).toHaveBeenCalledWith(
+      mocks.db,
+      expect.objectContaining({
+        run: expect.objectContaining({
+          browse: { status: "passed", reason: null, untestable: 2 },
+        }),
+      }),
+    );
   });
 });
 
