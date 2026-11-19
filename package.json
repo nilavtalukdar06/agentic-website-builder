@@ -25,7 +25,8 @@
     "db:studio": "bunx --bun prisma studio",
     "inngest:dev": "npm exec --yes --ignore-scripts=false -- inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "sandbox:build": "bun sandbox-templates/nextjs/build.ts",
-    "agent:smoke": "bun --conditions=react-server scripts/agent-smoke.ts"
+    "agent:smoke": "bun --conditions=react-server scripts/agent-smoke.ts",
+    "agent:eval": "bun --conditions=react-server scripts/agent-eval.ts"
   },
   "dependencies": {
     "@arcjet/guard": "^1.15.0",

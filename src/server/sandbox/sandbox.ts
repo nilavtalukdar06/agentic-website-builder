@@ -9,10 +9,10 @@ import {
 } from "@/lib/snapshot-files";
 import { withAgentRules } from "./agent-rules";
 import { withDevOrigins } from "./dev-origins";
-import { APP_DIR } from "./guards";
+import { APP_DIR, PREVIEW_PORT } from "./guards";
 
 export const SANDBOX_TIMEOUT_MS = 30 * 60_000;
-export const PREVIEW_PORT = 3000;
+export { PREVIEW_PORT };
 
 const SNAPSHOT_MAX_FILES = 400;
 const SNAPSHOT_MAX_FILE_BYTES = 200_000;

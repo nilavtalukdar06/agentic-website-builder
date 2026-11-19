@@ -102,6 +102,7 @@ describe("handoff checkpoint", () => {
       toolParts: [],
       tasks: [],
       handoff: "Continue building",
+      progress: {},
       written: ["app/page.tsx"],
       modelMs: 10,
       toolMs: 5,

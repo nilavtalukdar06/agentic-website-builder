@@ -30,9 +30,16 @@ import { patternRedactor, type Redactor } from "./guardrails/redact";
 import { detectSecrets } from "./guardrails/secret-patterns";
 import { codeTripwire } from "./guardrails/tripwire";
 import { wrapUntrusted } from "./guardrails/untrusted";
+import { formatDiagnostics } from "@/server/sandbox/diagnostics";
+import { blockFiles, blockReference, isBlockName } from "./blocks";
+import { checkLabel, pageRoutes, runChecks } from "./checks";
 import { applyEdits } from "./edits";
 import { matchesGlob, shellQuote } from "./glob";
+import { mergePlan, planText, type RunPlan, updatePlanInput } from "./plan";
+import { applyPreset } from "./presets";
 import {
+  addBlocksInput,
+  applyPresetInput,
   editFileInput,
   isAgentTool,
   listFilesInput,
@@ -73,6 +80,7 @@ export const MAX_FILES_PER_REMOVAL = 10;
 
 export type RunProgress = {
   installs?: number;
+  plan?: RunPlan;
 };
 
 export type GuardHit = {
@@ -649,6 +657,139 @@ async function searchCode(call: ToolCall, ctx: ToolContext) {
   );
 }
 
+async function writeKnownFiles(
+  ctx: ToolContext,
+  files: WrittenFile[],
+): Promise<{
+  tasks: TaskItem[];
+  writtenPaths: string[];
+  edited: WrittenFile[];
+  skipped: string[];
+  guard: GuardHit | null;
+}> {
+  const known = new Set(ctx.writtenPaths);
+  const tasks: TaskItem[] = [];
+  const writtenPaths: string[] = [];
+  const edited: WrittenFile[] = [];
+  const skipped: string[] = [];
+  let guard: GuardHit | null = null;
+  for (const file of files) {
+    const result = await writeOne(ctx, known, file.path, file.content);
+    if (result.status === "skipped") {
+      skipped.push(result.message);
+      guard ??= result.guard;
+      continue;
+    }
+    tasks.push(await fileTask(ctx, result));
+    writtenPaths.push(result.path);
+    edited.push({ path: result.path, content: file.content });
+  }
+  return { tasks, writtenPaths, edited, skipped, guard };
+}
+
+async function updatePlan(call: ToolCall, ctx: ToolContext) {
+  const parsed = updatePlanInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  const { plan, labels } = mergePlan(ctx.progress.plan, parsed.data);
+  const tasks: TaskItem[] = labels.map((label) => ({
+    kind: "note",
+    label: label.slice(0, 400),
+  }));
+  for (const task of tasks) await ctx.publish("task", task);
+  return outcome(ctx, `Plan updated:\n${planText(plan)}`, {
+    tasks,
+    progress: { ...ctx.progress, plan },
+  });
+}
+
+async function runCheck(call: ToolCall, ctx: ToolContext) {
+  let installed: ToolOutcome | null = null;
+  const result = await runChecks(ctx.sandbox, {
+    changed: ctx.writtenPaths,
+    routes: await pageRoutes(ctx.sandbox),
+    install: async (packages) => {
+      installed = await runTerminal(
+        {
+          toolCallId: `${call.toolCallId}-install`,
+          toolName: "terminal",
+          input: { command: `npm install ${packages.join(" ")}` },
+        },
+        ctx,
+      );
+    },
+  });
+  const install = installed as ToolOutcome | null;
+  const task: TaskItem = {
+    kind: "note",
+    label: checkLabel(result.diagnostics),
+  };
+  await ctx.publish("task", task);
+  const redactor = ctx.redactor ?? patternRedactor;
+  const fixedNote =
+    result.fixed.length > 0
+      ? `Auto-fixed: ${result.fixed.map((file) => file.path).join(", ")}.\n`
+      : "";
+  const pages = result.routes.join(", ");
+  const text =
+    result.diagnostics.length === 0
+      ? `${fixedNote}All checks pass: types, lint and pages (${pages}) load.`
+      : `${fixedNote}${result.diagnostics.length} ${result.diagnostics.length === 1 ? "problem" : "problems"} (pages checked: ${pages}). Fix them all, then run check again:\n${wrapUntrusted("checks", redactor.redact(formatDiagnostics(result.diagnostics)))}`;
+  return outcome(ctx, text, {
+    tasks: [...(install?.tasks ?? []), task],
+    writtenPaths: result.fixed.map((file) => file.path),
+    edited: result.fixed,
+    progress: install?.progress ?? ctx.progress,
+  });
+}
+
+async function applyPresetTool(call: ToolCall, ctx: ToolContext) {
+  const parsed = applyPresetInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  const path = "app/globals.css";
+  const css = await ctx.sandbox.files
+    .read(`${APP_DIR}/${path}`)
+    .catch(() => null);
+  if (css === null) return outcome(ctx, `Not applied: ${path} doesn't exist.`);
+  const themed = applyPreset(css, parsed.data.preset);
+  if (themed === css) {
+    return outcome(ctx, `The ${parsed.data.preset} preset is already applied.`);
+  }
+  const written = await writeKnownFiles(ctx, [{ path, content: themed }]);
+  return outcome(
+    ctx,
+    written.writtenPaths.length > 0
+      ? `Applied the ${parsed.data.preset} preset to ${path}.`
+      : written.skipped.join("\n"),
+    written,
+  );
+}
+
+async function addBlocks(call: ToolCall, ctx: ToolContext) {
+  const parsed = addBlocksInput.safeParse(call.input);
+  if (!parsed.success) {
+    return outcome(ctx, `Invalid input: ${parsed.error.message}`);
+  }
+  const unknown = parsed.data.blocks.filter((name) => !isBlockName(name));
+  const names = parsed.data.blocks.filter(isBlockName);
+  const files = blockFiles(names);
+  const written = await writeKnownFiles(ctx, files);
+  const lines = [
+    written.writtenPaths.length > 0
+      ? `Added ${written.writtenPaths.join(", ")}.`
+      : null,
+    unknown.length > 0
+      ? `Unknown blocks, not added: ${unknown.join(", ")}.`
+      : null,
+    ...written.skipped,
+    written.writtenPaths.length > 0 ? `\n${blockReference(names)}` : null,
+  ].filter(Boolean);
+  return outcome(ctx, lines.join("\n") || "No blocks added.", written);
+}
+
 export async function executeTool(
   call: ToolCall,
   ctx: ToolContext,
@@ -669,5 +810,13 @@ export async function executeTool(
       return searchCode(call, ctx);
     case "readFiles":
       return readFiles(call, ctx);
+    case "updatePlan":
+      return updatePlan(call, ctx);
+    case "check":
+      return runCheck(call, ctx);
+    case "applyPreset":
+      return applyPresetTool(call, ctx);
+    case "addBlocks":
+      return addBlocks(call, ctx);
   }
 }

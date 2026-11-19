@@ -677,3 +677,116 @@ describe("activity rows", () => {
     expect(publish).toHaveBeenCalledWith("task", task);
   });
 });
+
+describe("harness v4 tools", () => {
+  test("updatePlan announces the plan once, then only newly finished steps", async () => {
+    const { ctx, publish } = makeCtx();
+    const first = await executeTool(
+      call("updatePlan", {
+        projectName: " Night Owl ",
+        steps: [
+          { step: "Task list", status: "in_progress" },
+          { step: "Filters", status: "pending" },
+        ],
+        checks: [{ route: "tasks/", action: "Add a task", expect: "Listed" }],
+      }),
+      ctx,
+    );
+    expect(first.tasks).toEqual([
+      { kind: "note", label: "Plan: Task list · Filters" },
+    ]);
+    expect(first.progress.plan).toMatchObject({
+      projectName: "Night Owl",
+      checks: [{ route: "/tasks", action: "Add a task", expect: "Listed" }],
+    });
+    const second = await executeTool(
+      call("updatePlan", {
+        steps: [
+          { step: "Task list", status: "done" },
+          { step: "Filters", status: "pending" },
+        ],
+      }),
+      { ...ctx, progress: first.progress },
+    );
+    expect(second.tasks).toEqual([{ kind: "note", label: "Done: Task list" }]);
+    expect(second.progress.plan?.projectName).toBe("Night Owl");
+    expect(second.progress.plan?.checks).toHaveLength(1);
+    expect(second.output).toContain("[x] Task list");
+    expect(publish).toHaveBeenCalledTimes(2);
+  });
+
+  test("check reports problems with the pages it loaded and records auto-fixes", async () => {
+    const { ctx, sandbox, publish } = makeCtx(["components/x.tsx"]);
+    const source = `import { X } from "lucide-react";\nexport const A = () => <X title="Close" />;`;
+    sandbox.files.read.mockResolvedValue(source);
+    sandbox.commands.run.mockImplementation(async (command: string) => {
+      if (command.includes("-name 'page.*'"))
+        return { stdout: "app/page.tsx\n", stderr: "", exitCode: 0 };
+      if (command.includes("tsc"))
+        return {
+          stdout:
+            "app/page.tsx(3,1): error TS2307: Cannot find module '@/components/tasks/TaskApp'.",
+          stderr: "",
+          exitCode: 0,
+        };
+      if (command.includes("curl"))
+        return { stdout: "200\n<html></html>", stderr: "", exitCode: 0 };
+      return { stdout: "[]", stderr: "", exitCode: 0 };
+    });
+    const result = await executeTool(call("check", {}), ctx);
+    expect(sandbox.files.write).toHaveBeenCalledWith(
+      "/home/user/app/components/x.tsx",
+      expect.stringContaining('aria-label="Close"'),
+    );
+    expect(result.writtenPaths).toEqual(["components/x.tsx"]);
+    expect(result.edited?.[0].content).toContain('aria-label="Close"');
+    expect(result.output).toContain("1 problem (pages checked: /)");
+    expect(result.output).toContain("Cannot find module");
+    expect(publish).toHaveBeenCalledWith("task", {
+      kind: "note",
+      label: "Checks found 1 problem",
+    });
+  });
+
+  test("check says plainly when everything passes", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.commands.run.mockImplementation(async (command: string) =>
+      command.includes("curl")
+        ? { stdout: "200\nok", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "", exitCode: 0 },
+    );
+    const result = await executeTool(call("check", {}), ctx);
+    expect(result.output).toBe(
+      "All checks pass: types, lint and pages (/) load.",
+    );
+  });
+
+  test("applyPreset rewrites the theme tokens through the guarded writer", async () => {
+    const { ctx, sandbox } = makeCtx();
+    sandbox.files.read.mockResolvedValue(
+      ":root {\n  --primary: oklch(0.2 0 0);\n}\n.dark {\n  --primary: oklch(0.9 0 0);\n}\n",
+    );
+    sandbox.files.exists.mockResolvedValue(true);
+    const result = await executeTool(
+      call("applyPreset", { preset: "ocean" }),
+      ctx,
+    );
+    expect(result.output).toBe("Applied the ocean preset to app/globals.css.");
+    expect(result.writtenPaths).toEqual(["app/globals.css"]);
+    expect(result.edited?.[0].content).toContain("oklch(0.52 0.17 250)");
+  });
+
+  test("addBlocks copies known blocks with their props and names unknown ones", async () => {
+    const { ctx } = makeCtx();
+    const result = await executeTool(
+      call("addBlocks", { blocks: ["cta-banner", "nope"] }),
+      ctx,
+    );
+    expect(result.writtenPaths).toContain("components/blocks/cta-banner.tsx");
+    expect(result.edited?.map((file) => file.path)).toEqual(
+      result.writtenPaths,
+    );
+    expect(result.output).toContain("Unknown blocks, not added: nope.");
+    expect(result.output).toContain('from "@/components/blocks/cta-banner"');
+  });
+});

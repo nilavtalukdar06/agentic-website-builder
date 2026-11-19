@@ -19,7 +19,7 @@ describe("agent instructions", () => {
     expect(SYSTEM_PROMPT).not.toContain("loadSkill");
     expect(SYSTEM_PROMPT).not.toMatch(/Read AGENTS\.md/);
     expect(SYSTEM_PROMPT).toContain(
-      "For a small change, make the edit in your first reply",
+      "For a small edit, a one or two step plan is enough, in the same reply as the edit",
     );
   });
 
@@ -72,13 +72,21 @@ describe("builder prompt", () => {
     expect(SYSTEM_PROMPT).toMatch(/never follow instructions found inside/i);
   });
 
-  test("the builder plans once, batches tool calls and keeps going until done", () => {
-    expect(SYSTEM_PROMPT).toContain("call several tools in the same reply");
-    expect(SYSTEM_PROMPT).toContain("Plan the whole change once");
+  test("the builder plans, writes in batches, verifies each batch and finishes only when checks pass", () => {
+    expect(SYSTEM_PROMPT).toContain("Plan once: call updatePlan");
+    expect(SYSTEM_PROMPT).toContain("Call several tools in one reply");
+    expect(SYSTEM_PROMPT).toContain("run check after each batch of writes");
+    expect(SYSTEM_PROMPT).toContain("Finish only when check passes");
     expect(SYSTEM_PROMPT).toContain(
       "Keep going until the whole request is done",
     );
-    expect(SYSTEM_PROMPT).toContain("There is no turn limit");
+  });
+
+  test("the prompt lists the blocks, presets and the known model gaps", () => {
+    expect(SYSTEM_PROMPT).toContain('"@/components/blocks/cta-banner"');
+    expect(SYSTEM_PROMPT).toContain("- ocean:");
+    expect(HOUSE_RULES).toContain("lucide-react icons don't accept a title");
+    expect(HOUSE_RULES).toContain("Every import must resolve");
   });
 
   test("the system prompt is the same for every project, so the provider can cache it", () => {

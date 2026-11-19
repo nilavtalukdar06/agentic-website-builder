@@ -54,23 +54,22 @@ import {
   addSpend,
   answerQuestion,
   checkProject,
-  generateFromPlan,
-  makePlan,
   noSpend,
-  repairMessage,
   rollback,
   routeRequest,
   type Spend,
   spendOf,
 } from "../agent/pipeline";
-import type { BuildPlan } from "../agent/plan";
-import type { PreloadedFile } from "../agent/context";
+import { ATTACHMENT_SCHEME } from "../agent/conversation";
+import { wrapUntrusted } from "../agent/guardrails/untrusted";
+import { buildRepoMap, designNotes } from "../agent/repo-map";
 import {
-  buildRepoMap,
-  designNotes,
-  routeOf,
-  routesOf,
-} from "../agent/repo-map";
+  compareSeverity,
+  restorePlan,
+  routesLoad,
+  type Severity,
+  severityOf,
+} from "../agent/severity";
 import { type Intent, memoryCommand } from "../agent/router";
 import {
   type MemoryCommandResult,
@@ -137,27 +136,28 @@ function spendPhase(budget: Budget, phase: Spend): Budget {
   return { ...budget, spentUsd: budget.spentUsd + phase.spentUsd };
 }
 
-type Mode = "pipeline" | "builder" | "editor" | "answer" | "memory";
+type Mode = "builder" | "editor" | "answer" | "memory";
 
-function modeFor(intent: Intent, search: boolean, resumed: boolean): Mode {
+function modeFor(intent: Intent, resumed: boolean): Mode {
   if (resumed) return "builder";
   if (intent === "remember" || intent === "forget") return "memory";
   if (intent === "question") return "answer";
-  if (intent === "create" || intent === "large-change") {
-    return search ? "builder" : "pipeline";
-  }
+  if (intent === "create" || intent === "large-change") return "builder";
   return "editor";
 }
 
-export const EDITOR_MAX_TURNS = 8;
-export const REPAIR_MAX_TURNS = 6;
-const REPAIR_ROUNDS: Record<Mode, number> = {
-  pipeline: 3,
-  builder: 3,
-  editor: 2,
-  answer: 0,
-  memory: 0,
+export const TURN_BUDGETS: Record<Intent, number> = {
+  create: 40,
+  "large-change": 30,
+  edit: 16,
+  fix: 16,
+  question: 0,
+  remember: 0,
+  forget: 0,
 };
+export const RESUMED_TURNS = 40;
+export const GATE_CYCLES = 3;
+export const GATE_TURNS = 12;
 
 function firstSentence(text: string) {
   const line = text.split("\n").find((entry) => entry.trim()) ?? "";
@@ -165,51 +165,30 @@ function firstSentence(text: string) {
   return (match ? match[1] : line).replace(/^[-*#\s]+/, "");
 }
 
-export function pipelineSummary(plan: BuildPlan) {
-  const pages = plan.pages
-    .map(
-      (page) =>
-        `- **${page.title}** (${page.route}): ${page.sections.join(", ")}`,
-    )
-    .join("\n");
-  return `${plan.summary}\n\n${pages}`;
-}
-
-export function routesToCheck({
-  mode,
-  known,
-  written,
-  planned,
+export function gateMessage({
+  diagnostics,
+  screenshots,
 }: {
-  mode: Mode;
-  known: string[];
-  written: string[];
-  planned: string[];
-}) {
-  const changed = written.flatMap((path) => {
-    const found = routeOf(path);
-    return found ? [found] : [];
-  });
-  return [
-    ...new Set(
-      mode === "editor"
-        ? ["/", ...changed]
-        : [...known, ...changed, ...planned],
-    ),
-  ];
-}
-
-export function pageFiles(
-  routes: string[],
-  written: Map<string, string>,
-): PreloadedFile[] {
-  const paths = routes.map((route) =>
-    route === "/" ? "app/page.tsx" : `app${route}/page.tsx`,
-  );
-  return paths.flatMap((path) => {
-    const content = written.get(path);
-    return content && content.length <= 16_000 ? [{ path, content }] : [];
-  });
+  diagnostics: Diagnostic[];
+  screenshots: { label: string; key: string }[];
+}): ModelMessage {
+  const fromBrowser = diagnostics.some((item) => item.source === "browser");
+  const text = `(Your work was checked when you finished${fromBrowser ? ", including opening the site in a real browser at desktop and phone width" : ""}, and ${diagnostics.length} ${diagnostics.length === 1 ? "problem remains" : "problems remain"}. Fix every one of them now: create any missing file you import, keep the design and behaviour, and change as little else as possible.${fromBrowser ? " A page that scrolls sideways at phone width needs a responsive fix (wrapping, smaller fixed widths, overflow handling), not a hidden overflow on the body." : ""} Run check until it passes, then reply with the task_summary for the whole request again.)\n\nProblems:\n${wrapUntrusted("checks", formatDiagnostics(diagnostics))}`;
+  if (screenshots.length === 0) return { role: "user", content: text };
+  return {
+    role: "user",
+    content: [
+      { type: "text", text },
+      ...screenshots.flatMap((shot) => [
+        { type: "text" as const, text: `Screenshot: ${shot.label}` },
+        {
+          type: "file" as const,
+          mediaType: "image/png",
+          data: new URL(`${ATTACHMENT_SCHEME}${shot.key}`),
+        },
+      ]),
+    ],
+  };
 }
 
 export function browserPart(result: BrowserCheckResult): AgentPart {
@@ -220,30 +199,6 @@ export function browserPart(result: BrowserCheckResult): AgentPart {
     checks: result.checks.slice(-40),
     screenshots: result.screenshots,
   };
-}
-
-export function rollbackPlan({
-  roundPaths,
-  preRound,
-  writtenBefore,
-  versionFiles,
-}: {
-  roundPaths: string[];
-  preRound: Map<string, string>;
-  writtenBefore: string[];
-  versionFiles: string[];
-}) {
-  const restore: { path: string; content: string }[] = [];
-  const remove: string[] = [];
-  let restorable = true;
-  for (const path of new Set(roundPaths)) {
-    const content = preRound.get(path);
-    if (content !== undefined) restore.push({ path, content });
-    else if (!versionFiles.includes(path) && !writtenBefore.includes(path))
-      remove.push(path);
-    else restorable = false;
-  }
-  return { restore, remove, restorable };
 }
 
 export function issuesNote(diagnostics: Diagnostic[]) {
@@ -386,7 +341,6 @@ export const runAgent = inngest.createFunction(
         files: Object.keys(files),
         repoMap: buildRepoMap(files),
         designNotes: designNotes(files),
-        routes: routesOf(files),
       };
     });
 
@@ -562,7 +516,7 @@ export const runAgent = inngest.createFunction(
     };
     const search = !restricted && mentionsSite(setup.prompt);
     const intent: Intent = route?.intent ?? "large-change";
-    let mode = modeFor(intent, search, Boolean(resume));
+    const mode = modeFor(intent, Boolean(resume));
     const timings: Record<string, number> = { sandbox: sandbox.ms };
     if (route) timings.route = route.ms;
 
@@ -623,7 +577,6 @@ export const runAgent = inngest.createFunction(
     let stopped = false;
     let written: string[] = resume?.handoff?.written ?? [];
     let handoff: string | null = null;
-    let plan: BuildPlan | null = null;
     let answer: string | null = null;
     const taskLog: TaskItem[] = [];
     let diagnostics: Diagnostic[] = [];
@@ -664,74 +617,22 @@ export const runAgent = inngest.createFunction(
       stopped = answered.stopped === true;
     }
 
-    if (!outOfCredits && mode === "pipeline") {
-      const planned = await makePlan({
-        step,
-        projectId,
-        model,
-        messages,
-        shouldStop,
-      });
-      phases = addSpend(phases, planned.spend);
-      budget = spendPhase(budget, planned.spend);
-      timings.plan = planned.ms;
-      plan = planned.plan;
-      stopped = planned.stopped === true;
-      const projectName = plan ? cleanProjectName(plan.projectName) : null;
-      if (projectName && !setup.hasVersion) {
-        await step.run("name-project", async () => {
-          await db.project.updateMany({
-            where: { id: projectId, userId },
-            data: { name: projectName },
-          });
-        });
-      }
-      if (stopped) {
-        plan = null;
-      } else if (!plan) {
-        mode = "builder";
-      } else if (!exhausted(budget)) {
-        const generated = await generateFromPlan({
-          step,
-          projectId,
-          run: runContext,
-          model,
-          plan,
-          request: setup.prompt,
-          designNotes: setup.designNotes,
-          budget,
-          shouldStop,
-        });
-        phases = addSpend(phases, generated.spend);
-        budget = spendPhase(budget, generated.spend);
-        timings.generate = generated.ms;
-        taskLog.push(...generated.tasks);
-        written = [
-          ...new Set([...written, ...generated.files.map((file) => file.path)]),
-        ];
-        stopped = generated.stopped;
-        outOfCredits = generated.outOfCredits || exhausted(budget);
-        summary = pipelineSummary(plan);
-      } else {
-        outOfCredits = true;
-      }
-    }
-
+    let last: AgentRun | null = null;
     if (!outOfCredits && (mode === "builder" || mode === "editor")) {
-      const editing = mode === "editor";
       const build = await runAgentLoop({
         ...loopArgs,
-        spec: builderSpec({ search, name: editing ? "editor" : "builder" }),
+        spec: builderSpec({ search, name: mode }),
         messages,
         budget,
         expectWrites: !resume,
         written,
-        maxTurns: editing ? EDITOR_MAX_TURNS : undefined,
+        maxTurns: resume ? RESUMED_TURNS : TURN_BUDGETS[intent],
         progress: resume?.handoff
           ? { installs: resume.handoff.installs }
           : undefined,
       });
       runs.push(build);
+      last = build;
       taskLog.push(...build.tasks);
       budget = spend(budget, build);
       outOfCredits = build.outOfCredits;
@@ -742,52 +643,59 @@ export const runAgent = inngest.createFunction(
       timings[mode] = build.modelMs + build.toolMs;
     }
 
-    const rounds = REPAIR_ROUNDS[mode];
-    if (
-      rounds > 0 &&
-      !handoff &&
-      !stopped &&
-      !outOfCredits &&
-      written.length > 0
-    ) {
-      const routes = routesToCheck({
-        mode,
-        known: setup.routes,
-        written,
-        planned: plan?.pages.map((page) => page.route) ?? [],
+    const projectName = cleanProjectName(
+      last?.progress.plan?.projectName ?? "",
+    );
+    if (projectName && !setup.hasVersion && !stopped) {
+      await step.run("name-project", async () => {
+        await db.project.updateMany({
+          where: { id: projectId, userId },
+          data: { name: projectName },
+        });
       });
-      let previous: number | null = null;
-      let previousProblems: Diagnostic[] = [];
-      let preRound: Map<string, string> | null = null;
-      let writtenBefore: string[] = [];
+    }
+
+    let gateCycles = 0;
+    let firstBlockers: number | null = null;
+    if (last && !handoff && !stopped && !outOfCredits && written.length > 0) {
       timings.verify = 0;
-      timings.repair = 0;
-      for (let round = 0; ; round++) {
+      timings.gate = 0;
+      type Snapshot = {
+        severity: Severity;
+        diagnostics: Diagnostic[];
+        browser: BrowserCheckResult | null;
+        files: Record<string, string> | null;
+      };
+      let best: Snapshot | null = null;
+      let current: Snapshot | null = null;
+      for (let cycle = 0; ; cycle++) {
         const check = await checkProject({
           step,
-          stepId: `verify-${round}`,
+          stepId: `gate-check-${cycle}`,
           projectId,
           run: runContext,
-          routes,
           changed: written,
+          snapshot: true,
         });
         timings.verify += check.ms;
         taskLog.push(...check.tasks);
         let problems = check.diagnostics;
-        let affected = check.affected;
         let screenshots: { label: string; key: string }[] = [];
-
-        if (problems.length === 0 && runContext.sandbox.previewUrl) {
+        if (
+          routesLoad(problems) &&
+          runContext.sandbox.previewUrl &&
+          !exhausted(budget)
+        ) {
           const browsed = await runBrowserCheck({
             step,
-            stepId: `browse-${round}`,
+            stepId: `gate-browse-${cycle}`,
             projectId,
             runId,
-            round,
+            round: cycle,
             previewUrl: runContext.sandbox.previewUrl,
             model,
-            routes,
-            interactions: plan?.checks ?? [],
+            routes: check.routes,
+            interactions: last.progress.plan?.checks ?? [],
             shouldStop,
             canSpend: (calls) =>
               !exhausted(
@@ -810,8 +718,7 @@ export const runAgent = inngest.createFunction(
           phases = addSpend(phases, browserSpend);
           budget = spendPhase(budget, browserSpend);
           browserResult = browsed;
-          problems = browsed.diagnostics;
-          affected = pageFiles(routes, runContext.pendingWrites);
+          problems = [...problems, ...browsed.diagnostics];
           screenshots = model.vision
             ? browsed.screenshots.map((shot) => ({
                 label:
@@ -823,73 +730,81 @@ export const runAgent = inngest.createFunction(
             : [];
         }
         diagnostics = problems;
-
-        if (previous !== null && preRound && problems.length > previous) {
-          const undo = rollbackPlan({
-            roundPaths: (runs.at(-1)?.tasks ?? []).flatMap((item) =>
-              item.kind === "file" && item.verb !== "deleted"
-                ? [item.path]
-                : [],
-            ),
-            preRound,
-            writtenBefore,
-            versionFiles: setup.files,
-          });
-          const { restore, remove, restorable } = undo;
-          if (restorable && (restore.length > 0 || remove.length > 0)) {
-            taskLog.push(
-              await rollback({
-                step,
-                stepId: `repair-rollback-${round}`,
-                projectId,
-                run: runContext,
-                restore,
-                remove,
-              }),
-            );
-            written = written.filter((path) => !remove.includes(path));
-            diagnostics = previousProblems;
-          }
-          break;
+        current = {
+          severity: severityOf(problems),
+          diagnostics: problems,
+          browser: browserResult,
+          files: check.files,
+        };
+        firstBlockers ??= current.severity.blockers;
+        if (!best || compareSeverity(current.severity, best.severity) < 0) {
+          best = current;
         }
         if (problems.length === 0) break;
-        if (previous !== null && problems.length >= previous) break;
-        if (round >= rounds || exhausted(budget)) break;
+        if (cycle >= GATE_CYCLES || exhausted(budget)) break;
 
-        preRound = new Map(runContext.pendingWrites);
-        for (const file of affected) {
-          if (!preRound.has(file.path)) preRound.set(file.path, file.content);
-        }
-        writtenBefore = [...written];
-        const repair = await runAgentLoop({
+        gateCycles += 1;
+        const fix: AgentRun = await runAgentLoop({
           ...loopArgs,
-          spec: builderSpec({ search: false, name: "repair" }),
-          stepPrefix: `repair-${round}`,
+          spec: builderSpec({
+            search: false,
+            name: mode === "editor" ? "editor" : "builder",
+          }),
+          stepPrefix: `gate-${cycle}`,
           messages: [
-            repairMessage({
-              request: setup.prompt,
-              diagnostics: problems,
-              affected,
-              designNotes: setup.designNotes,
-              repoMap: setup.repoMap,
-              screenshots,
-            }),
+            ...last.messages,
+            gateMessage({ diagnostics: problems, screenshots }),
           ],
           budget,
           written,
-          maxTurns: REPAIR_MAX_TURNS,
+          progress: last.progress,
+          maxTurns: GATE_TURNS,
         });
-        runs.push(repair);
-        taskLog.push(...repair.tasks);
-        budget = spend(budget, repair);
-        written = repair.written;
-        timings.repair += repair.modelMs + repair.toolMs;
-        previous = problems.length;
-        previousProblems = problems;
-        if (repair.stopped || repair.outOfCredits || repair.handoff) {
-          stopped = repair.stopped;
-          outOfCredits = repair.outOfCredits;
+        runs.push(fix);
+        last = fix;
+        taskLog.push(...fix.tasks);
+        budget = spend(budget, fix);
+        written = fix.written;
+        timings.gate += fix.modelMs + fix.toolMs;
+        if (fix.output) summary = fix.output;
+        if (fix.stopped || fix.outOfCredits || fix.handoff) {
+          stopped = fix.stopped;
+          outOfCredits = fix.outOfCredits;
+          handoff = fix.handoff;
+          current = null;
           break;
+        }
+      }
+      if (
+        best &&
+        current &&
+        best !== current &&
+        best.files &&
+        current.files &&
+        current.severity.blockers > best.severity.blockers
+      ) {
+        const undo = restorePlan({
+          snapshot: best.files,
+          current: current.files,
+          versionFiles: setup.files,
+        });
+        if (
+          undo.restorable &&
+          (undo.restore.length > 0 || undo.remove.length > 0)
+        ) {
+          taskLog.push(
+            await rollback({
+              step,
+              stepId: "gate-restore",
+              projectId,
+              run: runContext,
+              restore: undo.restore,
+              remove: undo.remove,
+            }),
+          );
+          written = written.filter((path) => !undo.remove.includes(path));
+          diagnostics = best.diagnostics;
+          browserResult = best.browser;
         }
       }
     }
@@ -913,7 +828,7 @@ export const runAgent = inngest.createFunction(
       if (hits.length > 0 && !stopped && !exhausted(budget)) {
         const scanFix = await runAgentLoop({
           ...loopArgs,
-          spec: builderSpec({ search: false, name: "repair" }),
+          spec: builderSpec({ search: false, name: "builder" }),
           messages: [
             ...messages,
             { role: "user", content: scanFixPrompt(hits) },
@@ -929,8 +844,7 @@ export const runAgent = inngest.createFunction(
         stopped = scanFix.stopped;
         written = scanFix.written;
         handoff = scanFix.handoff;
-        if (scanFix.finished && scanFix.output && !plan)
-          summary = scanFix.output;
+        if (scanFix.finished && scanFix.output) summary = scanFix.output;
       }
     }
 
@@ -1087,11 +1001,13 @@ export const runAgent = inngest.createFunction(
           : setup.hasVersion
             ? "Updated the site"
             : "First version";
+    const planTitle = last?.progress.plan?.title;
     const title =
       outOfCredits || stopped
         ? fallbackTitle
-        : (plan?.title ??
-          cleanTitle(firstSentence(notes ?? ""), fallbackTitle));
+        : planTitle
+          ? cleanTitle(planTitle, fallbackTitle)
+          : cleanTitle(firstSentence(notes ?? ""), fallbackTitle);
 
     const cost = await step.run("cost", () =>
       resolveRunCost(calls, lookupGenerationCost),
@@ -1195,7 +1111,7 @@ export const runAgent = inngest.createFunction(
     if (route) timings.memory = route.memory.ms;
 
     const memoryWrite =
-      mode === "pipeline" || mode === "builder" || mode === "editor"
+      mode === "builder" || mode === "editor"
         ? !stopped && !outOfCredits && !restricted && !resume
           ? await step.run("remember", async () => {
               const access = await memoryAccess(db, userId).catch(
@@ -1234,6 +1150,16 @@ export const runAgent = inngest.createFunction(
           intent,
           timings,
           issues: diagnostics.length,
+          turns: runs.reduce((sum, run) => sum + run.calls.length, 0),
+          gateCycles,
+          blockers: {
+            first: firstBlockers ?? 0,
+            final: severityOf(diagnostics).blockers,
+          },
+          browse: {
+            status: browserResult?.status ?? "not-run",
+            reason: browserResult?.reason ?? null,
+          },
           memory: {
             read: route?.memory.status ?? "off",
             reads: route?.memory.reads ?? 0,
@@ -1275,6 +1201,7 @@ export const runAgent = inngest.createFunction(
       files: saved.fileCount,
       filesChanged: written.length,
       issues: diagnostics.length,
+      gateCycles,
       timings,
       credits,
       costUsd: cost.costUsd,

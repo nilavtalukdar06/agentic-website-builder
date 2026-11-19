@@ -113,7 +113,7 @@ Why each package was chosen, and what it beat, is in `docs/decisions.md`.
 ├─ prisma.config.ts              # Prisma CLI config; points migrations at DIRECT_URL
 ├─ neon.ts                       # Neon infrastructure as code (the attachments bucket)
 ├─ sandbox-templates/nextjs/     # E2B template (Next.js 16 + shadcn + skills + AGENTS.md house rules) and blocks/ for generated sites
-├─ scripts/                      # agent smoke test, block catalog, file-icon and model-logo generators
+├─ scripts/                      # agent smoke test and eval, block catalog, file-icon and model-logo generators
 ├─ e2e/                          # Playwright specs
 ├─ docs/
 │  ├─ plan.md                    # phases, scope, env list, open decisions
@@ -140,7 +140,7 @@ Why each package was chosen, and what it beat, is in `docs/decisions.md`.
    │  ├─ client.ts, events.ts    # Inngest client and the typed agent/run and github/export events
    │  ├─ channels.ts             # realtime channel project:<id> and its topics
    │  ├─ functions/              # run-agent, export-github, maintenance (two crons)
-   │  └─ agent/                  # router, planner, generator, verify/repair, loop, tools, executor, prompts, guardrails
+   │  └─ agent/                  # router, loop, tools (plan, check, blocks), executor, checks, severity, prompts, guardrails
    ├─ lib/                       # shared client/server helpers (message parts, file tree, search params…)
    ├─ server/
    │  ├─ db.ts, auth.ts, session.ts
@@ -230,43 +230,48 @@ Follow-ups (`message.send`) follow the same path. Each follow-up is a new `USER`
 
 ![run-agent pipeline](docs/diagrams/agent-pipeline.svg)
 
-`run-agent` is a sequence of durable steps. The diagram and the steps below show the run after the Phase 11 harness (18 November 2026). The design is in [`docs/agent-harness.md`](docs/agent-harness.md).
+`run-agent` is a sequence of durable steps. The diagram and the steps below show the run after harness v4 (19 November 2026): one agent that verifies its own work. The design is in [`docs/agent-harness.md`](docs/agent-harness.md).
 
 **Early exits, never charged.** A legacy prompt with a secret, a prompt the user already stopped, an empty balance, or a `block` verdict from the guard classifier all end the run with a short reply and no model call that acts on the request.
 
-**Setup in parallel.** `guard-classify`, `sandbox` and `route` run at the same time. `load-project` has already computed a repo map, design notes and the routes from the latest Version, on our server. The router uses heuristics, and asks the user's chosen model only when it's unsure, to pick an intent and the files the request most likely touches.
+**Setup in parallel.** `guard-classify`, `sandbox` and `route` run at the same time. `load-project` has already computed a repo map and design notes from the latest Version, on our server. The router uses heuristics, and asks the user's chosen model only when it's unsure, to pick an intent and the files the request most likely touches.
 
-**One mode per intent.**
+**One agent loop for every change.**
 
-| Intent                                   | Steps                                                                                                                                                                                                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| New site or large change                 | `plan`: one structured call returns preset, fonts, pages, blocks and file contracts. `gen-foundation`: code applies the colour preset and copies the ready-made blocks. `gen-<wave>-<group>`: parallel one-shot workers write files in dependency waves. |
-| New site or change referencing a website | The builder loop, which has web search                                                                                                                                                                                                                   |
-| Edit or fix                              | The editor loop (`editor-model-N`, `editor-tools-N`) with the target files already in its context, at most 8 turns                                                                                                                                       |
-| Question                                 | `answer`: one call, no tools, no new version                                                                                                                                                                                                             |
+| Intent             | Steps                                                                          |
+| ------------------ | ------------------------------------------------------------------------------ |
+| New site           | The builder loop (`builder-model-N`, `builder-tools-N`), at most 40 turns      |
+| Large change       | The builder loop, at most 30 turns                                             |
+| Edit or fix        | The editor loop with the target files already in its context, at most 16 turns |
+| Question           | `answer`: one call, no tools, no new version                                   |
+| Remember or forget | A memory command, no new version                                               |
 
 Each loop turn is one model step and one tools step: all of a turn's tool calls run together, and read-only calls run in parallel. The tools are:
 
 | Tool                  | Does                                                                                                                          |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `editFile`            | Search-and-replace edits to an existing file: each block matches exactly once, all or nothing, with the same guards as writes |
+| `updatePlan`          | The agent's checklist, streamed to the chat; on a new site it also names the project and lists the browser checks             |
 | `createOrUpdateFiles` | Writes whole files (guarded paths, secret and tripwire scan, ≤ 20 files per call, ≤ 80 per run)                               |
+| `editFile`            | Search-and-replace edits to an existing file: each block matches exactly once, all or nothing, with the same guards as writes |
+| `check`               | Auto-fixes lint, `"use client"` and lucide `title`, then runs `tsc`, ESLint and a request to every page, and returns problems |
+| `addBlocks`           | Copies ready-made typed sections into `components/blocks` and returns their props                                             |
+| `applyPreset`         | Applies one of six colour presets to `app/globals.css`                                                                        |
 | `readFiles`           | Reads files or line ranges (capped per file and per call)                                                                     |
 | `listFiles`           | Lists project files by folder or glob                                                                                         |
 | `searchCode`          | `grep` over the source, skipping dependencies, build output and env files                                                     |
 | `terminal`            | Runs a command in `/home/user/app` (command guard, 3-minute timeout, output redacted and truncated)                           |
 | `parallel_search`     | Web search through the gateway. Offered **only** when the prompt references a website (a URL or domain), at most 6 per run    |
 
-**Verify and repair.**
+**The done gate.**
 
-1. `verify-N` first runs `eslint --fix` and adds a missing `"use client"`.
-2. It then runs `tsc`, the ESLint rules that break behaviour, and a request to each route. Missing packages are installed and the checks run again.
-3. When problems remain, `repair-N` gives them, with the affected files, to the editor for up to 6 turns. A new site gets 3 rounds and an edit gets 2.
-4. A round that makes things worse is rolled back, and the reply lists anything still broken.
+1. When the agent replies with its summary, `gate-check-N` runs the same checks as the `check` tool and snapshots the source files.
+2. If every page answers, `gate-browse-N` opens the site in Browserbase at desktop and phone width, even when type errors remain.
+3. Anything that fails goes back into **the same conversation**, with screenshots for vision models, for up to 3 cycles of 12 turns.
+4. If the final state has more blockers (failing pages, missing modules, syntax errors) than an earlier cycle, `gate-restore` brings that state back. The reply lists anything still broken.
 
 **Checkpoints and handoff.** Every 5 turns the working tree is scanned and saved as a `DRAFT` version. Inngest limits a run to about 1,000 steps and 32 MiB of state, so at 850 steps or 24 MiB the Builder writes a handoff note, the run saves a checkpoint, debits the work so far, and sends a new `agent/run` with `resume.handoff`. The next run restores the checkpoint and continues, with no chat message between the segments.
 
-**Finishing.** The run scans the written files for secrets (one chance to fix) and checks the reply with the output guard. The reply comes from the plan's summary or the agent's own summary, and the title from the plan or the summary's first sentence: there are no extra model calls. The run asks the gateway for the **exact cost** of every call, persists the Version and reply in one transaction, and debits the ledger with the run's intent and per-phase timings (`bun run agent:smoke` prints them).
+**Finishing.** The run scans the written files for secrets (one chance to fix) and checks the reply with the output guard. The reply is the agent's own summary, and the title comes from the plan or the summary's first sentence: there are no extra model calls. The run asks the gateway for the **exact cost** of every call, persists the Version and reply in one transaction, and debits the ledger with the run's intent and per-phase timings (`bun run agent:smoke` prints them).
 
 **Failures.** After two retries, `onFailure` writes an error reply with a Retry action and charges nothing. A 429 from a model waits for the gateway's `Retry-After` (up to 5 minutes); a 401, 403 or 404 stops with "the selected model isn't available, pick another".
 
@@ -308,7 +313,7 @@ Every dynamic route has a skeleton `loading.tsx`, an `error.tsx` with retry, an 
 
 ![Sandbox lifecycle](docs/diagrams/sandbox-lifecycle.svg)
 
-Each project has at most one E2B sandbox, built from the custom template in `sandbox-templates/nextjs/`: Node 24, a Next.js 16 app scaffolded with shadcn, all shadcn components, the five agent skills pinned by a committed lockfile (readable by the agent, and distilled into the house rules in `AGENTS.md`), and `next dev` already running on port 3000. The ready-made blocks in `sandbox-templates/nextjs/blocks/` are not in the image: the planner picks them and our code copies only those into a project.
+Each project has at most one E2B sandbox, built from the custom template in `sandbox-templates/nextjs/`: Node 24, a Next.js 16 app scaffolded with shadcn, all shadcn components, the five agent skills pinned by a committed lockfile (readable by the agent, and distilled into the house rules in `AGENTS.md`), and `next dev` already running on port 3000. The ready-made blocks in `sandbox-templates/nextjs/blocks/` are not in the image: the agent adds the ones it uses with `addBlocks`.
 
 - **Pause instead of kill.** Sandboxes are created with `lifecycle: { onTimeout: "pause", autoResume: false }` and a 30-minute idle timeout that every step renews. A paused sandbox keeps its memory, `node_modules` and dev server, and compute is not billed.
 - **No accidental wake-ups.** `autoResume` is off, so preview traffic alone never wakes (or bills) a sandbox. Only a run, an export or `sandbox.wake` resumes it.
@@ -337,7 +342,7 @@ If the classifier is down it **fails open** to the deterministic checks and reco
 
 ![Stripe top-up sequence](docs/diagrams/seq-topup.svg)
 
-- **Price of a run:** `credits = ceil(cost in USD × CREDITS_PER_USD × CREDIT_MARKUP)`. The USD cost is the exact cost AI Gateway reports for every call (router, planner, file writers, builder or editor turns, repairs, answers, searches and the guard classifier; there are no separate summary or title calls); calls it cannot resolve fall back to a live-price estimate. The ledger `meta` lists the model, the USD cost, exact and estimated call counts, the run's intent and per-phase timings, and splits the cost by agent (`router`, `planner`, `generator`, `builder`, `editor`, `repair`, `answer` and `guard`).
+- **Price of a run:** `credits = ceil(cost in USD × CREDITS_PER_USD × CREDIT_MARKUP)`. The USD cost is the exact cost AI Gateway reports for every call (router, builder or editor turns including gate cycles, browser checks, answers, searches and the guard classifier; there are no separate summary or title calls); calls it cannot resolve fall back to a live-price estimate. The ledger `meta` lists the model, the USD cost, exact and estimated call counts, the run's intent and per-phase timings, and splits the cost by agent (`router`, `builder`, `editor`, `browser`, `answer` and `guard`).
 - **What is free:** failed runs, blocked prompts, stopped prompts that never started, and out-of-credits replies. A stopped run is charged for the work it already did, because that work was paid for at the gateway.
 - **Out of credits:** a run with a balance of 0 or less does not start. A running build stops when its running cost reaches the balance and keeps what it built.
 - **Top-ups:** any whole-dollar amount from $5 to $100. `credits.checkout` creates a Stripe Checkout session with the credit amount frozen in signed metadata. Credits are granted **only** by the webhook, never by the success redirect. The fulfillment transaction upserts `Payment` by `providerRef` and `CreditLedger` by `paymentId`, so a re-delivered webhook is a no-op. A paid session that cannot be credited raises an alert and returns 500 so Stripe retries.
@@ -520,7 +525,7 @@ The workspace preview shows a read-only live browser and streamed page/interacti
 
 Screenshots are stored in Neon Object Storage and served through signed URLs after project ownership checks. The nightly cleanup targets screenshots older than 30 days; project deletion also deletes them. Saved check text remains with the conversation after screenshots expire. Browserbase session recording is disabled by the provider adapter; this does not promise deletion of Browserbase operational logs. Browserbase receives the preview address and rendered page content; Stagehand page context is processed through AI Gateway. Privacy and Terms changes need owner review before release.
 
-The diagrams show the browser checks: `browse-N` in `agent-pipeline` and `seq-generation`, Browserbase and its read-only live view in `architecture`, and Browserbase as an external entity in both data-flow levels. Screenshot storage is not drawn separately (it is the existing Neon Object Storage). No visual critic or user browser takeover is included.
+The diagrams show the browser checks: `gate-browse-N` in `agent-pipeline` and `seq-generation`, Browserbase and its read-only live view in `architecture`, and Browserbase as an external entity in both data-flow levels. Screenshot storage is not drawn separately (it is the existing Neon Object Storage). No visual critic or user browser takeover is included.
 
 Validation: component tests cover embed restrictions, disconnect/retry, check states and saved screenshots. Realtime Playwright coverage needs `DATABASE_URL`, `BETTER_AUTH_SECRET` and a running Inngest dev server; paid Browserbase credentials are unnecessary for its mocked viewer. A real cloud-session smoke run additionally requires `BROWSERBASE_API_KEY` and the existing gateway/sandbox/storage credentials.
 

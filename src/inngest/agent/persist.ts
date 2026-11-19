@@ -205,6 +205,10 @@ export async function debitCredits(
       intent: string;
       timings: Record<string, number>;
       issues?: number;
+      turns?: number;
+      gateCycles?: number;
+      blockers?: { first: number; final: number };
+      browse?: { status: string; reason: string | null };
       memory?: { read: string; reads: number; write: string };
     };
   },

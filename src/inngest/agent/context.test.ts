@@ -48,7 +48,7 @@ describe("buildContext", () => {
     expect(
       buildContext({ intent: "create", designNotes: "", repoMap: "" }),
     ).toBe(
-      "<project_context>\n</project_context>\nThis is a new site. Build the whole request in as few replies as you can.",
+      "<project_context>\n</project_context>\nThis is a new site. Start with updatePlan (with projectName and browser checks), set the theme and blocks, then build it page by page, running check after each batch.",
     );
   });
 });

@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 
 export const APP_DIR = "/home/user/app";
+export const PREVIEW_PORT = 3000;
 
 const blockedSegments = new Set(["node_modules", ".next", ".git"]);
 const readOnlySegments = new Set([".agents", ".claude", ".vibe"]);

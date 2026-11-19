@@ -1,8 +1,60 @@
-# Agent harness v3: fast, high-quality builds and quick follow-ups (Phase 11)
+# Agent harness v4: one agent that verifies its own work (Phase 11)
 
-**Status: built 18 November 2026, verified with unit tests and stubbed models only.** It replaces `docs/plan2.md`, which the owner discarded the same day. `docs/agent-v2.md` stays as background reading for the diagnosis, but its build order no longer applies.
+**Status: built 19 November 2026, verified with unit tests and stubbed models only.** v4 replaces the v3 planner, parallel writers and repair agent. The v3 notes below still describe the parts v4 keeps (router, context pack, editFile, read tools, blocks, presets, browser checks, memory, stop).
 
-**Why (owner's report, 18 November 2026):** even strong models such as `moonshotai/kimi-k2.7-code` take minutes for a small app like a todo list, the result looks mediocre, and a one-line cosmetic follow-up also takes minutes.
+**Why (owner's report, 19 November 2026):** first builds often finished broken: a missing module (`@/components/tasks/TaskApp`), a lucide `title` prop type error, and `GET /` returning 500. The preview didn't load, the browser check rarely ran, repair fixed nothing, and builds took 4–12 minutes. The owner asked for accuracy over speed, working the way Claude Code and Codex do.
+
+## v4.1 Root causes found in v3
+
+| Symptom                               | Cause in v3                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Imports pointed at files nobody wrote | Parallel workers wrote files blind to each other's output; `generated.missing` was computed but never used.             |
+| Repair fixed nothing                  | A fresh-context repair agent, told to "fix with editFile" (even for missing files), with 6 turns and no plan contracts. |
+| Real fixes were undone                | Rollback compared problem counts; creating a missing module reveals more type errors, so the fix was rolled back.       |
+| The browser check never ran           | It was gated on zero diagnostics.                                                                                       |
+| Lucide `title` errors                 | A model knowledge gap that no rule or fix covered.                                                                      |
+
+## v4.2 Pipeline
+
+```
+agent/run → guard-input · claim · load-project
+          → in parallel: guard-classify | sandbox | route
+          → mode by intent:
+              create / large-change / edit / fix → one agent loop (builder-model-N / builder-tools-N)
+                  turn budget: create 40, large-change 30, edit 16, fix 16, resumed 40
+              question → answer · remember / forget → memory command
+          → name-project (new sites, from the plan's projectName)
+          → done gate, up to 3 cycles:
+              gate-check-N   checkProject: auto-fixes, tsc, ESLint, curl every page, source snapshot
+              gate-browse-N  Browserbase, whenever every page answers (type errors don't block it)
+              gate-N-*       the same conversation continues with the findings (12 turns)
+          → gate-restore (only if the final state has more blockers than an earlier cycle)
+          → secret-scan → guard-output → cost → persist → remember → meter → notify   (unchanged)
+```
+
+## v4.3 What was built
+
+- **One loop for every change** (`run-agent.ts`). `makePlan`, `generateFromPlan`, `planWaves`, the worker prompt, `repairMessage`, `REPAIR_ROUNDS`, `rollbackPlan` and `file-blocks.ts` are gone.
+- **New tools** (`tools.ts`, `execute-tool.ts`):
+  - `updatePlan`: the agent's checklist. The first call streams a "Plan: …" row, and later calls stream a "Done: …" row per finished step. The plan (with `projectName`, `title` and up to 5 browser `checks`) lives in the run's progress and drives the project name, the version title and the browser interactions (`plan.ts`).
+  - `check`: the same checks as the gate (`checks.ts` `runChecks`), as a tool. It auto-fixes lint, missing `"use client"` and lucide `title`, installs missing packages through the package policy, then runs incremental `tsc`, ESLint on the changed files and a `curl` of every static page (up to 8). Auto-fixed files are tracked as run writes.
+  - `applyPreset(preset)` and `addBlocks(blocks)`: the v3 presets and blocks, now as tools that write through the same guards. `addBlocks` returns each block's props.
+- **The done gate:** when the agent replies with its summary, the harness runs the full check, and the browser check whenever every page loads. Remaining problems (with screenshots for vision models) are appended to **the same messages**, and the loop continues for up to 3 cycles of 12 turns each.
+- **Severity, not counts** (`severity.ts`): blockers are failing pages, missing modules and syntax errors; then other errors; then browser findings. Each gate check snapshots the source files (`sourceSnapshot`). At the end, the earliest best state is restored only if the final state has more **blockers** than it, so a fix that reveals type errors is kept.
+- **Prompt:** the system prompt lists the tools, the block catalog and the presets, and asks the agent to plan once, write a page with everything it imports in one batch, run `check` after each batch, and finish only when `check` passes. The house rules (also in the sandbox `AGENTS.md`) add the lucide `title` rule and "every import must resolve".
+- **Deterministic fix:** `fixLucideTitles` (`fixes.ts`) turns `title` on lucide icons into `aria-label`.
+- **Metrics:** `meta.run` adds `turns`, `gateCycles`, `blockers { first, final }` and `browse { status, reason }`.
+- **Eval:** `bun run agent:eval` (`scripts/agent-eval.ts`) runs five fixed cases (todo app, landing page, dashboard with sidebar, an edit, and a fix of a deliberately broken home page) through the real pipeline and prints a scorecard. It exits non-zero unless every case ends with zero issues.
+
+## v4.4 How the owner verifies it live
+
+1. With the dev server and Inngest dev running, run `bun run agent:eval`. Target: 5/5 cases with blockers `→0`, zero issues and a passed browser check.
+2. Run the todo-app prompt by hand. Confirm there is no "checks still report" note, the preview loads, and the reply shows a browser check.
+3. Optionally run `bun run sandbox:build` and update `E2B_TEMPLATE_ID`, so new sandboxes get the new house rules in `AGENTS.md`. The system prompt already carries them, so this is not required.
+
+---
+
+# v3 notes (kept for the parts v4 still uses)
 
 ## 1. Root causes, from the code
 
@@ -139,7 +191,7 @@ Supermemory is now a provider too (see "Memory layer" below).
 
 ### Stopping a run
 
-Stop sets `stopRequestedAt` on the prompt. Every model call (builder/editor/repair turn, planner, file writers, answers) runs under `withStopWatch`, which checks the flag every 1.5 s and aborts the call, so a run ends within a couple of seconds instead of at the end of the current step. Steps also check the flag before they start. The chat shows "Stopping…" until the run ends, and the live reply stays under the prompt that is running.
+Stop sets `stopRequestedAt` on the prompt. Every model call (builder, editor and gate turns, and answers) runs under `withStopWatch`, which checks the flag every 1.5 s and aborts the call, so a run ends within a couple of seconds instead of at the end of the current step. Steps also check the flag before they start. The chat shows "Stopping…" until the run ends, and the live reply stays under the prompt that is running.
 
 ## 6. How the owner verifies it live
 
@@ -154,7 +206,7 @@ The workspace preview shows a read-only live browser and streamed page/interacti
 
 Screenshots are stored in Neon Object Storage and served through signed URLs after project ownership checks. The nightly cleanup targets screenshots older than 30 days; project deletion also deletes them. Saved check text remains with the conversation after screenshots expire. Browserbase session recording is disabled by the provider adapter; this does not promise deletion of Browserbase operational logs. Browserbase receives the preview address and rendered page content; Stagehand page context is processed through AI Gateway. Privacy and Terms changes need owner review before release.
 
-The diagrams show the browser checks: `browse-N` in `agent-pipeline` and `seq-generation`, Browserbase and its read-only live view in `architecture`, and Browserbase as an external entity in both data-flow levels. Screenshot storage is not drawn separately (it is the existing Neon Object Storage). No visual critic or user browser takeover is included.
+The diagrams show the browser checks: `gate-browse-N` in `agent-pipeline` and `seq-generation`, Browserbase and its read-only live view in `architecture`, and Browserbase as an external entity in both data-flow levels. Screenshot storage is not drawn separately (it is the existing Neon Object Storage). No visual critic or user browser takeover is included.
 
 Validation: component tests cover embed restrictions, disconnect/retry, check states and saved screenshots. Realtime Playwright coverage needs `DATABASE_URL`, `BETTER_AUTH_SECRET` and a running Inngest dev server; paid Browserbase credentials are unnecessary for its mocked viewer. A real cloud-session smoke run additionally requires `BROWSERBASE_API_KEY` and the existing gateway/sandbox/storage credentials.
 

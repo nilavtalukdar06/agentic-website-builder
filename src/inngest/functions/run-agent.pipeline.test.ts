@@ -11,8 +11,6 @@ const mocks = vi.hoisted(() => ({
   loop: vi.fn(),
   saveRunResult: vi.fn(),
   debitCredits: vi.fn(),
-  makePlan: vi.fn(),
-  generateFromPlan: vi.fn(),
   checkProject: vi.fn(),
   answerQuestion: vi.fn(),
   browse: vi.fn(),
@@ -60,8 +58,6 @@ vi.mock("@/inngest/agent/persist", async (importOriginal) => ({
 }));
 vi.mock("@/inngest/agent/pipeline", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/inngest/agent/pipeline")>()),
-  makePlan: mocks.makePlan,
-  generateFromPlan: mocks.generateFromPlan,
   checkProject: mocks.checkProject,
   answerQuestion: mocks.answerQuestion,
 }));
@@ -85,7 +81,7 @@ const emptyUsage = {
 };
 const noSpend = { calls: [], usage: emptyUsage, spentUsd: 0 };
 
-const { runAgent, issuesNote, pipelineSummary, rollbackPlan, routesToCheck } =
+const { runAgent, issuesNote, gateMessage, GATE_CYCLES } =
   await import("./run-agent");
 
 const model = { id: "moonshotai/kimi-k2.7-code", vision: true, pricing: null };
@@ -240,134 +236,149 @@ describe("question intent", () => {
   });
 });
 
-describe("create intent", () => {
-  const plan = {
-    projectName: "Night Owl",
-    title: "Night Owl Coffee",
-    summary: "A café site for late-night studying.",
-    design: {
-      preset: "sunset",
-      headingFont: "Fraunces",
-      bodyFont: "Inter",
-      theme: "system",
-      direction: "Warm.",
-    },
-    pages: [{ route: "/", title: "Home", sections: ["Hero", "Menu"] }],
-    blocks: [],
-    files: [{ path: "app/page.tsx", purpose: "home", dependsOn: [] }],
-    packages: [],
+const createSetup = {
+  "load-project": {
+    model,
+    history: [{ role: "USER", content: "A todo app" }],
+    prompt: "A todo app",
+    balance: 100,
+    hasVersion: false,
+    files: [],
+    repoMap: "",
+    designNotes: "",
+  },
+  route: {
+    intent: "create",
+    targets: [],
+    preloaded: [],
+    spend: noSpend,
+    memory: { status: "off", reason: null, block: "", reads: 0, ms: 0 },
+    ms: 1,
+  },
+};
+
+const plan = {
+  projectName: "Night Owl",
+  title: "Night Owl Todo",
+  steps: [{ step: "Build the task list", status: "done" }],
+  checks: [{ route: "/", action: "Add a task", expect: "The task is listed" }],
+};
+
+function agentRun(overrides: Record<string, unknown> = {}) {
+  return {
+    output: "Built a todo app.",
+    finished: true,
+    outOfCredits: false,
+    stopped: false,
+    capped: false,
+    messages: [
+      { role: "user", content: "A todo app" },
+      { role: "assistant", content: "done" },
+    ],
+    usage: emptyUsage,
+    calls: [{ generationIds: [], estimatedUsd: 0, agent: "builder" }],
+    tasks: [{ kind: "file", verb: "created", path: "app/page.tsx", lines: 1 }],
+    toolParts: [],
+    reasoning: [],
+    reasoningMs: 0,
+    written: ["app/page.tsx"],
+    searches: [],
+    progress: { plan },
+    spentUsd: 0,
+    handoff: null,
+    modelMs: 100,
+    toolMs: 50,
+    ...overrides,
   };
+}
 
-  const setup = {
-    "load-project": {
-      model,
-      history: [{ role: "USER", content: "A café site" }],
-      prompt: "A café site",
-      balance: 100,
-      hasVersion: false,
-      files: [],
-      repoMap: "",
-      designNotes: "",
-      routes: [],
-    },
-    route: {
-      intent: "create",
-      targets: [],
-      preloaded: [],
-      spend: noSpend,
-      memory: { status: "off", reason: null, block: "", reads: 0, ms: 0 },
-      ms: 1,
-    },
+function checked(diagnostics: unknown[], files: Record<string, string> = {}) {
+  return {
+    diagnostics,
+    routes: ["/"],
+    fixed: [],
+    files: { "app/page.tsx": "export default 1", ...files },
+    tasks: [
+      {
+        kind: "note",
+        label:
+          diagnostics.length === 0
+            ? "Checked types, lint and pages: no problems"
+            : `Checks found ${diagnostics.length} problems`,
+      },
+    ],
+    ms: 1000,
   };
+}
 
-  beforeEach(() => {
-    mocks.makePlan.mockResolvedValue({
-      plan,
-      warnings: [],
-      spend: noSpend,
-      ms: 4000,
-    });
-    mocks.generateFromPlan.mockResolvedValue({
-      files: [{ path: "app/page.tsx", content: "export default 1" }],
-      tasks: [
-        { kind: "file", verb: "created", path: "app/page.tsx", lines: 1 },
-      ],
-      missing: [],
-      spend: noSpend,
-      stopped: false,
-      outOfCredits: false,
-      ms: 20000,
-    });
-  });
+const typeError = {
+  source: "tsc",
+  path: "components/tasks/TaskStats.tsx",
+  line: 58,
+  message: "TS2322: Property 'title' does not exist on type 'LucideProps'.",
+};
+const missingModule = {
+  source: "tsc",
+  path: "app/page.tsx",
+  line: 3,
+  message: "TS2307: Cannot find module '@/components/tasks/TaskApp'.",
+};
+const routeFailure = {
+  source: "route",
+  path: null,
+  line: null,
+  message: "GET / returned 500: Module not found",
+};
 
-  test("plans, generates and verifies without the builder loop, and replies from the plan", async () => {
-    mocks.checkProject.mockResolvedValue({
-      diagnostics: [],
-      affected: [],
-      fixed: [],
-      tasks: [
-        { kind: "note", label: "Checked types, lint and pages: no problems" },
-      ],
-      ms: 3000,
-    });
-    const step = stepFor(results(setup));
-    const result = await handler({
+function runCreate(extra: Record<string, unknown> = {}) {
+  const step = stepFor(results({ ...createSetup, ...extra }));
+  return {
+    step,
+    done: handler({
       event: { data: { projectId: "p1", userId: "u1", messageId: "m1" } },
       runId: "r1",
       step,
-    });
+    }),
+  };
+}
+
+describe("create intent", () => {
+  test("one agent loop builds, the done gate checks and browses, and the reply comes from the agent", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject.mockResolvedValue(checked([]));
+    const { done } = runCreate();
+    const result = await done;
     expect(result).toMatchObject({
       status: "done",
-      mode: "pipeline",
+      mode: "builder",
       issues: 0,
     });
-    expect(mocks.loop).not.toHaveBeenCalled();
-    expect(mocks.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "notify/send",
-        data: {
-          kind: "run-finished",
-          userId: "u1",
-          projectId: "p1",
-          messageId: "m1",
-          key: "r1",
-        },
-      }),
-    );
+    expect(mocks.loop).toHaveBeenCalledTimes(1);
+    expect(mocks.loop.mock.calls[0][0]).toMatchObject({
+      maxTurns: 40,
+      expectWrites: true,
+    });
     expect(mocks.db.project.updateMany).toHaveBeenCalledWith({
       where: { id: "p1", userId: "u1" },
       data: { name: "Night Owl" },
     });
-    expect(mocks.checkProject).toHaveBeenCalledTimes(1);
     expect(mocks.checkProject).toHaveBeenCalledWith(
-      expect.objectContaining({ routes: ["/"], changed: ["app/page.tsx"] }),
-    );
-    const saved = mocks.saveRunResult.mock.calls[0][1];
-    expect(saved.title).toBe("Night Owl Coffee");
-    expect(saved.content).toBe(pipelineSummary(plan as never));
-    expect(saved.parts[0]).toMatchObject({
-      type: "task",
-      title: "Night Owl Coffee",
-      items: [
-        { kind: "sandbox", label: "Sandbox ready" },
-        { kind: "file", verb: "created", path: "app/page.tsx", lines: 1 },
-        { kind: "note", label: "Checked types, lint and pages: no problems" },
-        {
-          kind: "note",
-          label:
-            "Checked the site in the browser on desktop and phone: no problems",
-        },
-      ],
-    });
-    expect(mocks.browse).toHaveBeenCalledWith(
       expect.objectContaining({
-        stepId: "browse-0",
-        round: 0,
-        routes: ["/"],
-        interactions: [],
-        model,
+        stepId: "gate-check-0",
+        changed: ["app/page.tsx"],
+        snapshot: true,
       }),
     );
+    expect(mocks.browse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stepId: "gate-browse-0",
+        routes: ["/"],
+        interactions: plan.checks,
+      }),
+    );
+    const saved = mocks.saveRunResult.mock.calls[0][1];
+    expect(saved.title).toBe("Night Owl Todo");
+    expect(saved.content).toBe("Built a todo app.");
     expect(saved.parts).toContainEqual({
       type: "browser",
       status: "passed",
@@ -375,233 +386,138 @@ describe("create intent", () => {
       checks: passedBrowser.checks,
       screenshots: passedBrowser.screenshots,
     });
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notify/send",
+        data: expect.objectContaining({ kind: "run-finished" }),
+      }),
+    );
+    expect(mocks.debitCredits).toHaveBeenCalledWith(
+      mocks.db,
+      expect.objectContaining({
+        run: expect.objectContaining({
+          gateCycles: 0,
+          blockers: { first: 0, final: 0 },
+          browse: { status: "passed", reason: null },
+        }),
+      }),
+    );
   });
 
-  test("repairs reported problems, then says honestly what is still broken", async () => {
-    const problem = {
-      source: "tsc",
-      path: "app/page.tsx",
-      line: 1,
-      message: "TS2304: Cannot find name 'Menu'.",
-    };
+  test("failures go back into the same conversation and the fixed result is saved", async () => {
+    const build = agentRun();
+    mocks.loop
+      .mockResolvedValueOnce(build)
+      .mockResolvedValueOnce(
+        agentRun({ output: "Built a todo app and fixed the icon label." }),
+      );
     mocks.checkProject
-      .mockResolvedValueOnce({
-        diagnostics: [problem, { ...problem, line: 2 }],
-        affected: [{ path: "app/page.tsx", content: "export default 1" }],
-        fixed: [],
-        tasks: [],
-        ms: 1000,
-      })
-      .mockResolvedValueOnce({
-        diagnostics: [problem],
-        affected: [],
-        fixed: [],
-        tasks: [],
-        ms: 1000,
-      })
-      .mockResolvedValueOnce({
-        diagnostics: [problem],
-        affected: [],
-        fixed: [],
-        tasks: [],
-        ms: 1000,
-      });
-    mocks.loop.mockResolvedValue({
-      output: "Fixed one",
-      finished: true,
-      outOfCredits: false,
-      stopped: false,
-      capped: false,
-      messages: [],
-      usage: emptyUsage,
-      calls: [],
-      tasks: [],
-      toolParts: [],
-      reasoning: [],
-      reasoningMs: 0,
-      written: ["app/page.tsx"],
-      searches: [],
-      progress: {},
-      spentUsd: 0,
-      handoff: null,
-      modelMs: 100,
-      toolMs: 50,
+      .mockResolvedValueOnce(checked([typeError]))
+      .mockResolvedValueOnce(checked([]));
+    const result = await runCreate().done;
+    expect(result.issues).toBe(0);
+    expect(mocks.browse).toHaveBeenCalledTimes(2);
+    const fix = mocks.loop.mock.calls[1][0];
+    expect(fix).toMatchObject({
+      stepPrefix: "gate-0",
+      maxTurns: 12,
+      progress: build.progress,
     });
-    const step = stepFor(results(setup));
-    const result = await handler({
-      event: { data: { projectId: "p1", userId: "u1", messageId: "m1" } },
-      runId: "r1",
-      step,
-    });
-    expect(mocks.loop).toHaveBeenCalledTimes(2);
-    expect(mocks.loop.mock.calls[0][0]).toMatchObject({
-      stepPrefix: "repair-0",
-      maxTurns: 6,
-    });
+    expect(fix.messages.slice(0, 2)).toEqual(build.messages);
+    const text = JSON.stringify(fix.messages[2].content);
+    expect(text).toContain("LucideProps");
+    expect(text).toContain('<untrusted source=\\"checks\\">');
+    expect(fix.messages[2].content).toContainEqual(
+      expect.objectContaining({
+        type: "file",
+        data: new URL("vibe-attachment:qa/p1/r1/0-desktop.png"),
+      }),
+    );
+    const saved = mocks.saveRunResult.mock.calls[0][1];
+    expect(saved.content).toBe("Built a todo app and fixed the icon label.");
+  });
+
+  test("stops after the gate cycle limit and reports what is still broken", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject.mockResolvedValue(checked([typeError]));
+    const result = await runCreate().done;
+    expect(mocks.loop).toHaveBeenCalledTimes(1 + GATE_CYCLES);
+    expect(mocks.checkProject).toHaveBeenCalledTimes(1 + GATE_CYCLES);
     expect(result.issues).toBe(1);
     const saved = mocks.saveRunResult.mock.calls[0][1];
     expect(saved.content).toContain(
       "**Heads-up:** the automatic checks still report 1 problem",
     );
   });
-});
 
-describe("browser findings", () => {
-  test("go to the repair agent with screenshots, then the site is checked again", async () => {
-    const plan = {
-      projectName: "Todo",
-      title: "Todo",
-      summary: "A todo app.",
-      design: {
-        preset: "ocean",
-        headingFont: "Inter",
-        bodyFont: "Inter",
-        theme: "system",
-        direction: "Calm.",
-      },
-      pages: [{ route: "/", title: "Home", sections: ["List"] }],
-      blocks: [],
-      files: [{ path: "app/page.tsx", purpose: "home", dependsOn: [] }],
-      packages: [],
-      checks: [
-        { route: "/", action: "Add a task", expect: "The task is listed" },
-      ],
-    };
-    mocks.makePlan.mockResolvedValue({
-      plan,
-      warnings: [],
-      spend: noSpend,
-      ms: 1,
-    });
-    mocks.generateFromPlan.mockResolvedValue({
-      files: [{ path: "app/page.tsx", content: "export default 1" }],
-      tasks: [],
-      missing: [],
-      spend: noSpend,
-      stopped: false,
-      outOfCredits: false,
-      ms: 1,
-    });
-    mocks.checkProject.mockResolvedValue({
-      diagnostics: [],
-      affected: [],
-      fixed: [],
-      tasks: [],
-      ms: 1,
-    });
-    const finding = {
-      source: "browser",
-      path: null,
-      line: null,
-      message: "/ at phone width (390px): the page scrolls sideways.",
-    };
-    mocks.browse
-      .mockResolvedValueOnce({
-        ...passedBrowser,
-        status: "failed",
-        diagnostics: [finding],
-        calls: [{ usage: emptyUsage, estimatedUsd: 0.002, generationIds: [] }],
-      })
-      .mockResolvedValueOnce(passedBrowser);
-    mocks.loop.mockResolvedValue({
-      output: "Fixed the overflow",
-      finished: true,
-      outOfCredits: false,
-      stopped: false,
-      capped: false,
-      messages: [],
-      usage: emptyUsage,
-      calls: [],
-      tasks: [],
-      toolParts: [],
-      reasoning: [],
-      reasoningMs: 0,
-      written: ["app/page.tsx"],
-      searches: [],
-      progress: {},
-      spentUsd: 0,
-      handoff: null,
-      modelMs: 1,
-      toolMs: 1,
-    });
-    const step = stepFor(
-      results({
-        "load-project": {
-          model,
-          history: [{ role: "USER", content: "A todo app" }],
-          prompt: "A todo app",
-          balance: 100,
-          hasVersion: false,
-          files: [],
-          repoMap: "",
-          designNotes: "",
-          routes: [],
-        },
-        route: {
-          intent: "create",
-          targets: [],
-          preloaded: [],
-          spend: noSpend,
-          memory: { status: "off", reason: null, block: "", reads: 0, ms: 0 },
-          ms: 1,
-        },
-      }),
-    );
-    const result = await handler({
-      event: { data: { projectId: "p1", userId: "u1", messageId: "m1" } },
-      runId: "r1",
-      step,
-    });
-    expect(result.issues).toBe(0);
-    expect(mocks.browse).toHaveBeenCalledTimes(2);
-    expect(mocks.browse.mock.calls[0][0]).toMatchObject({
-      interactions: plan.checks,
-    });
-    const repair = mocks.loop.mock.calls[0][0];
-    expect(repair.stepPrefix).toBe("repair-0");
-    const content = repair.messages[0].content;
-    const text = JSON.stringify(content);
-    expect(text).toContain("scrolls sideways");
-    expect(text).toContain('<untrusted source=\\"checks\\">');
-    expect(content).toContainEqual(
-      expect.objectContaining({
-        type: "file",
-        data: new URL("vibe-attachment:qa/p1/r1/0-desktop.png"),
-      }),
-    );
-    expect(mocks.debitCredits).toHaveBeenCalledWith(
-      mocks.db,
-      expect.objectContaining({
-        cost: expect.anything(),
-        run: expect.objectContaining({
-          timings: expect.objectContaining({ browse: 18000 }),
+  test("a failing page skips the browser, and creating the missing file counts as progress", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject
+      .mockResolvedValueOnce(checked([missingModule, routeFailure]))
+      .mockResolvedValueOnce(
+        checked([typeError, { ...typeError, line: 60 }], {
+          "components/tasks/TaskApp.tsx": "export function TaskApp() {}",
         }),
-      }),
+      )
+      .mockResolvedValueOnce(checked([]));
+    const { step, done } = runCreate();
+    const result = await done;
+    expect(result.issues).toBe(0);
+    expect(mocks.browse.mock.calls.map(([input]) => input.stepId)).toEqual([
+      "gate-browse-1",
+      "gate-browse-2",
+    ]);
+    expect(step.run.mock.calls.map(([name]) => name)).not.toContain(
+      "gate-restore",
     );
+  });
+
+  test("restores the state with fewer blockers when fixing made pages fail", async () => {
+    mocks.loop.mockResolvedValue(agentRun());
+    mocks.checkProject
+      .mockResolvedValueOnce(checked([typeError]))
+      .mockResolvedValue(
+        checked([routeFailure], {
+          "app/page.tsx": "broken",
+          "components/new.tsx": "x",
+        }),
+      );
+    const { step, done } = runCreate({
+      "gate-restore": {
+        sandbox: null,
+        task: {
+          kind: "note",
+          label:
+            "Restored the earlier state, which had fewer blocking problems",
+        },
+      },
+    });
+    const result = await done;
+    const restore = step.run.mock.calls.find(
+      ([name]) => name === "gate-restore",
+    );
+    expect(restore).toBeDefined();
+    expect(result.issues).toBe(1);
+    const saved = mocks.saveRunResult.mock.calls[0][1];
+    expect(saved.content).toContain("LucideProps");
+    expect(saved.parts[0].items).toContainEqual({
+      kind: "note",
+      label: "Restored the earlier state, which had fewer blocking problems",
+    });
+  });
+
+  test("stop during a gate cycle ends the run without another check", async () => {
+    mocks.loop
+      .mockResolvedValueOnce(agentRun())
+      .mockResolvedValueOnce(agentRun({ stopped: true, output: null }));
+    mocks.checkProject.mockResolvedValue(checked([typeError]));
+    const result = await runCreate().done;
+    expect(result.status).toBe("stopped");
+    expect(mocks.checkProject).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("helpers", () => {
-  test("an edit checks the home page and the pages it changed, a build checks them all", () => {
-    const known = ["/", "/about", "/pricing"];
-    expect(
-      routesToCheck({
-        mode: "editor",
-        known,
-        written: ["components/hero.tsx", "app/pricing/page.tsx"],
-        planned: [],
-      }),
-    ).toEqual(["/", "/pricing"]);
-    expect(
-      routesToCheck({
-        mode: "pipeline",
-        known,
-        written: ["app/blog/page.tsx"],
-        planned: ["/contact"],
-      }),
-    ).toEqual(["/", "/about", "/pricing", "/blog", "/contact"]);
-  });
-
   test("issuesNote is empty without problems and caps the list", () => {
     expect(issuesNote([])).toBe("");
     const many = Array.from({ length: 7 }, (_, index) => ({
@@ -613,34 +529,13 @@ describe("helpers", () => {
     expect(issuesNote(many)).toContain("…and 2 more");
   });
 
-  test("rollbackPlan restores known files, removes new ones and refuses unknown versions", () => {
-    expect(
-      rollbackPlan({
-        roundPaths: ["a.tsx", "new.tsx"],
-        preRound: new Map([["a.tsx", "old"]]),
-        writtenBefore: [],
-        versionFiles: ["a.tsx"],
-      }),
-    ).toEqual({
-      restore: [{ path: "a.tsx", content: "old" }],
-      remove: ["new.tsx"],
-      restorable: true,
+  test("gateMessage asks for missing files to be created and stays text without screenshots", () => {
+    const message = gateMessage({
+      diagnostics: [missingModule as never],
+      screenshots: [],
     });
-    expect(
-      rollbackPlan({
-        roundPaths: ["b.tsx"],
-        preRound: new Map(),
-        writtenBefore: [],
-        versionFiles: ["b.tsx"],
-      }).restorable,
-    ).toBe(false);
-    expect(
-      rollbackPlan({
-        roundPaths: ["c.tsx"],
-        preRound: new Map(),
-        writtenBefore: ["c.tsx"],
-        versionFiles: [],
-      }),
-    ).toEqual({ restore: [], remove: [], restorable: false });
+    expect(typeof message.content).toBe("string");
+    expect(message.content).toContain("create any missing file you import");
+    expect(message.content).toContain("Cannot find module");
   });
 });

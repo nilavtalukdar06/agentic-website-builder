@@ -9,11 +9,11 @@ export type PreloadedFile = { path: string; content: string };
 
 const INTENT_NOTES: Record<Intent, string> = {
   create:
-    "This is a new site. Build the whole request in as few replies as you can.",
-  edit: "This is a focused change. The files you most likely need are included below with their current contents: make the change with editFile in your first reply, keep everything else exactly as it is, then finish.",
-  fix: "The user reports a problem. Find the cause in the files below (read others only if needed), fix it with editFile, check it compiles, then finish.",
+    "This is a new site. Start with updatePlan (with projectName and browser checks), set the theme and blocks, then build it page by page, running check after each batch.",
+  edit: "This is a focused change. The files you most likely need are included below with their current contents: make the change with editFile in your first reply, keep everything else exactly as it is, run check, then finish.",
+  fix: "The user reports a problem. Run check first to see what fails, find the cause in the files below (read others only if needed), fix it, run check again, then finish.",
   "large-change":
-    "This change spans several files. Plan it once against the repo map, then write new files with createOrUpdateFiles and change existing ones with editFile.",
+    "This change spans several files. Plan it with updatePlan against the repo map, then write new files with createOrUpdateFiles and change existing ones with editFile, running check after each batch.",
   question:
     "Answer the question from the project context. Don't change any files.",
   remember:

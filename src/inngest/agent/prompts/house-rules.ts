@@ -8,6 +8,8 @@ export const STACK_RULES = `## Stack
 - Colours and radius come from the CSS variables in app/globals.css. To restyle the site, change those variables (in :root and .dark) instead of hard-coding colours in components.
 - No remote images unless the user gives URLs: use gradients, coloured blocks, lucide icons or emoji. No lorem ipsum: write real, specific copy for the business described.
 - Keep components under about 200 lines. Put sections in components/ (for example components/landing/hero.tsx) and data in lib/ (lib/data.ts) instead of one huge page.
+- lucide-react icons don't accept a title prop. Label an icon-only control with aria-label on the button, or put an sr-only span next to the icon; decorative icons get aria-hidden.
+- Every import must resolve: when a file imports "@/components/x" or "@/lib/y", that file must exist or be written in the same batch, with the exact export names you import. Default-export pages, named-export components.
 - Client state: useState and useReducer first. For data that should survive a reload in a demo app (todos, carts, notes), persist to localStorage in a small hook. There is no backend or database.`;
 
 export const DESIGN_RULES = `## Design quality

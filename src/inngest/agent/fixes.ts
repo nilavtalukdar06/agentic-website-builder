@@ -24,3 +24,40 @@ export function clientDirectiveFixes(
     .filter((file) => needsUseClient(file.path, file.content))
     .map((file) => ({ path: file.path, content: addUseClient(file.content) }));
 }
+
+const LUCIDE_IMPORT = /import\s*\{([^}]+)\}\s*from\s*["']lucide-react["']/g;
+
+function lucideNames(content: string) {
+  const names = new Set<string>();
+  for (const match of content.matchAll(LUCIDE_IMPORT)) {
+    for (const entry of match[1].split(",")) {
+      const local = entry
+        .trim()
+        .replace(/^type\s+/, "")
+        .split(/\s+as\s+/)
+        .at(-1)
+        ?.trim();
+      if (local && /^[A-Z][\w$]*$/.test(local)) names.add(local);
+    }
+  }
+  return names;
+}
+
+export function fixLucideTitles(content: string) {
+  const names = lucideNames(content);
+  if (names.size === 0) return content;
+  const tags = [...names].join("|");
+  const element = new RegExp(`<(${tags})\\b[^<>]*?/?>`, "g");
+  return content.replace(element, (tag) =>
+    tag.replace(/(\s)title=/g, "$1aria-label="),
+  );
+}
+
+export function sourceFixes(files: { path: string; content: string }[]) {
+  return files.flatMap((file) => {
+    if (!/\.(tsx|jsx)$/.test(file.path)) return [];
+    let content = fixLucideTitles(file.content);
+    if (needsUseClient(file.path, content)) content = addUseClient(content);
+    return content === file.content ? [] : [{ path: file.path, content }];
+  });
+}

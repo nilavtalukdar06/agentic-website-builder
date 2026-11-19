@@ -1,5 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { updatePlanInput } from "./plan";
+import { presetNames } from "./presets";
 
 export const MAX_FILES_PER_CALL = 20;
 export const MAX_FILE_CHARS = 60_000;
@@ -78,6 +80,20 @@ export const searchCodeInput = z.object({
     .describe('Limit the search to a folder or file, e.g. "components".'),
 });
 
+export const checkInput = z.object({});
+
+export const applyPresetInput = z.object({
+  preset: z.enum(presetNames),
+});
+
+export const addBlocksInput = z.object({
+  blocks: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(20)
+    .describe("Block names from the ready-made blocks list."),
+});
+
 const terminal = tool({
   description:
     "Run a shell command in the project folder of the sandbox and get its output and exit code. Use it to install packages and to run checks.",
@@ -114,22 +130,54 @@ const searchCode = tool({
   inputSchema: searchCodeInput,
 });
 
+const check = tool({
+  description:
+    'Check the project the way it is verified when you finish: auto-fixes lint and missing "use client" lines, then runs the TypeScript compiler, ESLint on the files you changed and loads every page in the running dev server. Returns every problem found, or says all checks pass. Run it after each batch of writes and before you finish.',
+  inputSchema: checkInput,
+});
+
+const updatePlan = tool({
+  description:
+    "Write or update your checklist for this request. Send the whole list every time with each step's status. On a new site, also send projectName and the key browser checks. The user sees your plan and progress.",
+  inputSchema: updatePlanInput,
+});
+
+const applyPresetTool = tool({
+  description:
+    "Apply one of the colour presets to the theme tokens in app/globals.css (light and dark).",
+  inputSchema: applyPresetInput,
+});
+
+const addBlocks = tool({
+  description:
+    'Copy ready-made, typed section blocks into components/blocks (with the blocks they use). Then import them from "@/components/blocks/<name>" and pass your own copy as props.',
+  inputSchema: addBlocksInput,
+});
+
 export const builderTools = {
+  updatePlan,
   terminal,
   createOrUpdateFiles,
   editFile,
   readFiles,
   listFiles,
   searchCode,
+  check,
+  applyPreset: applyPresetTool,
+  addBlocks,
 };
 
 export const agentToolNames = [
+  "updatePlan",
   "terminal",
   "createOrUpdateFiles",
   "editFile",
   "readFiles",
   "listFiles",
   "searchCode",
+  "check",
+  "applyPreset",
+  "addBlocks",
 ] as const;
 
 export type AgentToolName = (typeof agentToolNames)[number];

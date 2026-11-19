@@ -263,12 +263,16 @@ describe("runAgentLoop", () => {
     await run({ search: true, budget: { ...budget, searches: 6 } });
     const call = runModelTurn.mock.calls[0][0];
     expect(call.activeTools).toEqual([
+      "updatePlan",
       "terminal",
       "createOrUpdateFiles",
       "editFile",
       "readFiles",
       "listFiles",
       "searchCode",
+      "check",
+      "applyPreset",
+      "addBlocks",
     ]);
     expect(JSON.stringify(call.messages)).toContain("all 6 web searches");
   });

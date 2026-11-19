@@ -799,7 +799,7 @@ The owner asked for an editor, not only a viewer, and for a terminal "controlled
 
 **Why (owner's report, 18 November 2026):** even strong models such as `kimi-k2.7` took minutes for a small app like a todo list, the result looked mediocre, and a one-line cosmetic follow-up also took minutes.
 
-**What changed:**
+**What changed in v3 (the pipeline below was replaced by harness v4, see the v4 paragraph further down):**
 
 - **Pipeline under code control:**
   - An intent router (heuristics, then one call to the user's chosen model when unsure).
@@ -827,7 +827,9 @@ The owner asked for an editor, not only a viewer, and for a terminal "controlled
 
 **Email notifications with Resend (owner's request, 18 November 2026):** notification emails for a build that finishes after a minute or more, a failed build, running out of credits, and a GitHub export that finishes or fails, sent on the free `onboarding@resend.dev` sender for now (it only delivers to the Resend account's own address). `run-agent` and `export-github` queue a `notify/send` event; a separate function sends, so email can never affect a run. A Notifications switch in the account menu (`User.notifyEmail`, on by default) and a daily budget guard (`EmailUsage`, 80% routine / 100% failures, one alert). Emails never contain prompts, code or files. Details in `docs/decisions.md`.
 
-**Deferred:** the visual critic, the Auto model chip and the `AgentRun` table with the eval harness. Each needs the owner's go-ahead before it's built.
+**Harness v4 (owner's request, 19 November 2026):** first builds kept finishing broken (missing modules, a lucide `title` type error, `GET /` returning 500) and slow. The owner asked to replan the agent workflow for accuracy over speed, the way Claude Code and Codex work. v4 replaces the Planner, the parallel Generator, the Editor's 8-turn cap and the repair agent with **one agent loop for every change** (turn budgets: create 40, large change 30, edit and fix 16). The agent plans with an `updatePlan` tool, writes in batches, runs a `check` tool (auto-fixes, `tsc`, ESLint, every page) after each batch, and uses `applyPreset` and `addBlocks` for the library. A **done gate** in the harness re-checks, opens the site in the browser whenever every page loads, and feeds what fails back into the same conversation (up to 3 cycles). A severity score (failing pages, missing modules and syntax first) restores an earlier state only when blockers went up. A lucide `title` fix and two new house rules cover the observed model gaps. `meta.run` adds turns, gate cycles, blockers and browse status, and `bun run agent:eval` scores five fixed cases. Details in `docs/agent-harness.md`.
+
+**Deferred:** the visual critic, the Auto model chip and the `AgentRun` table. Each needs the owner's go-ahead before it's built. (The eval harness was built with v4, as `bun run agent:eval`.)
 
 **Out of scope:** backends in generated apps (databases, auth), a team of agents talking to each other, fine-tuning, a computer-use agent; interactive browser takeover.
 
@@ -940,6 +942,7 @@ The deferred Phase 11 work would add `AI_PLANNER_MODEL`, `AI_CRITIC_MODEL` and `
 - [x] Phase 9: rate limits, nightly cleanup and sandbox-resume alerting, Stripe webhook alerting, security headers and audit, accessibility audit with fixes, and the Vitest and Playwright coverage. Production deployment was removed from the plan at the owner's request
 - [x] Phase 10: Arcjet Shield WAF and bot detection on every route handler, per-IP edge rate limiting layered in front of the Phase 9 Postgres limiter, and a prompt-injection Guard pre-check layered in front of the Phase 5 policy classifier. Privacy Policy updated, flagged for owner review
 - [ ] Phase 11: agent harness v3 per `docs/agent-harness.md` (built and unit-tested 18 November 2026; awaiting the owner's live smoke runs)
+  - [ ] Harness v4: one self-verifying agent loop and the done gate (built and unit-tested 19 November 2026; awaiting the owner's `bun run agent:eval`)
   - [x] Overhead: skill gate removed, one step per turn, stop check in the model step, no reply or title calls, parallel setup, block-wise compaction, cache breakpoints
   - [x] Follow-ups: `editFile`, ranged reads, `listFiles`, `searchCode`, repo map and design notes, context pack, router, Editor mode, question answers
   - [x] First builds: Planner, block library and presets, foundation step, parallel workers in dependency waves
@@ -954,4 +957,4 @@ The deferred Phase 11 work would add `AI_PLANNER_MODEL`, `AI_CRITIC_MODEL` and `
   - [x] Memory layer with Supermemory: user and project namespaces, read in the route step, user-words-only writes, remember/forget commands, Memory panel, budget guard, project-deletion cleanup, legal update (flagged to the owner)
   - [ ] Memory migration applied and live memory check by the owner (needs `SUPERMEMORY_API_KEY`)
   - [ ] Live smoke runs by the owner (todo app, landing page, small follow-up, with a Browserbase key)
-  - [ ] Deferred, needs approval: visual critic, Auto model chip, eval harness
+  - [ ] Deferred, needs approval: visual critic, Auto model chip
